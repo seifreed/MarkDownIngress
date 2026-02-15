@@ -11,8 +11,8 @@
 <p align="center">
   <a href="#"><img src="https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/tests-28%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/tests-51%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.3.0-orange?style=flat-square" alt="Version">
 </p>
 
 <p align="center">
@@ -69,7 +69,10 @@ Untrusted Web URL
 | Feature | Description |
 |---------|-------------|
 | **Fast Mode** | HTTP-only fetching (no JS execution) |
-| **Render Mode** | ✨ **NEW v0.2** Playwright-based rendering for SPAs |
+| **Render Mode** | Playwright-based rendering for SPAs |
+| **Batch Processing** | ✨ **NEW v0.3** Process multiple URLs concurrently |
+| **Caching** | ✨ **NEW v0.3** Memory & SQLite caching with TTL |
+| **Policy Engine** | ✨ **NEW v0.3** Configurable security policies |
 | **Security Analysis** | Pattern-based prompt injection detection |
 | **Token Estimation** | Accurate token counts via tiktoken |
 | **Content Hashing** | SHA256 for deduplication/versioning |
@@ -442,8 +445,9 @@ markdown_ingress/
 | Version | Status | Features |
 |---------|--------|----------|
 | **v0.1** | ✅ Released | Fast mode, injection detection, CLI, token estimation |
-| **v0.2** | ✅ **Current** | ✨ Playwright render mode, SPA support, 28 tests |
-| **v0.3** | 📋 Planned | Policy engine, plugin system, batch ingestion, caching |
+| **v0.2** | ✅ Released | Playwright render mode, SPA support |
+| **v0.3** | ✅ **Current** | ✨ Batch processing, caching, policy engine, 51 tests |
+| **v0.4** | 📋 Planned | Enhanced reports, benchmarking, plugin discovery |
 
 ---
 
@@ -484,10 +488,10 @@ pytest tests/ --cov=markdown_ingress  # With coverage
 
 ### Project Stats
 
-- **29 files** created
-- **1,400+ lines** of Python code
-- **28 tests** (100% passing)
-- **8 core modules** + API + CLI + Renderer
+- **35+ files** created
+- **2,600+ lines** of Python code
+- **51 tests** (100% passing)
+- **11 core modules** + API + CLI + Renderer + Batch + Cache + Policy
 
 ---
 
