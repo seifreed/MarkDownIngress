@@ -2,7 +2,7 @@
 MarkDownIngress - Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines
 """
 
-from markdown_ingress.api import ingest, generate_security_report
+from markdown_ingress.api import ingest, retry_ingest, generate_security_report
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.core.batch import BatchProcessor, BatchResult
 from markdown_ingress.core.cache import Cache, MemoryCache, SQLiteCache
@@ -15,6 +15,7 @@ __version__ = "0.4.0"
 __all__ = [
     # Core API
     "ingest",
+    "retry_ingest",
     "generate_security_report",
     
     # Models

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.2] - 2025-02-15
+
+### Added
+- **Stealth Mode**: Advanced bot detection bypass system
+  - `markdown_ingress/core/stealth.py` module with 16 real browser user-agents
+  - Chrome 120-121, Firefox 121-122, Safari 17, Edge 120-121 user-agents
+  - 21 Chromium browser arguments to hide automation signatures
+  - Viewport randomization (6 common sizes: 1920x1080, 1366x768, etc.)
+  - Context options for Playwright with bypass_csp and ignore_https_errors
+  
+- **Retry Logic**: Intelligent retry with exponential backoff
+  - `retry_ingest()` function in api.py
+  - Automatic timeout escalation: 60s → 90s → 120s → 150s
+  - Stealth mode automatically enabled on 2nd+ attempts
+  - Comprehensive retry metadata tracking (attempts, timeout, stealth_enabled)
+  
+- **HTTP/2 Protocol Fallback**: Automatic error handling
+  - Detects `ERR_HTTP2_PROTOCOL_ERROR` in renderer.py
+  - Automatic retry with `--disable-http2` browser flag
+  - HTTP/1.1 fallback for protocol-incompatible sites
+  - Metadata flag: `http2_fallback` to track fallback usage
+
+### Changed
+- Renderer class now supports `stealth` and `disable_http2` parameters
+- Browser context includes bypass_csp and ignore_https_errors by default
+- Improved error messages and retry logging
+
+### Performance
+- **Success rate improved**: 82% on Alexa Top 50 (up from 80%)
+- Successfully parses 4 previously failed sites:
+  - medium.com (31 tokens)
+  - indeed.com (17 tokens)
+  - paypal.com (33 tokens)
+  - walmart.com (46 tokens)
+- Auto mode statistics: 58% fast mode, 42% render mode
+
+### Tested
+- Alexa Top 50 validation: 41/50 success (82%)
+- Stealth mode tested with bot-protected sites
+- HTTP/2 fallback tested with adobe.com, costco.com
+- All 117 tests passing (added 9 new tests)
+
+### Documentation
+- Updated README with stealth mode and retry logic examples
+- Added user-agent documentation
+- Updated API examples with new features
+
+---
+
 ## [0.4.1] - 2025-02-15
 
 ### Added

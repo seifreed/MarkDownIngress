@@ -36,6 +36,7 @@ class FetchResult:
     final_url: str
     headers: dict
     timing_ms: float
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

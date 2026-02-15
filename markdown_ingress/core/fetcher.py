@@ -58,7 +58,8 @@ class Fetcher:
                 status_code=response.status_code,
                 final_url=str(response.url),
                 headers=dict(response.headers),
-                timing_ms=elapsed_ms
+                timing_ms=elapsed_ms,
+                metadata={'fetcher': 'httpx'}
             )
     
     def fetch_sync(self, url: str) -> FetchResult:
@@ -90,5 +91,6 @@ class Fetcher:
                 status_code=response.status_code,
                 final_url=str(response.url),
                 headers=dict(response.headers),
-                timing_ms=elapsed_ms
+                timing_ms=elapsed_ms,
+                metadata={'fetcher': 'httpx'}
             )

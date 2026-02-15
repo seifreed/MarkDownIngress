@@ -2,6 +2,7 @@
 Main API for MarkDownIngress
 """
 
+import time
 from typing import Literal, Optional
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.core.fetcher import Fetcher
@@ -28,7 +29,9 @@ def ingest(
     strict: bool = True,
     model: str = "gpt-4",
     timeout: float = 30.0,
-    auto_render_threshold: int = 50
+    auto_render_threshold: int = 50,
+    stealth: bool = False,
+    disable_http2: bool = False
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -49,6 +52,8 @@ def ingest(
         timeout: Request timeout in seconds (default: 30.0)
         auto_render_threshold: Token threshold for auto mode (default: 50)
             If fast mode returns fewer tokens than this, retry with render mode.
+        stealth: Enable stealth mode to avoid bot detection (render mode only)
+        disable_http2: Disable HTTP/2 protocol, use HTTP/1.1 (render mode only)
         
     Returns:
         SafeDocument with markdown content, metadata, and security analysis
@@ -66,18 +71,21 @@ def ingest(
         
         >>> # Force render mode (with JS)
         >>> doc = ingest("https://spa-app.com", mode="render")
+        
+        >>> # Stealth mode to avoid bot detection
+        >>> doc = ingest("https://protected-site.com", mode="render", stealth=True)
     """
     # Auto mode: try fast first, fallback to render if needed
     if mode == "auto":
         try:
             # Try fast mode first
-            doc = _ingest_with_mode(url, "fast", strict, model, timeout)
+            doc = _ingest_with_mode(url, "fast", strict, model, timeout, stealth, disable_http2)
             
             # Check if we got meaningful content
             if doc.token_estimate < auto_render_threshold:
                 # Content is minimal, likely a SPA - try render mode
                 if PLAYWRIGHT_AVAILABLE:
-                    doc_render = _ingest_with_mode(url, "render", strict, model, timeout)
+                    doc_render = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2)
                     # Use render result if it has more content
                     if doc_render.token_estimate > doc.token_estimate:
                         doc_render.metadata['auto_mode_used'] = 'render'
@@ -91,7 +99,7 @@ def ingest(
         except Exception as e:
             # If fast fails, try render as fallback
             if PLAYWRIGHT_AVAILABLE:
-                doc = _ingest_with_mode(url, "render", strict, model, timeout)
+                doc = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2)
                 doc.metadata['auto_mode_used'] = 'render'
                 doc.metadata['auto_mode_reason'] = 'fast_failed'
                 return doc
@@ -99,7 +107,7 @@ def ingest(
                 raise e
     
     # Regular mode (fast or render explicitly specified)
-    return _ingest_with_mode(url, mode, strict, model, timeout)
+    return _ingest_with_mode(url, mode, strict, model, timeout, stealth, disable_http2)
 
 
 def _ingest_with_mode(
@@ -107,7 +115,9 @@ def _ingest_with_mode(
     mode: Literal["fast", "render"],
     strict: bool,
     model: str,
-    timeout: float
+    timeout: float,
+    stealth: bool = False,
+    disable_http2: bool = False
 ) -> SafeDocument:
     """
     Internal function to perform ingestion with a specific mode.
@@ -128,7 +138,11 @@ def _ingest_with_mode(
                 "Render mode requires Playwright. Install with: "
                 "pip install 'markdown-ingress[render]' && playwright install"
             )
-        renderer = Renderer(timeout=timeout)
+        renderer = Renderer(
+            timeout=timeout,
+            stealth=stealth,
+            disable_http2=disable_http2
+        )
         fetch_result = renderer.render_sync(url)
     else:  # fast mode
         fetcher = Fetcher(timeout=timeout)
@@ -186,6 +200,129 @@ def _ingest_with_mode(
         flags=security_analysis.flags,
         removed_elements=removed_elements
     )
+
+
+def retry_ingest(
+    url: str,
+    mode: Literal["fast", "render", "auto"] = "auto",
+    strict: bool = True,
+    model: str = "gpt-4",
+    max_retries: int = 3,
+    enable_stealth: bool = True,
+    initial_timeout: float = 60.0
+) -> SafeDocument:
+    """
+    Ingest with automatic retry logic and timeout escalation.
+    
+    This function wraps ingest() with exponential backoff retry logic. It automatically
+    increases timeout on each retry attempt and optionally enables stealth mode to
+    bypass bot detection on retry attempts.
+    
+    Args:
+        url: Target URL to ingest
+        mode: Ingestion mode ('fast', 'render', or 'auto')
+        strict: Enable strict security mode (blocks suspicious content)
+        model: LLM model name for token estimation (default: 'gpt-4')
+        max_retries: Maximum retry attempts (default: 3)
+        enable_stealth: Enable stealth mode on retries (default: True)
+        initial_timeout: Initial timeout in seconds (default: 60.0)
+    
+    Returns:
+        SafeDocument with markdown content, metadata, and security analysis
+        Additional metadata fields added:
+            - retry_attempts: Number of attempts made (1 = success on first try)
+            - retry_enabled: Whether stealth was enabled
+            - final_timeout: Final timeout value used
+            
+    Raises:
+        Exception: If all retries fail, raises the last exception encountered
+    
+    Examples:
+        >>> # Basic retry with defaults (3 attempts, stealth enabled)
+        >>> doc = retry_ingest("https://example.com")
+        
+        >>> # Custom retry configuration
+        >>> doc = retry_ingest(
+        ...     "https://spa-app.com",
+        ...     mode="render",
+        ...     max_retries=5,
+        ...     initial_timeout=90.0
+        ... )
+        
+        >>> # Check retry metadata
+        >>> print(f"Attempts: {doc.metadata['retry_attempts']}")
+        >>> print(f"Final timeout: {doc.metadata['final_timeout']}s")
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            # Calculate escalating timeout: 60s, 90s, 120s, 150s...
+            timeout = initial_timeout + (attempt * 30.0)
+            
+            # Enable stealth mode on retry attempts (attempt >= 1)
+            use_stealth = enable_stealth and (attempt >= 1)
+            
+            # Log retry attempt
+            if attempt > 0:
+                print(f"[MarkDownIngress] Retry attempt {attempt + 1}/{max_retries} for {url}")
+                print(f"[MarkDownIngress] Timeout: {timeout}s, Stealth: {use_stealth}")
+            
+            # For stealth mode, configure renderer with stealth settings
+            doc = ingest(
+                url=url,
+                mode=mode,
+                strict=strict,
+                model=model,
+                timeout=timeout,
+                stealth=use_stealth,
+            )
+            
+            # Success! Add retry metadata
+            doc.metadata['retry_attempts'] = attempt + 1
+            doc.metadata['retry_enabled'] = use_stealth
+            doc.metadata['final_timeout'] = timeout
+            
+            if attempt > 0:
+                print(f"[MarkDownIngress] Success on attempt {attempt + 1}")
+            
+            return doc
+            
+        except Exception as e:
+            last_exception = e
+            error_type = type(e).__name__
+            
+            # Check if this is a retryable error
+            retryable_errors = (
+                'TimeoutError',
+                'Timeout',
+                'ConnectTimeout',
+                'ReadTimeout',
+                'HTTPError',
+                'ConnectionError',
+                'ConnectError',  # SSL/connection errors
+                'TargetClosedError',  # Playwright error
+            )
+            
+            is_retryable = any(err in error_type for err in retryable_errors)
+            
+            if attempt < max_retries - 1:
+                if is_retryable:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"[MarkDownIngress] {error_type} on attempt {attempt + 1}: {str(e)}")
+                    print(f"[MarkDownIngress] Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                else:
+                    # Non-retryable error, fail fast
+                    print(f"[MarkDownIngress] Non-retryable error {error_type}: {str(e)}")
+                    raise e
+            else:
+                # Last attempt failed
+                print(f"[MarkDownIngress] All {max_retries} attempts failed for {url}")
+                print(f"[MarkDownIngress] Final error: {error_type}: {str(e)}")
+    
+    # If we get here, all retries failed
+    raise last_exception
 
 
 def generate_security_report(

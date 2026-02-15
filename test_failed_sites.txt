@@ -1,0 +1,13 @@
+# Failed sites from Alexa Top 50 test
+# These are the 10 sites that failed in the previous run
+
+https://www.medium.com
+https://www.indeed.com
+https://www.adobe.com
+https://www.paypal.com
+https://www.walmart.com
+https://www.bestbuy.com
+https://www.weather.com
+https://www.vimeo.com
+https://www.costco.com
+# Note: amazon.com duplicate removed
