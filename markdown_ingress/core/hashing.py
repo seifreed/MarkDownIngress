@@ -35,31 +35,62 @@ class Hasher:
     
     def hash_structural(self, markdown: str) -> str:
         """
-        Generate structural hash based on headings and key content.
-        Useful for detecting content changes while ignoring minor edits.
+        Generate structural hash based on headings hierarchy and key content.
+        Useful for detecting structural changes while ignoring minor text edits.
+        
+        Same document structure (headings + outline) will produce same hash
+        even if paragraph content changes.
         
         Args:
             markdown: Markdown content
             
         Returns:
-            Structural hash string
+            Structural hash string with 'sha256:' prefix
         """
         import re
         
-        # Extract headings
-        headings = re.findall(r'^#{1,6}\s+(.+)$', markdown, re.MULTILINE)
+        lines = markdown.split('\n')
+        structural_elements = []
         
-        # Extract first sentence of each paragraph (simplified)
-        paragraphs = [p.strip() for p in markdown.split('\n\n') if p.strip() and not p.strip().startswith('#')]
-        first_sentences = []
+        # Extract heading hierarchy with levels
+        for line in lines:
+            heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+            if heading_match:
+                level = len(heading_match.group(1))
+                title = heading_match.group(2).strip()
+                # Normalize: lowercase, remove punctuation for stability
+                normalized_title = re.sub(r'[^\w\s]', '', title.lower())
+                structural_elements.append(f"H{level}:{normalized_title}")
         
-        for para in paragraphs[:10]:  # Limit to first 10 paragraphs
-            # Get first sentence (simplified - split on . ! ?)
-            match = re.match(r'^([^.!?]+[.!?])', para)
-            if match:
-                first_sentences.append(match.group(1))
+        # Extract list structure (but not content)
+        in_list = False
+        list_depth = 0
+        for line in lines:
+            list_match = re.match(r'^(\s*)[-*+]\s', line)
+            if list_match:
+                depth = len(list_match.group(1)) // 2
+                if not in_list or depth != list_depth:
+                    structural_elements.append(f"LIST:{depth}")
+                    in_list = True
+                    list_depth = depth
+            elif line.strip() and in_list:
+                in_list = False
         
-        # Combine into structural representation
-        structural_content = '\n'.join(headings + first_sentences)
+        # Extract code block presence (not content)
+        code_blocks = len(re.findall(r'^```', markdown, re.MULTILINE))
+        if code_blocks > 0:
+            structural_elements.append(f"CODE_BLOCKS:{code_blocks // 2}")
+        
+        # Extract link count (structure indicator)
+        links = len(re.findall(r'\[([^\]]+)\]\(([^)]+)\)', markdown))
+        if links > 0:
+            structural_elements.append(f"LINKS:{links}")
+        
+        # Combine into structural fingerprint
+        structural_content = '\n'.join(structural_elements)
+        
+        # If no structure found, fall back to content hash
+        if not structural_content:
+            structural_content = markdown[:200]  # First 200 chars
         
         return self.hash_content(structural_content)

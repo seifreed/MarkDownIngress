@@ -11,8 +11,8 @@
 <p align="center">
   <a href="#"><img src="https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/tests-51%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/version-0.3.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/tests-108%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.4.0-orange?style=flat-square" alt="Version">
 </p>
 
 <p align="center">
@@ -70,9 +70,15 @@ Untrusted Web URL
 |---------|-------------|
 | **Fast Mode** | HTTP-only fetching (no JS execution) |
 | **Render Mode** | Playwright-based rendering for SPAs |
-| **Batch Processing** | ✨ **NEW v0.3** Process multiple URLs concurrently |
-| **Caching** | ✨ **NEW v0.3** Memory & SQLite caching with TTL |
-| **Policy Engine** | ✨ **NEW v0.3** Configurable security policies |
+| **Batch Processing** | Process multiple URLs concurrently (v0.3) |
+| **Caching** | Memory & SQLite caching with TTL (v0.3) |
+| **Policy Engine** | Configurable security policies (v0.3) |
+| **Structural Hashing** | ✨ **NEW v0.4** Structure-aware fingerprinting |
+| **Security Reports** | ✨ **NEW v0.4** Comprehensive JSON reports |
+| **Config Files** | ✨ **NEW v0.4** YAML/JSON configuration support |
+| **CLI Batch Command** | ✨ **NEW v0.4** `markdown-ingress batch urls.txt` |
+| **Plugin System** | ✨ **NEW v0.4** Custom injection pattern plugins |
+| **Benchmarking** | ✨ **NEW v0.4** Performance metrics suite |
 | **Security Analysis** | Pattern-based prompt injection detection |
 | **Token Estimation** | Accurate token counts via tiktoken |
 | **Content Hashing** | SHA256 for deduplication/versioning |
@@ -132,23 +138,29 @@ pip install -e .
 ### Command Line Interface
 
 ```bash
-# Basic ingestion (fast mode - no JS)
-markdown-ingress https://example.com
+# Single URL ingestion
+markdown-ingress ingest https://example.com
 
-# Render mode for JavaScript-heavy sites (NEW in v0.2)
-markdown-ingress https://spa-app.com --render
+# Batch processing (NEW in v0.4)
+markdown-ingress batch urls.txt --output results/
+
+# Render mode for JavaScript-heavy sites (v0.2)
+markdown-ingress ingest https://spa-app.com --render
 
 # Save markdown output
-markdown-ingress https://example.com --save output.md
+markdown-ingress ingest https://example.com --save output.md
 
 # JSON output with metadata
-markdown-ingress https://example.com --json --save output.json
+markdown-ingress ingest https://example.com --json --save output.json
+
+# Batch with JSON summary (v0.4)
+markdown-ingress batch urls.txt --json --output summary.json
 
 # Specify token model
-markdown-ingress https://example.com --model claude
+markdown-ingress ingest https://example.com --model claude
 
 # Permissive mode (lower security threshold)
-markdown-ingress https://example.com --permissive
+markdown-ingress ingest https://example.com --permissive
 ```
 
 ### Example Output
@@ -252,6 +264,135 @@ for url in urls:
 
 print(f"\nSafe documents: {len(safe_docs)}/{len(urls)}")
 ```
+
+### v0.4 Features
+
+#### Configuration Files
+
+```python
+from markdown_ingress.core.config import load_config
+
+# Auto-discover config from default locations
+config = load_config()
+
+# Or specify path explicitly  
+config = load_config("my_config.yaml")
+
+# Use config values
+print(config.mode)              # 'fast' or 'render'
+print(config.cache_enabled)     # True/False
+print(config.batch_max_concurrent)  # 5
+```
+
+**YAML example (.markdowningress.yaml):**
+
+```yaml
+mode: fast
+timeout: 45.0
+strict: true
+cache_enabled: true
+cache_type: sqlite
+batch_max_concurrent: 10
+policy: moderate
+```
+
+**Environment variable override:**
+
+```bash
+export MDI_MODE=render
+export MDI_CACHE_ENABLED=true
+export MDI_BATCH_MAX_CONCURRENT=20
+```
+
+#### Security Reports
+
+```python
+from markdown_ingress import generate_security_report
+
+# Generate comprehensive security report
+report = generate_security_report("https://suspicious-site.com")
+
+# Export to JSON
+report.save("security_report.json")
+
+# Access detailed metrics
+print(f"Injection score: {report.injection_score}")
+print(f"Risk level: {report.risk_level}")
+print(f"Token reduction: {report.token_reduction_percent}%")
+print(f"Pattern matches: {report.pattern_matches}")
+print(f"Structural hash: {report.structural_hash}")
+```
+
+#### Structural Hashing
+
+```python
+from markdown_ingress.core.hashing import Hasher
+
+hasher = Hasher()
+
+# Content hash (exact match required)
+content_hash = hasher.hash_content(markdown)
+
+# Structural hash (same structure = same hash, even if content differs)
+structural_hash = hasher.hash_structural(markdown)
+
+# Use case: Detect document structure changes
+doc1 = "# Title\n## Section\nSome content"
+doc2 = "# Title\n## Section\nDifferent content"
+
+assert hasher.hash_structural(doc1) == hasher.hash_structural(doc2)
+# True - same structure!
+```
+
+#### Plugin System
+
+```python
+from markdown_ingress.core.plugin import Plugin, PluginLoader
+
+# Define custom plugin
+class MySecurityPlugin(Plugin):
+    def get_patterns(self):
+        return [
+            r'confidential information leak',
+            r'internal use only',
+            r'not for distribution'
+        ]
+
+# Load plugin
+loader = PluginLoader()
+loader.load_plugin(MySecurityPlugin())
+
+# Get all patterns (default + custom)
+all_patterns = loader.get_all_patterns()
+
+# Or load from directory
+loader.load_from_directory("./plugins")
+```
+
+#### Benchmarking
+
+```python
+from markdown_ingress.core.benchmark import Benchmark
+
+bench = Benchmark(model="gpt-4")
+
+# Single URL benchmark
+result = bench.run_single("https://example.com", iterations=5)
+
+print(f"Average time: {result.avg_time_ms:.1f}ms")
+print(f"Token reduction: {result.reduction_percent:.1f}%")
+print(f"Original: {result.original_tokens} tokens")
+print(f"Cleaned: {result.cleaned_tokens} tokens")
+
+# Batch benchmark
+urls = ["https://example.com", "https://example.org"]
+results = bench.run_batch(urls, iterations=3)
+
+# Generate report
+report = bench.generate_report(results)
+print(report)
+```
+
 
 ### Command Line Options
 

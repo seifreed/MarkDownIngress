@@ -3,7 +3,7 @@ Main API for MarkDownIngress
 """
 
 from typing import Literal, Optional
-from markdown_ingress.models import SafeDocument
+from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.core.fetcher import Fetcher
 from markdown_ingress.core.extractor import Extractor
 from markdown_ingress.core.normalizer import Normalizer
@@ -90,8 +90,9 @@ def ingest(
         hidden_content_detected=hidden_detected
     )
     
-    # Step 5: Generate hash
+    # Step 5: Generate hashes
     content_hash = hasher.hash_content(markdown)
+    structural_hash = hasher.hash_structural(markdown)
     
     # Step 6: Estimate tokens
     token_count = token_estimator.estimate(markdown)
@@ -109,6 +110,7 @@ def ingest(
         'strict': strict,
         'token_savings': token_savings,
         'risk_level': scorer.get_risk_level(security_analysis.score),
+        'structural_hash': structural_hash,
     }
     
     # Build removed elements summary
@@ -127,3 +129,54 @@ def ingest(
         flags=security_analysis.flags,
         removed_elements=removed_elements
     )
+
+
+def generate_security_report(
+    url: str,
+    mode: Literal["fast", "render"] = "fast",
+    strict: bool = True,
+    model: str = "gpt-4",
+    timeout: float = 30.0
+) -> SecurityReport:
+    """
+    Generate comprehensive security report for a URL.
+    
+    Similar to ingest() but returns detailed SecurityReport instead of SafeDocument.
+    Useful for security auditing and analysis workflows.
+    
+    Args:
+        url: Target URL to analyze
+        mode: Fetching mode - 'fast' or 'render'
+        strict: Enable strict security mode
+        model: LLM model name for token estimation
+        timeout: Request timeout in seconds
+        
+    Returns:
+        SecurityReport with detailed security analysis
+    """
+    # Get safe document first
+    doc = ingest(url=url, mode=mode, strict=strict, model=model, timeout=timeout)
+    
+    # Calculate additional metrics
+    original_size = len(doc.metadata.get('url', '').encode('utf-8'))
+    cleaned_size = len(doc.markdown.encode('utf-8'))
+    
+    # Build comprehensive report
+    report = SecurityReport(
+        injection_score=doc.injection_score,
+        risk_level=doc.metadata.get('risk_level', 'UNKNOWN'),
+        flags=doc.flags,
+        hidden_content_detected='hidden_content' in doc.flags,
+        hidden_elements_count=doc.removed_elements.get('hidden_elements', 0),
+        url=doc.metadata.get('url', ''),
+        title=doc.metadata.get('title', ''),
+        token_estimate=doc.token_estimate,
+        token_reduction_percent=doc.metadata.get('token_savings', {}).get('percentage_saved', 0.0),
+        original_size_bytes=original_size,
+        cleaned_size_bytes=cleaned_size,
+        content_hash=doc.content_hash,
+        structural_hash=doc.metadata.get('structural_hash', ''),
+        removed_elements=doc.removed_elements
+    )
+    
+    return report
