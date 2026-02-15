@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "markdown-ingress"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,12 @@ dev = [
 ]
 render = [
     "playwright>=1.43.0",
+]
+all = [
+    "playwright>=1.43.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
 ]
 
 [project.scripts]

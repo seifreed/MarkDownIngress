@@ -13,6 +13,14 @@ from markdown_ingress.core.tokens import TokenEstimator
 from markdown_ingress.core.security import SecurityAnalyzer
 from markdown_ingress.core.scoring import Scorer
 
+# Import renderer only if needed (optional dependency)
+try:
+    from markdown_ingress.core.renderer import Renderer
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    Renderer = None
+
 
 def ingest(
     url: str,
@@ -38,7 +46,7 @@ def ingest(
         SafeDocument with markdown content, metadata, and security analysis
         
     Raises:
-        ValueError: If mode is 'render' (not yet implemented)
+        ImportError: If mode is 'render' and Playwright is not installed
         httpx.HTTPError: On network/HTTP errors
         
     Example:
@@ -47,11 +55,7 @@ def ingest(
         >>> print(doc.markdown)
         >>> print(f"Injection score: {doc.injection_score}")
     """
-    if mode == "render":
-        raise ValueError("Render mode not yet implemented. Use mode='fast' for v0.1")
-    
     # Initialize components
-    fetcher = Fetcher(timeout=timeout)
     extractor = Extractor(strict=strict)
     normalizer = Normalizer()
     md_converter = MarkdownConverter()
@@ -60,8 +64,18 @@ def ingest(
     security_analyzer = SecurityAnalyzer(strict=strict)
     scorer = Scorer()
     
-    # Step 1: Fetch HTML
-    fetch_result = fetcher.fetch_sync(url)
+    # Step 1: Fetch HTML (mode-dependent)
+    if mode == "render":
+        if not PLAYWRIGHT_AVAILABLE:
+            raise ImportError(
+                "Render mode requires Playwright. Install with: "
+                "pip install 'markdown-ingress[render]' && playwright install"
+            )
+        renderer = Renderer(timeout=timeout)
+        fetch_result = renderer.render_sync(url)
+    else:  # fast mode
+        fetcher = Fetcher(timeout=timeout)
+        fetch_result = fetcher.fetch_sync(url)
     
     # Step 2: Extract main content and clean
     extraction_result = extractor.extract(fetch_result.html, fetch_result.url)

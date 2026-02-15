@@ -26,7 +26,7 @@ Examples:
     )
     
     parser.add_argument('url', help='URL to ingest')
-    parser.add_argument('--render', action='store_true', help='Use render mode (Playwright, not yet implemented)')
+    parser.add_argument('--render', action='store_true', help='Use render mode (Playwright - requires installation)')
     parser.add_argument('--strict', action='store_true', default=True, help='Enable strict security mode (default: true)')
     parser.add_argument('--permissive', action='store_true', help='Disable strict mode')
     parser.add_argument('--model', default='gpt-4', help='LLM model for token estimation (default: gpt-4)')

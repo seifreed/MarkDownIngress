@@ -11,8 +11,8 @@
 <p align="center">
   <a href="#"><img src="https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/tests-21%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/version-0.1.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/tests-28%20passing-brightgreen?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.2.0-orange?style=flat-square" alt="Version">
 </p>
 
 <p align="center">
@@ -69,6 +69,7 @@ Untrusted Web URL
 | Feature | Description |
 |---------|-------------|
 | **Fast Mode** | HTTP-only fetching (no JS execution) |
+| **Render Mode** | ✨ **NEW v0.2** Playwright-based rendering for SPAs |
 | **Security Analysis** | Pattern-based prompt injection detection |
 | **Token Estimation** | Accurate token counts via tiktoken |
 | **Content Hashing** | SHA256 for deduplication/versioning |
@@ -87,7 +88,8 @@ Security           10+ injection pattern detectors
 Risk Scoring       0.0 (safe) → 1.0 (critical)
 Token Models       GPT-4, Claude, GPT-3.5-turbo, etc.
 Output Formats     Markdown, JSON, SafeDocument
-Modes              Fast (HTTP), Render (v0.2, Playwright)
+Modes              Fast (HTTP), Render (Playwright) ✨ NEW
+JavaScript         Fully rendered SPAs with Playwright ✨ NEW
 ```
 
 ---
@@ -104,6 +106,16 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
+### With Render Mode (Playwright)
+
+```bash
+# Install with render mode support
+pip install -e ".[render]"
+
+# Install browser for Playwright
+playwright install chromium
+```
+
 ### Quick Install (Development)
 
 ```bash
@@ -117,8 +129,11 @@ pip install -e .
 ### Command Line Interface
 
 ```bash
-# Basic ingestion
+# Basic ingestion (fast mode - no JS)
 markdown-ingress https://example.com
+
+# Render mode for JavaScript-heavy sites (NEW in v0.2)
+markdown-ingress https://spa-app.com --render
 
 # Save markdown output
 markdown-ingress https://example.com --save output.md
@@ -137,7 +152,7 @@ markdown-ingress https://example.com --permissive
 
 ```
 ============================================================
-MarkDownIngress v0.1.0 - Ingestion Report
+MarkDownIngress v0.2.0 - Ingestion Report
 ============================================================
 
 📄 Title: Example Domain
@@ -179,8 +194,8 @@ print(doc.flags)                 # Security warnings
 from markdown_ingress import ingest
 from markdown_ingress.core.scoring import Scorer
 
-# Ingest with custom settings
-doc = ingest(
+# Fast mode (HTTP only, no JavaScript)
+doc_fast = ingest(
     url="https://blog.example.com/article",
     mode="fast",
     strict=True,
@@ -188,18 +203,28 @@ doc = ingest(
     timeout=30.0
 )
 
+# Render mode (with JavaScript execution) - NEW in v0.2
+doc_render = ingest(
+    url="https://react-app.com",
+    mode="render",  # Uses Playwright
+    strict=True,
+    model="gpt-4",
+    timeout=60.0  # Render mode needs more time
+)
+
 # Analyze security
 scorer = Scorer()
-risk_level = scorer.get_risk_level(doc.injection_score)
-recommendation = scorer.get_recommendation(doc.injection_score)
+risk_level = scorer.get_risk_level(doc_fast.injection_score)
+recommendation = scorer.get_recommendation(doc_fast.injection_score)
 
 print(f"Risk Level: {risk_level}")
 print(f"Recommendation: {recommendation}")
 
 # Access metadata
-print(f"Title: {doc.metadata['title']}")
-print(f"Fetch time: {doc.metadata['fetch_time_ms']}ms")
-print(f"Token savings: {doc.metadata['token_savings']}")
+print(f"Title: {doc_fast.metadata['title']}")
+print(f"Mode: {doc_fast.metadata['mode']}")  # 'fast' or 'render'
+print(f"Fetch time: {doc_fast.metadata['fetch_time_ms']}ms")
+print(f"Token savings: {doc_fast.metadata['token_savings']}")
 ```
 
 #### Batch Processing
@@ -230,7 +255,7 @@ print(f"\nSafe documents: {len(safe_docs)}/{len(urls)}")
 | Option | Description |
 |--------|-------------|
 | `url` | Target URL to ingest (positional) |
-| `--render` | Use render mode (Playwright, v0.2+) |
+| `--render` | ✨ **NEW** Use render mode (Playwright for SPAs) |
 | `--strict` | Enable strict security mode (default) |
 | `--permissive` | Disable strict mode |
 | `--model MODEL` | LLM model for token estimation (default: gpt-4) |
@@ -258,7 +283,7 @@ ingest(
 **Parameters:**
 
 - `url` — Target URL to ingest
-- `mode` — Fetching mode: `"fast"` (HTTP only) or `"render"` (with JS, v0.2+)
+- `mode` — Fetching mode: `"fast"` (HTTP only) or `"render"` (Playwright with JS) ✨ **NEW**
 - `strict` — Enable strict security mode
 - `model` — LLM model for token estimation (`gpt-4`, `claude`, `gpt-3.5-turbo`)
 - `timeout` — Request timeout in seconds
@@ -416,9 +441,9 @@ markdown_ingress/
 
 | Version | Status | Features |
 |---------|--------|----------|
-| **v0.1** | ✅ Current | Fast mode, injection detection, CLI, token estimation |
-| **v0.2** | 🔜 Planned | Playwright render mode, structural hashing, enhanced JSON reports |
-| **v0.3** | 📋 Future | Policy engine, plugin system, batch ingestion, caching |
+| **v0.1** | ✅ Released | Fast mode, injection detection, CLI, token estimation |
+| **v0.2** | ✅ **Current** | ✨ Playwright render mode, SPA support, 28 tests |
+| **v0.3** | 📋 Planned | Policy engine, plugin system, batch ingestion, caching |
 
 ---
 
@@ -431,6 +456,8 @@ markdown_ingress/
   - `readability-lxml` — Content extraction
   - `markdownify` — HTML → Markdown conversion
   - `tiktoken` — Token counting
+- Optional (for render mode):
+  - `playwright` — Headless browser automation ✨ **NEW**
 
 See [pyproject.toml](pyproject.toml) for complete dependency list.
 
@@ -457,10 +484,10 @@ pytest tests/ --cov=markdown_ingress  # With coverage
 
 ### Project Stats
 
-- **24 files** created
-- **1,157 lines** of Python code
-- **21 tests** (100% passing)
-- **7 core modules** + API + CLI
+- **29 files** created
+- **1,400+ lines** of Python code
+- **28 tests** (100% passing)
+- **8 core modules** + API + CLI + Renderer
 
 ---
 
@@ -488,13 +515,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 A: Those are converters. MarkDownIngress is an **ingestion security engine** with injection detection, deterministic hashing, and LLM-optimized output.
 
 **Q: Does it work with JavaScript-heavy sites?**  
-A: v0.1 supports fast mode (static HTML). Render mode with Playwright is coming in v0.2.
+A: ✨ **Yes!** v0.2 includes Playwright render mode for full SPA support. Use `mode="render"` or `--render` flag.
 
 **Q: How accurate is the injection detection?**  
 A: Pattern-based heuristics catch common attacks. Not ML-based, but highly effective for known patterns. Customize for your use case.
 
 **Q: Can I use this in production?**  
-A: v0.1 is alpha. Use with caution and review security scores manually for critical applications.
+A: v0.2 is beta. Fast mode is stable. Render mode is production-ready but slower. Review security scores for critical applications.
 
 **Q: How is this different from Trafilatura/Newspaper3k?**  
 A: Those focus on article extraction. We add **security analysis**, **deterministic hashing**, and **LLM-specific token optimization**.
