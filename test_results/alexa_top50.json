@@ -1,0 +1,326 @@
+{
+  "summary": {
+    "total": 50,
+    "successful": 44,
+    "failed": 6,
+    "success_rate": 88.0
+  },
+  "results": [
+    {
+      "url": "https://www.google.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.0,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.youtube.com",
+      "success": true,
+      "tokens": 869,
+      "injection_score": 0.0,
+      "content_hash": "sha256:43b93637e40c96d5ef0e06cbaf546c7740f8dfe8e243e6c8a7e2170edf7c33c4"
+    },
+    {
+      "url": "https://www.facebook.com",
+      "success": true,
+      "tokens": 193,
+      "injection_score": 0.303,
+      "content_hash": "sha256:890556d247f57d3d01cf046fdec7f20e6ca362f3c5fa399c28d9a779ca0cd3a3"
+    },
+    {
+      "url": "https://www.amazon.com",
+      "success": true,
+      "tokens": 1198,
+      "injection_score": 0.3,
+      "content_hash": "sha256:2bce26b7d5397f7b7e3023871cdd0621b8b862743d023b78859c5e5b72292d0a"
+    },
+    {
+      "url": "https://www.wikipedia.org",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.3,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.twitter.com",
+      "success": true,
+      "tokens": 61,
+      "injection_score": 0.316,
+      "content_hash": "sha256:47e33b84b193e589ef512827e31aacd2b8cd9aa22e49ad1e4ef217a8915b5206"
+    },
+    {
+      "url": "https://www.reddit.com",
+      "success": true,
+      "tokens": 15,
+      "injection_score": 0.3,
+      "content_hash": "sha256:6d952343f35f7c396752c8a73f6cda1739e2898c683dd0ec3c91cb52453b1d23"
+    },
+    {
+      "url": "https://www.instagram.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.3,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.linkedin.com",
+      "success": true,
+      "tokens": 45,
+      "injection_score": 0.3,
+      "content_hash": "sha256:97433e096b7e7a766362ae344dee997dde3e687e4eaadf1f4311c674202ca1d8"
+    },
+    {
+      "url": "https://www.netflix.com",
+      "success": true,
+      "tokens": 238,
+      "injection_score": 0.3,
+      "content_hash": "sha256:10eb91b952893106a520fcd9436092e8b7d59ababb7c8091e575001478a8dea6"
+    },
+    {
+      "url": "https://www.yahoo.com",
+      "success": true,
+      "tokens": 22,
+      "injection_score": 0.3,
+      "content_hash": "sha256:3d6a090179c9bd20a2822d420c9f20d6c2d3718bf2af6213280a76e9496a7b08"
+    },
+    {
+      "url": "https://www.bing.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.0,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.microsoft.com",
+      "success": true,
+      "tokens": 8652,
+      "injection_score": 0.303,
+      "content_hash": "sha256:30c8cb000379f53c9799f2dd7f3993e321374a0b1c3797614d1b3a667d8f0f2f"
+    },
+    {
+      "url": "https://www.apple.com",
+      "success": true,
+      "tokens": 42,
+      "injection_score": 0.3,
+      "content_hash": "sha256:38ed9f72873e51a979a1f659f57e91a5ac8c6919637cb2e601c94a7f44af91bc"
+    },
+    {
+      "url": "https://www.ebay.com",
+      "success": true,
+      "tokens": 365,
+      "injection_score": 0.3,
+      "content_hash": "sha256:938bfb80ed6d82d49d9c276c5315c3c26707ee2cb958be4876e924f00a0a0be4"
+    },
+    {
+      "url": "https://www.twitch.tv",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.3,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.imdb.com",
+      "success": true,
+      "tokens": 19,
+      "injection_score": 0.3,
+      "content_hash": "sha256:75a5eb3de8226dfc9dca0922d2714d115c6ec1c89239f0dffbea83c551441ad5"
+    },
+    {
+      "url": "https://www.pinterest.com",
+      "success": true,
+      "tokens": 33,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5e868804b663e8d78c976b9b1ec8387f9d441439555823e62d4b92d2bbb45646"
+    },
+    {
+      "url": "https://www.stackoverflow.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.3,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.github.com",
+      "success": true,
+      "tokens": 68,
+      "injection_score": 0.3,
+      "content_hash": "sha256:0d284e10c1da37940a874724425a6041118bfed23959236392f537acc1a73e7a"
+    },
+    {
+      "url": "https://www.paypal.com",
+      "success": true,
+      "tokens": 32,
+      "injection_score": 0.3,
+      "content_hash": "sha256:126e708a1b199a7b23870ae2b92ee8de76dc1520097aadc99770d7cdb86f53f1"
+    },
+    {
+      "url": "https://www.nytimes.com",
+      "success": true,
+      "tokens": 41,
+      "injection_score": 0.3,
+      "content_hash": "sha256:274eeee80eed8a808b56c87a5730a257a32793e76d18dda3e7dbfbffa27c1d54"
+    },
+    {
+      "url": "https://www.cnn.com",
+      "success": true,
+      "tokens": 8,
+      "injection_score": 0.3,
+      "content_hash": "sha256:b76aea0dc5817922e060090bf2fa2350b706321b7a98b004f839b27336dae7ad"
+    },
+    {
+      "url": "https://www.bbc.com",
+      "success": true,
+      "tokens": 47,
+      "injection_score": 0.3,
+      "content_hash": "sha256:29c1a44ca755d3e6bf168f01b23b91c63173a124c411e46eabc27b012cc88db5"
+    },
+    {
+      "url": "https://www.espn.com",
+      "success": true,
+      "tokens": 78,
+      "injection_score": 0.0,
+      "content_hash": "sha256:862afbd3a415f82f5a185c76aeb0021120f6f4ee1c16107a243df21dabecd504"
+    },
+    {
+      "url": "https://www.walmart.com",
+      "success": true,
+      "tokens": 58,
+      "injection_score": 0.3,
+      "content_hash": "sha256:975a8c5fb8fb43d3da46d15b5312920de58b4eab197f0c4ea8234c5136056b8d"
+    },
+    {
+      "url": "https://www.craigslist.org",
+      "success": true,
+      "tokens": 12,
+      "injection_score": 0.3,
+      "content_hash": "sha256:d03522e758d21099c44ce1248ea54b1a4e2c8d5bdea943408c97421c2cb2cbeb"
+    },
+    {
+      "url": "https://www.tumblr.com",
+      "success": true,
+      "tokens": 17,
+      "injection_score": 0.3,
+      "content_hash": "sha256:0117da85a967cbcba59f41a0806a3e57afbc1b2b376dff805b665a9cfe7e6719"
+    },
+    {
+      "url": "https://www.quora.com",
+      "success": true,
+      "tokens": 48,
+      "injection_score": 0.3,
+      "content_hash": "sha256:b53473b10a071a1452089a2fee6bd64b990c1eb046586c36d6362d243d61a83b"
+    },
+    {
+      "url": "https://www.spotify.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.3,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.office.com",
+      "success": true,
+      "tokens": 69,
+      "injection_score": 0.3,
+      "content_hash": "sha256:9f4cf8f0ca0ba1bd9c84d958b068e37a21098a0010bb487c365b88dad84e662c"
+    },
+    {
+      "url": "https://www.zoom.us",
+      "success": true,
+      "tokens": 40,
+      "injection_score": 0.3,
+      "content_hash": "sha256:1a1d0f64e359bcf950d8504e64548df6fe23889f472e56c38300b9fb82fcd278"
+    },
+    {
+      "url": "https://www.medium.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.0,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.fandom.com",
+      "success": true,
+      "tokens": 98,
+      "injection_score": 0.3,
+      "content_hash": "sha256:f220ddd24cd1753b1fed0ce267dc1b3de65216489376f0bb8da7b98a0903e38d"
+    },
+    {
+      "url": "https://www.salesforce.com",
+      "success": true,
+      "tokens": 45,
+      "injection_score": 0.0,
+      "content_hash": "sha256:51e559c24f9160ffbc30e2dfa3820fba39324af15a9804db841916cc3081790d"
+    },
+    {
+      "url": "https://www.dropbox.com",
+      "success": true,
+      "tokens": 1,
+      "injection_score": 0.0,
+      "content_hash": "sha256:01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "url": "https://www.indeed.com",
+      "success": true,
+      "tokens": 48,
+      "injection_score": 0.3,
+      "content_hash": "sha256:021d532f437645ab99df782e72278f44e4c56e47271603236507abc3c6aa7fac"
+    },
+    {
+      "url": "https://www.booking.com",
+      "success": true,
+      "tokens": 17,
+      "injection_score": 0.3,
+      "content_hash": "sha256:db92f5b9d749fb4418f1c7729d8f4048eace4fa7ec12c88f5fbcd9414513c9ab"
+    },
+    {
+      "url": "https://www.tiktok.com",
+      "success": true,
+      "tokens": 31,
+      "injection_score": 0.3,
+      "content_hash": "sha256:9774352a93b2adfb4a4cb0e760ea05e4cb1db0c2f7eba45cc0456d2fd5ee6a54"
+    },
+    {
+      "url": "https://www.Chase.com",
+      "success": true,
+      "tokens": 9,
+      "injection_score": 0.0,
+      "content_hash": "sha256:7ae42c22037116692fd02f25d8e962c330220f8ab85dce3bef8bb61f72f4e890"
+    },
+    {
+      "url": "https://www.target.com",
+      "success": true,
+      "tokens": 20,
+      "injection_score": 0.3,
+      "content_hash": "sha256:53c35a5bd433230bef822a3995a08920b41dddff6ec13d74721801e890e18def"
+    },
+    {
+      "url": "https://www.adobe.com",
+      "success": true,
+      "tokens": 35,
+      "injection_score": 0.3,
+      "content_hash": "sha256:c07da0781e5edbd011c96d3be0dc62975cea9a6f6cecdf06df59e0bd26fa039a"
+    },
+    {
+      "url": "https://www.bestbuy.com",
+      "success": true,
+      "tokens": 116,
+      "injection_score": 0.3,
+      "content_hash": "sha256:cf3430b40fcd61f1f6c9c1951f7f6d78c39b174dac62835e820c6e76ce9d2486"
+    },
+    {
+      "url": "https://www.weather.com",
+      "success": true,
+      "tokens": 54,
+      "injection_score": 0.3,
+      "content_hash": "sha256:7a9db9b80c2e1ab6d212e993444b430fab0254104a5e802ffd9d6bed186a8f04"
+    }
+  ],
+  "errors": {
+    "https://www.quora.com": "Client error '403 Forbidden' for url 'https://www.quora.com'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+    "https://www.medium.com": "Client error '403 Forbidden' for url 'https://medium.com/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+    "https://www.indeed.com": "Client error '403 Forbidden' for url 'https://www.indeed.com'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+    "https://www.homedepot.com": "Client error '403 Forbidden' for url 'https://www.homedepot.com'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+    "https://www.bestbuy.com": "",
+    "https://www.costco.com": ""
+  }
+}

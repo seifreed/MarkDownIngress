@@ -91,6 +91,19 @@ class BatchProcessor:
         Raises:
             Exception: On processing errors
         """
+        # Handle auto mode
+        if self.mode == "auto":
+            from markdown_ingress.api import ingest
+            # Use high-level API which handles auto mode logic
+            # Run in thread pool since ingest is synchronous
+            import asyncio
+            loop = asyncio.get_event_loop()
+            doc = await loop.run_in_executor(
+                None,
+                lambda: ingest(url, mode="auto", strict=self.strict, model=self.model, timeout=self.timeout)
+            )
+            return doc
+        
         # Fetch HTML based on mode
         if self.mode == "render":
             if not RENDERER_AVAILABLE:

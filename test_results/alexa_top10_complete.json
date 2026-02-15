@@ -1,0 +1,276 @@
+{
+  "summary": {
+    "total": 10,
+    "successful": 10,
+    "failed": 0,
+    "success_rate": 100.0
+  },
+  "results": [
+    {
+      "url": "https://www.google.com",
+      "success": true,
+      "tokens": 855,
+      "injection_score": 0.0,
+      "content_hash": "sha256:60aca314292a0b662a521f6a62f8f74472f8c18850b5775ba78b4115df25e030",
+      "metadata": {
+        "url": "https://www.google.com",
+        "final_url": "https://www.google.com",
+        "title": "Google",
+        "fetch_time_ms": 231.89116598223336,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 19988,
+          "markdown_tokens": 855,
+          "saved_tokens": 19133,
+          "savings_percent": 95.72
+        },
+        "risk_level": "safe",
+        "structural_hash": "sha256:6fd5d800055625367c6ada48ffbfe5b7bdd8c80a7575d26d9d5262a2fb49b153",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.youtube.com",
+      "success": true,
+      "tokens": 1189,
+      "injection_score": 0.3,
+      "content_hash": "sha256:a428d282792ae89243dcc43f77f84e4b5200ce574c0c0bbf4598f9182a0424c9",
+      "metadata": {
+        "url": "https://www.facebook.com",
+        "final_url": "https://www.facebook.com",
+        "title": "Facebook - Entrar o registrarse",
+        "fetch_time_ms": 333.3646660030354,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 55746,
+          "markdown_tokens": 1189,
+          "saved_tokens": 54557,
+          "savings_percent": 97.87
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:b44c21e67e7cb49c0665ce89ff9a3aa807786900a4394696b8a131c929665c39",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.facebook.com",
+      "success": true,
+      "tokens": 193,
+      "injection_score": 0.303,
+      "content_hash": "sha256:890556d247f57d3d01cf046fdec7f20e6ca362f3c5fa399c28d9a779ca0cd3a3",
+      "metadata": {
+        "url": "https://www.wikipedia.org",
+        "final_url": "https://www.wikipedia.org",
+        "title": "Wikipedia",
+        "fetch_time_ms": 239.99141599051654,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 71855,
+          "markdown_tokens": 193,
+          "saved_tokens": 71662,
+          "savings_percent": 99.73
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:6791cb36b88636eadc1b64b9b94bf1f74a4f052cf21be3b4907e90b680027f80",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.amazon.com",
+      "success": true,
+      "tokens": 61,
+      "injection_score": 0.316,
+      "content_hash": "sha256:47e33b84b193e589ef512827e31aacd2b8cd9aa22e49ad1e4ef217a8915b5206",
+      "metadata": {
+        "url": "https://www.twitter.com",
+        "final_url": "https://x.com/",
+        "title": "[no-title]",
+        "fetch_time_ms": 640.7448750105686,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 63608,
+          "markdown_tokens": 61,
+          "saved_tokens": 63547,
+          "savings_percent": 99.9
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d999dbc9ecac63f409af5b2cc6f7d573f0231a926db8486040e6e2cc260744d5",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.wikipedia.org",
+      "success": true,
+      "tokens": 14,
+      "injection_score": 0.3,
+      "content_hash": "sha256:730adca8daa3c54258dc142b7aea0a25f79187b036489675964750c79c73e888",
+      "metadata": {
+        "url": "https://www.amazon.com",
+        "final_url": "https://www.amazon.com/",
+        "title": "Amazon.com. Spend less. Smile more.",
+        "fetch_time_ms": 2858.4174170100596,
+        "status_code": 202,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 314069,
+          "markdown_tokens": 14,
+          "saved_tokens": 314055,
+          "savings_percent": 100.0
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:730adca8daa3c54258dc142b7aea0a25f79187b036489675964750c79c73e888",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.twitter.com",
+      "success": true,
+      "tokens": 355,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5fb325b8e2bd6df75ef871a5493273ef148b92ebe71a6496ac4b96314fb79acc",
+      "metadata": {
+        "url": "https://www.youtube.com",
+        "final_url": "https://www.youtube.com/",
+        "title": "YouTube",
+        "fetch_time_ms": 3190.8038329856936,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 378906,
+          "markdown_tokens": 355,
+          "saved_tokens": 378551,
+          "savings_percent": 99.91
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:ddeabd2a1f221a6bfbe26dbbad1c242813eba92876a337980a1f758580b71083",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.reddit.com",
+      "success": true,
+      "tokens": 116,
+      "injection_score": 0.3,
+      "content_hash": "sha256:404d7204b140b0eecd6e48332e5032da058993277e3de52bd6a21b4abcdf87df",
+      "metadata": {
+        "url": "https://www.reddit.com",
+        "final_url": "https://www.reddit.com/",
+        "title": "Reddit - The heart of the internet",
+        "fetch_time_ms": 3687.046457984252,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 354710,
+          "markdown_tokens": 116,
+          "saved_tokens": 354594,
+          "savings_percent": 99.97
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:ddeabd2a1f221a6bfbe26dbbad1c242813eba92876a337980a1f758580b71083",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 45
+      }
+    },
+    {
+      "url": "https://www.instagram.com",
+      "success": true,
+      "tokens": 666,
+      "injection_score": 0.304,
+      "content_hash": "sha256:56f6f691f90c99f56bf83f455db14c29e240534c2303a74692cb06481e4fd467",
+      "metadata": {
+        "url": "https://www.instagram.com",
+        "final_url": "https://www.instagram.com/",
+        "title": "Instagram",
+        "fetch_time_ms": 3081.8928749940824,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 273553,
+          "markdown_tokens": 666,
+          "saved_tokens": 272887,
+          "savings_percent": 99.76
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:32313fcdf4380a36f11b7288ae82b7209dfa0dfefbc6a55b699c57c5c7013b66",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.linkedin.com",
+      "success": true,
+      "tokens": 365,
+      "injection_score": 0.3,
+      "content_hash": "sha256:938bfb80ed6d82d49d9c276c5315c3c26707ee2cb958be4876e924f00a0a0be4",
+      "metadata": {
+        "url": "https://www.netflix.com",
+        "final_url": "https://www.netflix.com/es-en/",
+        "title": "Netflix Spain - Watch TV Shows Online, Watch Movies Online",
+        "fetch_time_ms": 1505.8643340016715,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 1540122,
+          "markdown_tokens": 365,
+          "saved_tokens": 1539757,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:6fc54e724d237ef10c5d6eb92bd10f7209bd38ec662b1ecbe516f0feca4b8db8",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.netflix.com",
+      "success": true,
+      "tokens": 104,
+      "injection_score": 0.308,
+      "content_hash": "sha256:e27503736f8dffcf0578750afb07bf0d6df8d4c2240b215c57b55c3facde22f4",
+      "metadata": {
+        "url": "https://www.linkedin.com",
+        "final_url": "https://www.linkedin.com/",
+        "title": "LinkedIn: Log In or Sign Up",
+        "fetch_time_ms": 4442.804916994646,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 43696,
+          "markdown_tokens": 104,
+          "saved_tokens": 43592,
+          "savings_percent": 99.76
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:48e5c87a4c632e8e7d0ac4579f9b03d444ea56851368f19a1bff1ea3bd327523",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 15
+      }
+    }
+  ],
+  "errors": {}
+}

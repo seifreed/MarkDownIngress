@@ -1,0 +1,81 @@
+{
+  "summary": {
+    "total": 10,
+    "successful": 10,
+    "failed": 0,
+    "success_rate": 100.0
+  },
+  "results": [
+    {
+      "url": "https://www.google.com",
+      "success": true,
+      "tokens": 869,
+      "injection_score": 0.0,
+      "content_hash": "sha256:61503684ae5bf7b9e5824ca62e6b13855dc7ac11af4b242ce919a9827d5c1760"
+    },
+    {
+      "url": "https://www.youtube.com",
+      "success": true,
+      "tokens": 1203,
+      "injection_score": 0.3,
+      "content_hash": "sha256:1e142cc716fae5a6d0ed2f52295634cbd386bdda1fda5ce2adc27a25ad32fa1e"
+    },
+    {
+      "url": "https://www.facebook.com",
+      "success": true,
+      "tokens": 193,
+      "injection_score": 0.303,
+      "content_hash": "sha256:890556d247f57d3d01cf046fdec7f20e6ca362f3c5fa399c28d9a779ca0cd3a3"
+    },
+    {
+      "url": "https://www.amazon.com",
+      "success": true,
+      "tokens": 61,
+      "injection_score": 0.316,
+      "content_hash": "sha256:47e33b84b193e589ef512827e31aacd2b8cd9aa22e49ad1e4ef217a8915b5206"
+    },
+    {
+      "url": "https://www.wikipedia.org",
+      "success": true,
+      "tokens": 14,
+      "injection_score": 0.3,
+      "content_hash": "sha256:730adca8daa3c54258dc142b7aea0a25f79187b036489675964750c79c73e888"
+    },
+    {
+      "url": "https://www.twitter.com",
+      "success": true,
+      "tokens": 355,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5fb325b8e2bd6df75ef871a5493273ef148b92ebe71a6496ac4b96314fb79acc"
+    },
+    {
+      "url": "https://www.reddit.com",
+      "success": true,
+      "tokens": 116,
+      "injection_score": 0.3,
+      "content_hash": "sha256:404d7204b140b0eecd6e48332e5032da058993277e3de52bd6a21b4abcdf87df"
+    },
+    {
+      "url": "https://www.instagram.com",
+      "success": true,
+      "tokens": 666,
+      "injection_score": 0.304,
+      "content_hash": "sha256:56f6f691f90c99f56bf83f455db14c29e240534c2303a74692cb06481e4fd467"
+    },
+    {
+      "url": "https://www.linkedin.com",
+      "success": true,
+      "tokens": 365,
+      "injection_score": 0.3,
+      "content_hash": "sha256:938bfb80ed6d82d49d9c276c5315c3c26707ee2cb958be4876e924f00a0a0be4"
+    },
+    {
+      "url": "https://www.netflix.com",
+      "success": true,
+      "tokens": 104,
+      "injection_score": 0.308,
+      "content_hash": "sha256:e27503736f8dffcf0578750afb07bf0d6df8d4c2240b215c57b55c3facde22f4"
+    }
+  ],
+  "errors": {}
+}

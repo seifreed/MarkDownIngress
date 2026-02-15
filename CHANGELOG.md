@@ -5,6 +5,34 @@ All notable changes to MarkDownIngress will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [0.4.1] - 2025-02-15
+
+### Added
+- **Automatic Mode Detection**: New `auto` mode intelligently switches between fast and render modes
+  - Tries fast mode first (HTTP-only, fast & cheap)
+  - Auto-upgrades to render mode if content is minimal (< 50 tokens)
+  - Returns whichever mode provides better content
+  - Configurable threshold via `auto_render_threshold` parameter
+- Metadata tracking for auto mode decisions:
+  - `auto_mode_used`: Which mode was ultimately used ("fast" or "render")
+  - `fast_mode_tokens`: Token count from fast mode attempt (for comparison)
+
+### Changed
+- **Breaking**: Default mode changed from `"fast"` to `"auto"` in both CLI and API
+- CLI now supports `--auto`, `--fast`, and `--render` flags for explicit mode selection
+- Batch processing now supports auto mode with concurrent processing
+- Batch JSON output now includes full metadata for analysis
+
+### Tested
+- Alexa Top 50 validation: 80% success rate (40/50 sites)
+- Auto mode correctly identified SPAs in 47.5% of cases
+- Sites like Wikipedia, Twitter auto-upgraded from 1 token → 355-666 tokens
+- See ALEXA_TOP50_AUTO_MODE_REPORT.md for detailed analysis
+
+---
+
 ## [0.4.0] - 2026-02-15
 
 ### Added

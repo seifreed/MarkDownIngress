@@ -109,8 +109,12 @@ def _ingest_with_mode(
     model: str,
     timeout: float
 ) -> SafeDocument:
-    """
-    Internal function to perform ingestion with a specific mode.
+        
+    Example:
+        >>> from markdown_ingress import ingest
+        >>> doc = ingest("https://example.com", mode="fast", strict=True)
+        >>> print(doc.markdown)
+        >>> print(f"Injection score: {doc.injection_score}")
     """
     # Initialize components
     extractor = Extractor(strict=strict)
@@ -190,7 +194,7 @@ def _ingest_with_mode(
 
 def generate_security_report(
     url: str,
-    mode: Literal["fast", "render", "auto"] = "auto",
+    mode: Literal["fast", "render"] = "fast",
     strict: bool = True,
     model: str = "gpt-4",
     timeout: float = 30.0

@@ -25,8 +25,13 @@ def cmd_ingest(args):
     # Determine strict mode
     strict = args.strict and not args.permissive
     
-    # Determine mode
-    mode = "render" if args.render else "fast"
+    # Determine mode (priority: fast > render > auto)
+    if hasattr(args, 'fast') and args.fast:
+        mode = "fast"
+    elif hasattr(args, 'render') and args.render:
+        mode = "render"
+    else:
+        mode = "auto"
     
     try:
         # Ingest content
@@ -136,7 +141,14 @@ def cmd_batch(args):
     console.print()
     
     # Configure batch processor
-    mode = "render" if args.render else "fast"
+    # Determine mode (priority: fast > render > auto)
+    if hasattr(args, 'fast') and args.fast:
+        mode = "fast"
+    elif hasattr(args, 'render') and args.render:
+        mode = "render"
+    else:
+        mode = "auto"
+    
     strict = args.strict and not args.permissive
     
     processor = BatchProcessor(
@@ -229,7 +241,8 @@ def cmd_batch(args):
                         'success': True,
                         'tokens': doc.token_estimate,
                         'injection_score': doc.injection_score,
-                        'content_hash': doc.content_hash
+                        'content_hash': doc.content_hash,
+                        'metadata': doc.metadata  # Include full metadata
                     }
                     for i, doc in enumerate(batch_result.documents) if doc
                 ],
@@ -263,7 +276,9 @@ def main():
     # Ingest command (default, also support legacy single URL)
     ingest_parser = subparsers.add_parser('ingest', help='Ingest single URL')
     ingest_parser.add_argument('url', help='URL to ingest')
-    ingest_parser.add_argument('--render', action='store_true', help='Use render mode (Playwright)')
+    ingest_parser.add_argument('--auto', action='store_true', default=True, help='Auto-detect mode (default)')
+    ingest_parser.add_argument('--render', action='store_true', help='Force render mode (Playwright)')
+    ingest_parser.add_argument('--fast', action='store_true', help='Force fast mode (HTTP only)')
     ingest_parser.add_argument('--strict', action='store_true', default=True, help='Enable strict security mode')
     ingest_parser.add_argument('--permissive', action='store_true', help='Disable strict mode')
     ingest_parser.add_argument('--model', default='gpt-4', help='LLM model for token estimation')
@@ -275,7 +290,9 @@ def main():
     # Batch command
     batch_parser = subparsers.add_parser('batch', help='Process multiple URLs from file')
     batch_parser.add_argument('file', help='File containing URLs (one per line)')
-    batch_parser.add_argument('--render', action='store_true', help='Use render mode')
+    batch_parser.add_argument('--auto', action='store_true', default=True, help='Auto-detect mode (default)')
+    batch_parser.add_argument('--render', action='store_true', help='Force render mode for all URLs')
+    batch_parser.add_argument('--fast', action='store_true', help='Force fast mode for all URLs')
     batch_parser.add_argument('--strict', action='store_true', default=True, help='Enable strict security mode')
     batch_parser.add_argument('--permissive', action='store_true', help='Disable strict mode')
     batch_parser.add_argument('--timeout', type=float, default=30.0, help='Request timeout per URL')
