@@ -3,40 +3,119 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyo
+*.pyd
+.Python
 
 # Virtual environments
 venv/
 env/
 ENV/
 .venv
+env.bak/
+venv.bak/
+pythonenv*
 
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 *.cover
+.hypothesis/
+.tox/
+coverage.xml
+*.log
 
-# IDE
+# IDE & Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
 
 # Distribution / packaging
 build/
+develop-eggs/
 dist/
-*.egg-info/
+downloads/
+eggs/
 .eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# OS
+# OS files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Logs
-*.log
+# AI Assistant files
+.claude/
+CLAUDE.md
+.cursor/
+.aider*
+.copilot/
+
+# Local development
+.env
+.env.local
+.env.*.local
+*.local
+secrets.py
+secrets.json
+.secrets/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
 
 # Local test files
 test_output/
 *.md.test
 *.json.test
+scratch/
+playground/
+tmp/
+temp/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Ruff
+.ruff_cache/
