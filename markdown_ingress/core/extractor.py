@@ -19,6 +19,7 @@ class Extractor:
     def extract(self, html: str, url: str) -> ExtractionResult:
         """
         Extract main content using readability and clean DOM.
+        Falls back to full-page extraction if readability returns empty content.
         
         Args:
             html: Raw HTML content
@@ -38,6 +39,19 @@ class Extractor:
         
         # Get main content HTML
         content_html = doc.summary(html_partial=False)
+        
+        # Check if readability returned meaningful content
+        # If the output is essentially empty (just <html><body></body></html>)
+        # fall back to using the body of the pre-cleaned HTML
+        if len(content_html.strip()) < 50 or '<body></body>' in content_html:
+            # Fallback: use body from pre-cleaned HTML
+            tree_fallback = HTMLParser(pre_cleaned_html)
+            body = tree_fallback.css_first('body')
+            if body:
+                content_html = f"<html><body>{body.html}</body></html>"
+            else:
+                # Ultimate fallback: use entire pre-cleaned HTML
+                content_html = pre_cleaned_html
         
         # Parse with selectolax for fast manipulation
         tree = HTMLParser(content_html)
