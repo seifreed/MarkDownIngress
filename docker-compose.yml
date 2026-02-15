@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: markdown-ingress-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Cache directory for Playwright and HTTP responses
+      - markdown-ingress-cache:/app/cache
+    environment:
+      # Environment variables
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=info
+      # Playwright specific
+      - PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  markdown-ingress-cache:
+    driver: local

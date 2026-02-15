@@ -20,10 +20,9 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from markdown_ingress.models import FetchResult
-
 
 # ============================================================================
 # COMPREHENSIVE STEALTH JAVASCRIPT INJECTION
@@ -397,71 +396,57 @@ automationProps.forEach(prop => {
 
 ULTRA_STEALTH_ARGS = [
     # Core automation hiding
-    '--disable-blink-features=AutomationControlled',
-    
+    "--disable-blink-features=AutomationControlled",
     # Isolation and security features to disable
-    '--disable-features=IsolateOrigins,site-per-process',
-    '--disable-site-isolation-trials',
-    '--disable-web-security',
-    
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--disable-site-isolation-trials",
+    "--disable-web-security",
     # Resource optimization
-    '--disable-dev-shm-usage',
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
     # UI and extensions
-    '--disable-infobars',
-    '--disable-extensions',
-    '--disable-default-apps',
-    
+    "--disable-infobars",
+    "--disable-extensions",
+    "--disable-default-apps",
     # Window and display settings
-    '--window-size=1920,1080',
-    '--start-maximized',
-    '--force-color-profile=srgb',
-    
+    "--window-size=1920,1080",
+    "--start-maximized",
+    "--force-color-profile=srgb",
     # GPU and rendering
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    
+    "--disable-gpu",
+    "--disable-software-rasterizer",
     # Background processes and throttling
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
-    '--disable-background-networking',
-    
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-networking",
     # Network and IPC
-    '--disable-ipc-flooding-protection',
-    '--disable-hang-monitor',
-    
+    "--disable-ipc-flooding-protection",
+    "--disable-hang-monitor",
     # Startup and prompts
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--no-service-autorun',
-    
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--no-service-autorun",
     # Password and credentials
-    '--password-store=basic',
-    '--use-mock-keychain',
-    
+    "--password-store=basic",
+    "--use-mock-keychain",
     # Audio
-    '--mute-audio',
-    '--autoplay-policy=no-user-gesture-required',
-    
+    "--mute-audio",
+    "--autoplay-policy=no-user-gesture-required",
     # Metrics and reporting
-    '--disable-client-side-phishing-detection',
-    '--disable-component-update',
-    '--disable-domain-reliability',
-    
+    "--disable-client-side-phishing-detection",
+    "--disable-component-update",
+    "--disable-domain-reliability",
     # Sync and cloud features
-    '--disable-sync',
-    '--disable-translate',
-    
+    "--disable-sync",
+    "--disable-translate",
     # Additional privacy
-    '--disable-breakpad',
-    '--disable-crash-reporter',
-    
+    "--disable-breakpad",
+    "--disable-crash-reporter",
     # Performance
-    '--enable-features=NetworkService,NetworkServiceInProcess',
-    '--force-device-scale-factor=1',
+    "--enable-features=NetworkService,NetworkServiceInProcess",
+    "--force-device-scale-factor=1",
 ]
 
 
@@ -469,10 +454,11 @@ ULTRA_STEALTH_ARGS = [
 # ADVANCED CONFIGURATION
 # ============================================================================
 
+
 @dataclass
 class AdvancedStealthConfig:
     """Advanced stealth configuration with full customization."""
-    
+
     user_agent: str
     viewport_width: int
     viewport_height: int
@@ -482,14 +468,14 @@ class AdvancedStealthConfig:
     permissions: list[str] = field(default_factory=lambda: ["geolocation", "notifications"])
     extra_http_headers: dict[str, str] = field(default_factory=dict)
     browser_args: list[str] = field(default_factory=list)
-    
+
     # Advanced features
     enable_javascript: bool = True
     bypass_csp: bool = True
     ignore_https_errors: bool = True
     has_touch: bool = False
     is_mobile: bool = False
-    geolocation: Optional[dict] = None
+    geolocation: dict | None = None
 
 
 # Enhanced user agent pool with more variety
@@ -499,42 +485,34 @@ ADVANCED_USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    
     # Chrome 120-123 (macOS)
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    
     # Chrome 120-123 (Linux)
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    
     # Edge 120-123 (Windows)
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
-    
     # Edge (macOS)
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
-    
     # Firefox 121-124 (Windows)
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-    
     # Firefox (macOS)
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
-    
     # Firefox (Linux)
     "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0",
-    
     # Safari 17 (macOS)
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
@@ -546,11 +524,11 @@ ADVANCED_USER_AGENTS = [
 ADVANCED_VIEWPORT_SIZES = [
     # Common desktop resolutions
     (1920, 1080),  # Full HD (most common)
-    (1366, 768),   # Common laptop
-    (1440, 900),   # MacBook Pro 13"
-    (1536, 864),   # Surface/Windows scaled
-    (1280, 720),   # HD
-    (1600, 900),   # HD+
+    (1366, 768),  # Common laptop
+    (1440, 900),  # MacBook Pro 13"
+    (1536, 864),  # Surface/Windows scaled
+    (1280, 720),  # HD
+    (1600, 900),  # HD+
     (2560, 1440),  # 2K
     (1680, 1050),  # Legacy wide
     (1280, 1024),  # 5:4 ratio
@@ -594,24 +572,25 @@ REALISTIC_HEADERS = {
 # HELPER FUNCTIONS
 # ============================================================================
 
+
 def get_advanced_stealth_config(
     randomize: bool = True,
-    user_agent: Optional[str] = None,
-    viewport: Optional[tuple[int, int]] = None,
-    timezone: Optional[str] = None,
+    user_agent: str | None = None,
+    viewport: tuple[int, int] | None = None,
+    timezone: str | None = None,
 ) -> AdvancedStealthConfig:
     """
     Get an advanced stealth configuration with maximum anti-detection.
-    
+
     Args:
         randomize: Whether to randomize user agent and viewport
         user_agent: Custom user agent (overrides randomization)
         viewport: Custom viewport as (width, height) tuple
         timezone: Custom timezone (e.g., "America/New_York")
-    
+
     Returns:
         AdvancedStealthConfig: Comprehensive stealth configuration
-    
+
     Example:
         >>> config = get_advanced_stealth_config()
         >>> print(config.user_agent)
@@ -627,12 +606,12 @@ def get_advanced_stealth_config(
         selected_ua = user_agent or ADVANCED_USER_AGENTS[0]
         selected_viewport = viewport or ADVANCED_VIEWPORT_SIZES[0]
         selected_timezone = timezone or TIMEZONES[0]
-    
+
     viewport_width, viewport_height = selected_viewport
-    
+
     # Randomize device scale factor (1.0 to 2.0)
     device_scale_factor = round(random.uniform(1.0, 2.0), 2) if randomize else 1.0
-    
+
     return AdvancedStealthConfig(
         user_agent=selected_ua,
         viewport_width=viewport_width,
@@ -647,26 +626,26 @@ def get_advanced_stealth_config(
 
 
 def get_advanced_context_options(
-    stealth_config: Optional[AdvancedStealthConfig] = None,
+    stealth_config: AdvancedStealthConfig | None = None,
 ) -> dict[str, Any]:
     """
     Get browser context options with all anti-detection measures enabled.
-    
+
     Args:
         stealth_config: Optional AdvancedStealthConfig. If not provided,
                        a randomized one is generated.
-    
+
     Returns:
         dict: Context options suitable for playwright's browser.new_context()
               with comprehensive stealth settings.
-    
+
     Example:
         >>> options = get_advanced_context_options()
         >>> context = await browser.new_context(**options)
     """
     if stealth_config is None:
         stealth_config = get_advanced_stealth_config()
-    
+
     context_options = {
         "user_agent": stealth_config.user_agent,
         "viewport": {
@@ -683,22 +662,22 @@ def get_advanced_context_options(
         "is_mobile": stealth_config.is_mobile,
         "extra_http_headers": stealth_config.extra_http_headers,
     }
-    
+
     # Add permissions
     if stealth_config.permissions:
         context_options["permissions"] = stealth_config.permissions
-    
+
     # Add geolocation if specified
     if stealth_config.geolocation:
         context_options["geolocation"] = stealth_config.geolocation
-    
+
     return context_options
 
 
 async def inject_stealth(page):
     """
     Inject all stealth scripts into a Playwright page.
-    
+
     This function patches all known detection vectors including:
     - navigator.webdriver
     - Chrome runtime
@@ -706,13 +685,13 @@ async def inject_stealth(page):
     - Canvas fingerprinting
     - Plugin detection
     - And many more...
-    
+
     Args:
         page: Playwright Page object
-    
+
     Returns:
         None (modifies page in-place)
-    
+
     Example:
         >>> page = await context.new_page()
         >>> await inject_stealth(page)
@@ -720,7 +699,7 @@ async def inject_stealth(page):
     """
     # Inject main stealth script before page loads
     await page.add_init_script(STEALTH_JS_INJECTION)
-    
+
     # Add post-load stealth script
     try:
         await page.evaluate(STEALTH_JS_POST_LOAD)
@@ -734,10 +713,11 @@ async def inject_stealth(page):
 # ADVANCED STEALTH RENDERER
 # ============================================================================
 
+
 class AdvancedStealthRenderer:
     """
     Advanced Playwright renderer with maximum bot detection evasion.
-    
+
     Features:
     - Ultra stealth browser arguments
     - Comprehensive JavaScript injection
@@ -746,16 +726,16 @@ class AdvancedStealthRenderer:
     - Smart waiting strategies
     - Automatic retry logic
     - HTTP/2 fallback support
-    
+
     Example:
         >>> renderer = AdvancedStealthRenderer()
         >>> result = await renderer.render("https://example.com")
         >>> print(result.html)
     """
-    
+
     DEFAULT_TIMEOUT = 30000  # milliseconds
     DEFAULT_WAIT_UNTIL = "networkidle"
-    
+
     def __init__(
         self,
         timeout: float = 30.0,
@@ -763,11 +743,11 @@ class AdvancedStealthRenderer:
         headless: bool = True,
         randomize_fingerprint: bool = True,
         disable_http2: bool = False,
-        stealth_config: Optional[AdvancedStealthConfig] = None,
+        stealth_config: AdvancedStealthConfig | None = None,
     ):
         """
         Initialize advanced stealth renderer.
-        
+
         Args:
             timeout: Navigation timeout in seconds (default: 30.0)
             wait_until: When to consider navigation complete
@@ -782,27 +762,25 @@ class AdvancedStealthRenderer:
         self.headless = headless
         self.randomize_fingerprint = randomize_fingerprint
         self.disable_http2 = disable_http2
-        
+
         # Generate or use provided stealth config
         if stealth_config is None:
-            self.stealth_config = get_advanced_stealth_config(
-                randomize=randomize_fingerprint
-            )
+            self.stealth_config = get_advanced_stealth_config(randomize=randomize_fingerprint)
         else:
             self.stealth_config = stealth_config
-    
+
     async def render(self, url: str) -> FetchResult:
         """
         Render URL using advanced stealth techniques.
-        
+
         Includes automatic retry logic and HTTP/2 fallback.
-        
+
         Args:
             url: Target URL to render
-        
+
         Returns:
             FetchResult with rendered HTML and metadata
-        
+
         Raises:
             ImportError: If playwright is not installed
             Exception: On unrecoverable errors
@@ -813,7 +791,7 @@ class AdvancedStealthRenderer:
         except Exception as e:
             error_str = str(e)
             # Check for HTTP/2 protocol error
-            if 'ERR_HTTP2_PROTOCOL_ERROR' in error_str and not self.disable_http2:
+            if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:
                 # Retry with HTTP/2 disabled
                 retry_renderer = AdvancedStealthRenderer(
                     timeout=self.timeout / 1000.0,
@@ -824,18 +802,18 @@ class AdvancedStealthRenderer:
                     stealth_config=self.stealth_config,
                 )
                 result = await retry_renderer._render_with_browser(url)
-                result.metadata['http2_fallback'] = True
-                result.metadata['original_error'] = 'ERR_HTTP2_PROTOCOL_ERROR'
+                result.metadata["http2_fallback"] = True
+                result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
                 return result
             raise
-    
+
     async def _render_with_browser(self, url: str) -> FetchResult:
         """
         Internal method to render URL with browser.
-        
+
         Args:
             url: Target URL to render
-        
+
         Returns:
             FetchResult with rendered HTML and metadata
         """
@@ -847,73 +825,71 @@ class AdvancedStealthRenderer:
                 "pip install 'markdown-ingress[render]' or "
                 "pip install playwright && playwright install"
             )
-        
+
         start_time = time.perf_counter()
-        
+
         async with async_playwright() as p:
             # Prepare browser arguments
             browser_args = self.stealth_config.browser_args.copy()
-            
+
             # Add HTTP/2 disable flag if needed
             if self.disable_http2:
-                browser_args.append('--disable-http2')
-            
+                browser_args.append("--disable-http2")
+
             # Launch browser with ultra stealth args
             launch_options = {
-                'headless': self.headless,
-                'args': browser_args,
-                'ignore_default_args': ['--enable-automation'],
+                "headless": self.headless,
+                "args": browser_args,
+                "ignore_default_args": ["--enable-automation"],
             }
-            
+
             browser = await p.chromium.launch(**launch_options)
-            
+
             try:
                 # Create context with advanced stealth options
                 context_options = get_advanced_context_options(self.stealth_config)
                 context = await browser.new_context(**context_options)
-                
+
                 try:
                     # Create page
                     page = await context.new_page()
-                    
+
                     # Inject stealth scripts
                     await inject_stealth(page)
-                    
+
                     # Navigate to URL
                     response = await page.goto(
-                        url,
-                        timeout=self.timeout,
-                        wait_until=self.wait_until
+                        url, timeout=self.timeout, wait_until=self.wait_until
                     )
-                    
+
                     # Additional wait for dynamic content
                     await page.wait_for_timeout(500)
-                    
+
                     # Get final URL (after redirects)
                     final_url = page.url
-                    
+
                     # Get status code
                     status_code = response.status if response else 200
-                    
+
                     # Get rendered HTML
                     html = await page.content()
-                    
+
                     # Get headers
                     headers = dict(response.headers) if response else {}
-                    
+
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    
+
                     # Build metadata
                     metadata = {
-                        'renderer': 'advanced_stealth_playwright',
-                        'user_agent': self.stealth_config.user_agent,
-                        'viewport': f"{self.stealth_config.viewport_width}x{self.stealth_config.viewport_height}",
-                        'device_scale_factor': self.stealth_config.device_scale_factor,
-                        'timezone': self.stealth_config.timezone,
-                        'http2_disabled': self.disable_http2,
-                        'stealth_injected': True,
+                        "renderer": "advanced_stealth_playwright",
+                        "user_agent": self.stealth_config.user_agent,
+                        "viewport": f"{self.stealth_config.viewport_width}x{self.stealth_config.viewport_height}",
+                        "device_scale_factor": self.stealth_config.device_scale_factor,
+                        "timezone": self.stealth_config.timezone,
+                        "http2_disabled": self.disable_http2,
+                        "stealth_injected": True,
                     }
-                    
+
                     return FetchResult(
                         html=html,
                         url=url,
@@ -921,22 +897,22 @@ class AdvancedStealthRenderer:
                         final_url=final_url,
                         headers=headers,
                         timing_ms=elapsed_ms,
-                        metadata=metadata
+                        metadata=metadata,
                     )
-                
+
                 finally:
                     await context.close()
-            
+
             finally:
                 await browser.close()
-    
+
     def render_sync(self, url: str) -> FetchResult:
         """
         Synchronous wrapper for render().
-        
+
         Args:
             url: Target URL to render
-        
+
         Returns:
             FetchResult with rendered HTML
         """
@@ -947,6 +923,7 @@ class AdvancedStealthRenderer:
 # CONVENIENCE FUNCTIONS
 # ============================================================================
 
+
 async def render_with_advanced_stealth(
     url: str,
     timeout: float = 30.0,
@@ -954,15 +931,15 @@ async def render_with_advanced_stealth(
 ) -> FetchResult:
     """
     Convenience function to render a URL with advanced stealth.
-    
+
     Args:
         url: Target URL to render
         timeout: Navigation timeout in seconds
         headless: Run browser in headless mode
-    
+
     Returns:
         FetchResult with rendered HTML
-    
+
     Example:
         >>> result = await render_with_advanced_stealth("https://example.com")
         >>> print(result.status_code)
@@ -982,15 +959,15 @@ def render_with_advanced_stealth_sync(
 ) -> FetchResult:
     """
     Synchronous convenience function for advanced stealth rendering.
-    
+
     Args:
         url: Target URL to render
         timeout: Navigation timeout in seconds
         headless: Run browser in headless mode
-    
+
     Returns:
         FetchResult with rendered HTML
-    
+
     Example:
         >>> result = render_with_advanced_stealth_sync("https://example.com")
         >>> print(result.html[:100])

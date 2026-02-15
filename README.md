@@ -9,10 +9,11 @@
 </p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python Version"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/tests-108%20passing-brightgreen?style=flat-square" alt="Tests">
-  <img src="https://img.shields.io/badge/version-0.4.0-orange?style=flat-square" alt="Version">
+  <a href="https://pypi.org/project/markdown-ingress/"><img src="https://badge.fury.io/py/markdown-ingress.svg" alt="PyPI version"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://github.com/seifreed/MarkDownIngress/actions"><img src="https://github.com/seifreed/MarkDownIngress/workflows/CI/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/coverage-63%25-orange.svg" alt="Coverage">
 </p>
 
 <p align="center">

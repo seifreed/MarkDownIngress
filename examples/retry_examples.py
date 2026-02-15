@@ -11,7 +11,7 @@ print("=" * 60)
 # Basic usage
 doc = retry_ingest("https://example.com")
 
-print(f"✅ Success!")
+print("✅ Success!")
 print(f"  Retry attempts: {doc.metadata['retry_attempts']}")
 print(f"  Final timeout: {doc.metadata['final_timeout']}s")
 print(f"  Stealth enabled: {doc.metadata['retry_enabled']}")

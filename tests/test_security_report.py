@@ -2,21 +2,21 @@
 Tests for SecurityReport functionality
 """
 
-import pytest
 import json
 import tempfile
 from pathlib import Path
+
 from markdown_ingress import generate_security_report
 from markdown_ingress.models import SecurityReport
 
 
 class TestSecurityReport:
     """Test comprehensive security reporting"""
-    
+
     def test_generate_security_report_basic(self):
         """Generate security report from real URL"""
         report = generate_security_report("http://example.com", mode="fast")
-        
+
         assert isinstance(report, SecurityReport)
         assert report.url == "http://example.com"
         assert report.risk_level.lower() in ["safe", "low", "medium", "high", "critical"]
@@ -25,7 +25,7 @@ class TestSecurityReport:
         assert report.token_estimate > 0
         assert report.content_hash.startswith("sha256:")
         assert report.structural_hash.startswith("sha256:")
-    
+
     def test_security_report_to_dict(self):
         """Convert SecurityReport to dictionary"""
         report = SecurityReport(
@@ -33,64 +33,64 @@ class TestSecurityReport:
             risk_level="LOW",
             url="http://test.com",
             title="Test Page",
-            token_estimate=500
+            token_estimate=500,
         )
-        
+
         data = report.to_dict()
-        
+
         assert isinstance(data, dict)
-        assert data['injection_score'] == 0.25
-        assert data['risk_level'] == "LOW"
-        assert data['url'] == "http://test.com"
-        assert data['version'] == "0.4.0"
-    
+        assert data["injection_score"] == 0.25
+        assert data["risk_level"] == "LOW"
+        assert data["url"] == "http://test.com"
+        assert data["version"] == "0.4.0"
+
     def test_security_report_to_json(self):
         """Export SecurityReport to JSON string"""
         report = SecurityReport(
             injection_score=0.5,
             risk_level="MEDIUM",
             url="http://test.com",
-            flags=["hidden_content", "suspicious_pattern"]
+            flags=["hidden_content", "suspicious_pattern"],
         )
-        
+
         json_str = report.to_json()
-        
+
         assert isinstance(json_str, str)
         data = json.loads(json_str)
-        assert data['injection_score'] == 0.5
-        assert data['risk_level'] == "MEDIUM"
-        assert "hidden_content" in data['flags']
-    
+        assert data["injection_score"] == 0.5
+        assert data["risk_level"] == "MEDIUM"
+        assert "hidden_content" in data["flags"]
+
     def test_security_report_from_dict(self):
         """Create SecurityReport from dictionary"""
         data = {
-            'injection_score': 0.75,
-            'risk_level': 'HIGH',
-            'url': 'http://test.com',
-            'title': 'Test',
-            'token_estimate': 1000,
-            'pattern_matches': [],
-            'flags': ['test_flag'],
-            'hidden_content_detected': False,
-            'hidden_elements_count': 0,
-            'imperative_density': 0.0,
-            'timestamp': '2024-01-01T00:00:00',
-            'version': '0.4.0',
-            'token_reduction_percent': 50.0,
-            'original_size_bytes': 2000,
-            'cleaned_size_bytes': 1000,
-            'content_hash': 'sha256:abc',
-            'structural_hash': 'sha256:def',
-            'removed_elements': {}
+            "injection_score": 0.75,
+            "risk_level": "HIGH",
+            "url": "http://test.com",
+            "title": "Test",
+            "token_estimate": 1000,
+            "pattern_matches": [],
+            "flags": ["test_flag"],
+            "hidden_content_detected": False,
+            "hidden_elements_count": 0,
+            "imperative_density": 0.0,
+            "timestamp": "2024-01-01T00:00:00",
+            "version": "0.4.0",
+            "token_reduction_percent": 50.0,
+            "original_size_bytes": 2000,
+            "cleaned_size_bytes": 1000,
+            "content_hash": "sha256:abc",
+            "structural_hash": "sha256:def",
+            "removed_elements": {},
         }
-        
+
         report = SecurityReport.from_dict(data)
-        
+
         assert report.injection_score == 0.75
         assert report.risk_level == "HIGH"
         assert report.url == "http://test.com"
-        assert report.flags == ['test_flag']
-    
+        assert report.flags == ["test_flag"]
+
     def test_security_report_from_json(self):
         """Create SecurityReport from JSON string"""
         json_str = """{
@@ -113,19 +113,19 @@ class TestSecurityReport:
             "structural_hash": "sha256:test2",
             "removed_elements": {}
         }"""
-        
+
         report = SecurityReport.from_json(json_str)
-        
+
         assert report.injection_score == 0.3
         assert report.risk_level == "LOW"
         assert report.url == "http://example.com"
         assert report.token_estimate == 200
-    
+
     def test_security_report_save_and_load(self):
         """Save and load SecurityReport to/from file"""
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = Path(tmpdir) / "report.json"
-            
+
             # Create and save report
             original_report = SecurityReport(
                 injection_score=0.45,
@@ -133,57 +133,69 @@ class TestSecurityReport:
                 url="http://test.com",
                 title="Test Document",
                 token_estimate=750,
-                flags=["test_flag_1", "test_flag_2"]
+                flags=["test_flag_1", "test_flag_2"],
             )
             original_report.save(str(filepath))
-            
+
             # Load report
             loaded_report = SecurityReport.load(str(filepath))
-            
+
             assert loaded_report.injection_score == original_report.injection_score
             assert loaded_report.risk_level == original_report.risk_level
             assert loaded_report.url == original_report.url
             assert loaded_report.flags == original_report.flags
-    
+
     def test_security_report_json_structure(self):
         """Verify JSON structure contains all expected fields"""
         report = generate_security_report("http://example.com", mode="fast")
-        
+
         json_str = report.to_json()
         data = json.loads(json_str)
-        
+
         # Check all required fields exist
         required_fields = [
-            'injection_score', 'risk_level', 'pattern_matches', 'flags',
-            'hidden_content_detected', 'hidden_elements_count', 'imperative_density',
-            'url', 'title', 'timestamp', 'version',
-            'token_estimate', 'token_reduction_percent',
-            'original_size_bytes', 'cleaned_size_bytes',
-            'content_hash', 'structural_hash', 'removed_elements'
+            "injection_score",
+            "risk_level",
+            "pattern_matches",
+            "flags",
+            "hidden_content_detected",
+            "hidden_elements_count",
+            "imperative_density",
+            "url",
+            "title",
+            "timestamp",
+            "version",
+            "token_estimate",
+            "token_reduction_percent",
+            "original_size_bytes",
+            "cleaned_size_bytes",
+            "content_hash",
+            "structural_hash",
+            "removed_elements",
         ]
-        
+
         for field in required_fields:
             assert field in data, f"Missing required field: {field}"
-    
+
     def test_security_report_with_pattern_matches(self):
         """SecurityReport can store pattern match details"""
         report = SecurityReport(
             injection_score=0.8,
             risk_level="HIGH",
             pattern_matches=[
-                {'pattern': 'ignore previous', 'location': 'line 5'},
-                {'pattern': 'system prompt', 'location': 'line 12'}
-            ]
+                {"pattern": "ignore previous", "location": "line 5"},
+                {"pattern": "system prompt", "location": "line 12"},
+            ],
         )
-        
+
         assert len(report.pattern_matches) == 2
-        assert report.pattern_matches[0]['pattern'] == 'ignore previous'
-        
+        assert report.pattern_matches[0]["pattern"] == "ignore previous"
+
         # Verify JSON serialization works
         json_str = report.to_json()
         data = json.loads(json_str)
-        assert len(data['pattern_matches']) == 2
-    
+        assert len(data["pattern_matches"]) == 2
+
     def test_security_report_roundtrip(self):
         """SecurityReport survives JSON roundtrip without data loss"""
         original = SecurityReport(
@@ -196,13 +208,13 @@ class TestSecurityReport:
             hidden_elements_count=5,
             token_estimate=1234,
             content_hash="sha256:original",
-            structural_hash="sha256:structural"
+            structural_hash="sha256:structural",
         )
-        
+
         # To JSON and back
         json_str = original.to_json()
         restored = SecurityReport.from_json(json_str)
-        
+
         assert restored.injection_score == original.injection_score
         assert restored.risk_level == original.risk_level
         assert restored.url == original.url
