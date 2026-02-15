@@ -1,0 +1,1181 @@
+{
+  "summary": {
+    "total": 50,
+    "successful": 44,
+    "failed": 6,
+    "success_rate": 88.0
+  },
+  "results": [
+    {
+      "url": "https://www.google.com",
+      "success": true,
+      "tokens": 865,
+      "injection_score": 0.0,
+      "content_hash": "sha256:0f5832319a2ce0e9988e307ef5a5485f02e36d2f9df52200dbbbd09fb2bd8c02",
+      "metadata": {
+        "url": "https://www.google.com",
+        "final_url": "https://www.google.com",
+        "title": "Google",
+        "fetch_time_ms": 254.0881670138333,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 19945,
+          "markdown_tokens": 865,
+          "saved_tokens": 19080,
+          "savings_percent": 95.66
+        },
+        "risk_level": "safe",
+        "structural_hash": "sha256:6fd5d800055625367c6ada48ffbfe5b7bdd8c80a7575d26d9d5262a2fb49b153",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.youtube.com",
+      "success": true,
+      "tokens": 1197,
+      "injection_score": 0.3,
+      "content_hash": "sha256:16f2b5ebb2ebba77d22321c7810c15b5e3b1c1bc28bceaa99b05f3378c292a33",
+      "metadata": {
+        "url": "https://www.facebook.com",
+        "final_url": "https://www.facebook.com",
+        "title": "Facebook - Entrar o registrarse",
+        "fetch_time_ms": 534.2941250128206,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 55629,
+          "markdown_tokens": 1197,
+          "saved_tokens": 54432,
+          "savings_percent": 97.85
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:b44c21e67e7cb49c0665ce89ff9a3aa807786900a4394696b8a131c929665c39",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.facebook.com",
+      "success": true,
+      "tokens": 193,
+      "injection_score": 0.303,
+      "content_hash": "sha256:890556d247f57d3d01cf046fdec7f20e6ca362f3c5fa399c28d9a779ca0cd3a3",
+      "metadata": {
+        "url": "https://www.wikipedia.org",
+        "final_url": "https://www.wikipedia.org",
+        "title": "Wikipedia",
+        "fetch_time_ms": 255.06875000428408,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 71855,
+          "markdown_tokens": 193,
+          "saved_tokens": 71662,
+          "savings_percent": 99.73
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:6791cb36b88636eadc1b64b9b94bf1f74a4f052cf21be3b4907e90b680027f80",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.amazon.com",
+      "success": true,
+      "tokens": 61,
+      "injection_score": 0.316,
+      "content_hash": "sha256:47e33b84b193e589ef512827e31aacd2b8cd9aa22e49ad1e4ef217a8915b5206",
+      "metadata": {
+        "url": "https://www.twitter.com",
+        "final_url": "https://x.com/",
+        "title": "[no-title]",
+        "fetch_time_ms": 650.2903749933466,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 63525,
+          "markdown_tokens": 61,
+          "saved_tokens": 63464,
+          "savings_percent": 99.9
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d999dbc9ecac63f409af5b2cc6f7d573f0231a926db8486040e6e2cc260744d5",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.wikipedia.org",
+      "success": true,
+      "tokens": 298,
+      "injection_score": 0.3,
+      "content_hash": "sha256:e3644c8274172f89c218d58de16619bcbbdb51968c046b19039770bf9886abbe",
+      "metadata": {
+        "url": "https://www.reddit.com",
+        "final_url": "https://www.reddit.com",
+        "title": "Reddit - The heart of the internet",
+        "fetch_time_ms": 599.9413749959785,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 187241,
+          "markdown_tokens": 298,
+          "saved_tokens": 186943,
+          "savings_percent": 99.84
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:e606e8ea33407cc0b9e37eb5440739cf4393cb7c2f03535f89a399ea8eb1a481",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.twitter.com",
+      "success": true,
+      "tokens": 14,
+      "injection_score": 0.3,
+      "content_hash": "sha256:730adca8daa3c54258dc142b7aea0a25f79187b036489675964750c79c73e888",
+      "metadata": {
+        "url": "https://www.amazon.com",
+        "final_url": "https://www.amazon.com",
+        "title": "Amazon.com. Spend less. Smile more.",
+        "fetch_time_ms": 751.7668340005912,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 263452,
+          "markdown_tokens": 14,
+          "saved_tokens": 263438,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:730adca8daa3c54258dc142b7aea0a25f79187b036489675964750c79c73e888",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.reddit.com",
+      "success": true,
+      "tokens": 355,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5fb325b8e2bd6df75ef871a5493273ef148b92ebe71a6496ac4b96314fb79acc",
+      "metadata": {
+        "url": "https://www.youtube.com",
+        "final_url": "https://www.youtube.com/",
+        "title": "YouTube",
+        "fetch_time_ms": 3605.2405000082217,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 380113,
+          "markdown_tokens": 355,
+          "saved_tokens": 379758,
+          "savings_percent": 99.91
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:ddeabd2a1f221a6bfbe26dbbad1c242813eba92876a337980a1f758580b71083",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.instagram.com",
+      "success": true,
+      "tokens": 666,
+      "injection_score": 0.304,
+      "content_hash": "sha256:56f6f691f90c99f56bf83f455db14c29e240534c2303a74692cb06481e4fd467",
+      "metadata": {
+        "url": "https://www.instagram.com",
+        "final_url": "https://www.instagram.com/",
+        "title": "Instagram",
+        "fetch_time_ms": 3031.600125017576,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 274408,
+          "markdown_tokens": 666,
+          "saved_tokens": 273742,
+          "savings_percent": 99.76
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:32313fcdf4380a36f11b7288ae82b7209dfa0dfefbc6a55b699c57c5c7013b66",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.linkedin.com",
+      "success": true,
+      "tokens": 365,
+      "injection_score": 0.3,
+      "content_hash": "sha256:938bfb80ed6d82d49d9c276c5315c3c26707ee2cb958be4876e924f00a0a0be4",
+      "metadata": {
+        "url": "https://www.netflix.com",
+        "final_url": "https://www.netflix.com/es-en/",
+        "title": "Netflix Spain - Watch TV Shows Online, Watch Movies Online",
+        "fetch_time_ms": 2278.5886249912437,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 1540145,
+          "markdown_tokens": 365,
+          "saved_tokens": 1539780,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:6fc54e724d237ef10c5d6eb92bd10f7209bd38ec662b1ecbe516f0feca4b8db8",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.netflix.com",
+      "success": true,
+      "tokens": 8723,
+      "injection_score": 0.303,
+      "content_hash": "sha256:3d2d565c47002b975b3063dbf6f519b86d83d2978a996f55c22b9565b727b149",
+      "metadata": {
+        "url": "https://www.yahoo.com",
+        "final_url": "https://www.yahoo.com",
+        "title": "Yahoo | Mail, Weather, Search, Politics, News, Finance, Sports & Videos",
+        "fetch_time_ms": 657.4882910063025,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 584667,
+          "markdown_tokens": 8723,
+          "saved_tokens": 575944,
+          "savings_percent": 98.51
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:85469e8a392a752b982f247f4b46818d62aba2c13d2ef0c06261b87a70822ad3",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.yahoo.com",
+      "success": true,
+      "tokens": 238,
+      "injection_score": 0.3,
+      "content_hash": "sha256:10eb91b952893106a520fcd9436092e8b7d59ababb7c8091e575001478a8dea6",
+      "metadata": {
+        "url": "https://www.bing.com",
+        "final_url": "https://www.bing.com",
+        "title": "B\u00fasqueda: Microsoft Bing",
+        "fetch_time_ms": 202.40808400558308,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 53571,
+          "markdown_tokens": 238,
+          "saved_tokens": 53333,
+          "savings_percent": 99.56
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:cd63f54970645023779acf5e7a43d3c5481882eb0ec4840ad4513d60a861fc4c",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.bing.com",
+      "success": true,
+      "tokens": 104,
+      "injection_score": 0.308,
+      "content_hash": "sha256:e27503736f8dffcf0578750afb07bf0d6df8d4c2240b215c57b55c3facde22f4",
+      "metadata": {
+        "url": "https://www.linkedin.com",
+        "final_url": "https://www.linkedin.com/",
+        "title": "LinkedIn: Log In or Sign Up",
+        "fetch_time_ms": 4489.498916984303,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 43688,
+          "markdown_tokens": 104,
+          "saved_tokens": 43584,
+          "savings_percent": 99.76
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:48e5c87a4c632e8e7d0ac4579f9b03d444ea56851368f19a1bff1ea3bd327523",
+        "auto_mode_used": "render",
+        "auto_mode_reason": "fast_failed"
+      }
+    },
+    {
+      "url": "https://www.microsoft.com",
+      "success": true,
+      "tokens": 22,
+      "injection_score": 0.3,
+      "content_hash": "sha256:3d6a090179c9bd20a2822d420c9f20d6c2d3718bf2af6213280a76e9496a7b08",
+      "metadata": {
+        "url": "https://www.apple.com",
+        "final_url": "https://www.apple.com",
+        "title": "Apple",
+        "fetch_time_ms": 240.8633749873843,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 97166,
+          "markdown_tokens": 22,
+          "saved_tokens": 97144,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:3d6a090179c9bd20a2822d420c9f20d6c2d3718bf2af6213280a76e9496a7b08",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.apple.com",
+      "success": true,
+      "tokens": 42,
+      "injection_score": 0.3,
+      "content_hash": "sha256:38ed9f72873e51a979a1f659f57e91a5ac8c6919637cb2e601c94a7f44af91bc",
+      "metadata": {
+        "url": "https://www.microsoft.com",
+        "final_url": "https://www.microsoft.com/es-es",
+        "title": "Microsoft: IA, nube, productividad, inform\u00e1tica, juegos y aplicaciones",
+        "fetch_time_ms": 215.84866699413396,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 63060,
+          "markdown_tokens": 42,
+          "saved_tokens": 63018,
+          "savings_percent": 99.93
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:f99ee117178a19682c3e18f57567bf96e68ebc501b73264d8d6b57d96b51c6cc",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.ebay.com",
+      "success": true,
+      "tokens": 190,
+      "injection_score": 0.306,
+      "content_hash": "sha256:42eed2fa22f63f45910cef890c1dc97581bcc76514a6d779de881966f361aad8",
+      "metadata": {
+        "url": "https://www.twitch.tv",
+        "final_url": "https://www.twitch.tv/",
+        "title": "Twitch",
+        "fetch_time_ms": 4318.910958012566,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 123509,
+          "markdown_tokens": 190,
+          "saved_tokens": 123319,
+          "savings_percent": 99.85
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:074e7a1d80780d98b25124fc700e0adc3e3f25beaf90fd211f99ca0dbc8dff97",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.twitch.tv",
+      "success": true,
+      "tokens": 154,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5566870ff27ee1e2ad07ef8f34e544c665c88e66d12baa822bf3960665bbd208",
+      "metadata": {
+        "url": "https://www.ebay.com",
+        "final_url": "https://www.ebay.com/",
+        "title": "Electronics, Cars, Fashion, Collectibles & More | eBay",
+        "fetch_time_ms": 3614.9218330101576,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 641215,
+          "markdown_tokens": 154,
+          "saved_tokens": 641061,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:48e5c87a4c632e8e7d0ac4579f9b03d444ea56851368f19a1bff1ea3bd327523",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.imdb.com",
+      "success": true,
+      "tokens": 63,
+      "injection_score": 0.3,
+      "content_hash": "sha256:3957255fbccd5e8862c2f785b1100a89eedf5993af9c16d6b668ee34e9896193",
+      "metadata": {
+        "url": "https://www.stackoverflow.com",
+        "final_url": "https://stackoverflow.com/questions",
+        "title": "Newest Questions - Stack Overflow",
+        "fetch_time_ms": 633.4502079989761,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 64240,
+          "markdown_tokens": 63,
+          "saved_tokens": 64177,
+          "savings_percent": 99.9
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:3957255fbccd5e8862c2f785b1100a89eedf5993af9c16d6b668ee34e9896193",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.pinterest.com",
+      "success": true,
+      "tokens": 33,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5e868804b663e8d78c976b9b1ec8387f9d441439555823e62d4b92d2bbb45646",
+      "metadata": {
+        "url": "https://www.github.com",
+        "final_url": "https://github.com/",
+        "title": "GitHub \u00b7 Change is constant. GitHub keeps you ahead. \u00b7 GitHub",
+        "fetch_time_ms": 343.7824590073433,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 232960,
+          "markdown_tokens": 33,
+          "saved_tokens": 232927,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:fccd3f261e6bc526e8a8520ce2cdf1f764cbeabcbdde6fb3166d0e50f3d0ae66",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.stackoverflow.com",
+      "success": true,
+      "tokens": 8,
+      "injection_score": 0.3,
+      "content_hash": "sha256:b76aea0dc5817922e060090bf2fa2350b706321b7a98b004f839b27336dae7ad",
+      "metadata": {
+        "url": "https://www.imdb.com",
+        "final_url": "https://www.imdb.com",
+        "title": "IMDb: Ratings, Reviews, and Where to Watch the Best Movies & TV Shows",
+        "fetch_time_ms": 1250.05154099199,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 342641,
+          "markdown_tokens": 8,
+          "saved_tokens": 342633,
+          "savings_percent": 100.0
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:f89aeb9fa50a742be268a96230789c2b59d8dbac98380a22c0d62f1475a4dbc2",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.github.com",
+      "success": true,
+      "tokens": 25,
+      "injection_score": 0.3,
+      "content_hash": "sha256:e87c30c57b9a1bd966b16372e3b1ef79294caffc3b6634ad7ae4631fa2a7306e",
+      "metadata": {
+        "url": "https://www.pinterest.com",
+        "final_url": "https://www.pinterest.com/",
+        "title": "Pinterest",
+        "fetch_time_ms": 3503.5625410091598,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 284786,
+          "markdown_tokens": 25,
+          "saved_tokens": 284761,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:e87c30c57b9a1bd966b16372e3b1ef79294caffc3b6634ad7ae4631fa2a7306e",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.paypal.com",
+      "success": true,
+      "tokens": 58,
+      "injection_score": 0.3,
+      "content_hash": "sha256:975a8c5fb8fb43d3da46d15b5312920de58b4eab197f0c4ea8234c5136056b8d",
+      "metadata": {
+        "url": "https://www.cnn.com",
+        "final_url": "https://edition.cnn.com/",
+        "title": "Breaking News, Latest News and Videos | CNN",
+        "fetch_time_ms": 223.96474998095073,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 1697009,
+          "markdown_tokens": 58,
+          "saved_tokens": 1696951,
+          "savings_percent": 100.0
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:3ef6da4c02e119c621a2618b66d2fe6917985fae20562b6fca5b0f89b5fe8ac8",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.nytimes.com",
+      "success": true,
+      "tokens": 62,
+      "injection_score": 0.3,
+      "content_hash": "sha256:51dcea30020185cff245a47cf1265560b42da55d107262c23780b6a0d1fc5e2f",
+      "metadata": {
+        "url": "https://www.bbc.com",
+        "final_url": "https://www.bbc.com",
+        "title": "BBC Home - Breaking News, World News, US News, Sports, Business, Innovation, Climate, Culture, Travel, Video & Audio",
+        "fetch_time_ms": 138.07895799982361,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 181963,
+          "markdown_tokens": 62,
+          "saved_tokens": 181901,
+          "savings_percent": 99.97
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:c89a51b1750dd7e126aed73a59486cd3c378f941c0be5f492c79fb2ca6ab6749",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.cnn.com",
+      "success": true,
+      "tokens": 60,
+      "injection_score": 0.3,
+      "content_hash": "sha256:35ba17c278579c1a7fc77e1ac41ffc4d3fda403100464db3f627a231e93b590d",
+      "metadata": {
+        "url": "https://www.espn.com",
+        "final_url": "https://www.espn.com",
+        "title": "ESPN - Serving Sports Fans. Anytime. Anywhere.",
+        "fetch_time_ms": 437.7122080186382,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 77641,
+          "markdown_tokens": 60,
+          "saved_tokens": 77581,
+          "savings_percent": 99.92
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:7bf4bf68602d6e63ea2e4a24a0f720b7782fb47cd16804ee911a5582fbaa7f38",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.bbc.com",
+      "success": true,
+      "tokens": 33,
+      "injection_score": 0.319,
+      "content_hash": "sha256:718f15c88dbe73a10b8b7de61765bd49b69710e15deb3be37f3a4b796fd178cc",
+      "metadata": {
+        "url": "https://www.nytimes.com",
+        "final_url": "https://www.nytimes.com/",
+        "title": "The New York Times - Breaking News, US News, World News and Videos",
+        "fetch_time_ms": 3330.926292022923,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 435573,
+          "markdown_tokens": 33,
+          "saved_tokens": 435540,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:718f15c88dbe73a10b8b7de61765bd49b69710e15deb3be37f3a4b796fd178cc",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 24
+      }
+    },
+    {
+      "url": "https://www.espn.com",
+      "success": true,
+      "tokens": 12,
+      "injection_score": 0.3,
+      "content_hash": "sha256:d03522e758d21099c44ce1248ea54b1a4e2c8d5bdea943408c97421c2cb2cbeb",
+      "metadata": {
+        "url": "https://www.walmart.com",
+        "final_url": "https://www.walmart.com",
+        "title": "Walmart | Save Money. Live better.",
+        "fetch_time_ms": 385.22725002258085,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 131386,
+          "markdown_tokens": 12,
+          "saved_tokens": 131374,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d03522e758d21099c44ce1248ea54b1a4e2c8d5bdea943408c97421c2cb2cbeb",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.walmart.com",
+      "success": true,
+      "tokens": 69,
+      "injection_score": 0.3,
+      "content_hash": "sha256:f49566192c8be45785178d6981040152bdbf52fc4191039d5e44d1688e0c35cc",
+      "metadata": {
+        "url": "https://www.tumblr.com",
+        "final_url": "https://www.tumblr.com/",
+        "title": "Trending topics on Tumblr",
+        "fetch_time_ms": 2790.2727909968235,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 546155,
+          "markdown_tokens": 69,
+          "saved_tokens": 546086,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d25737bd3ee14cc0adc9f2d80906fafb7bbd551de7339ecd84b4e4588d2f71fe",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.craigslist.org",
+      "success": true,
+      "tokens": 77,
+      "injection_score": 0.3,
+      "content_hash": "sha256:903b1d39a5927de4c87728ddce413f76e8a3077ba0ee9667cedf26bcf10a665d",
+      "metadata": {
+        "url": "https://www.craigslist.org",
+        "final_url": "https://barcelona.craigslist.org/",
+        "title": "craigslist: barcelona trabajos, apartamentos, ventas, servicios, comunidad y eventos",
+        "fetch_time_ms": 3611.1341660143808,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 18542,
+          "markdown_tokens": 77,
+          "saved_tokens": 18465,
+          "savings_percent": 99.58
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d999dbc9ecac63f409af5b2cc6f7d573f0231a926db8486040e6e2cc260744d5",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 48
+      }
+    },
+    {
+      "url": "https://www.tumblr.com",
+      "success": true,
+      "tokens": 46,
+      "injection_score": 0.3,
+      "content_hash": "sha256:2639ab8b07826a7caf68571657def1215513a0252d16338bc1b094ff59824cb1",
+      "metadata": {
+        "url": "https://www.quora.com",
+        "final_url": "https://es.quora.com/",
+        "title": "Quora - Un lugar para compartir conocimientos y entender mejor el mundo",
+        "fetch_time_ms": 2799.0885000035632,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 77761,
+          "markdown_tokens": 46,
+          "saved_tokens": 77715,
+          "savings_percent": 99.94
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:94b46ea65a09428acefa427c88cff38957d7394155125858dbaa90e4271c91cd",
+        "auto_mode_used": "render",
+        "auto_mode_reason": "fast_failed"
+      }
+    },
+    {
+      "url": "https://www.quora.com",
+      "success": true,
+      "tokens": 35,
+      "injection_score": 0.3,
+      "content_hash": "sha256:e1bdd77662fa34471455acd5f3b024dd49c4f89ca5fa86ff84222a19a81b39dc",
+      "metadata": {
+        "url": "https://www.spotify.com",
+        "final_url": "https://open.spotify.com/",
+        "title": "Spotify - Web Player: Music for everyone",
+        "fetch_time_ms": 3773.021666012937,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 148384,
+          "markdown_tokens": 35,
+          "saved_tokens": 148349,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:0c4a8e2816943a19cbfd3f12e68b4e9f2911e7727c0b89a6203e09e40410d6e2",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.spotify.com",
+      "success": true,
+      "tokens": 26,
+      "injection_score": 0.3,
+      "content_hash": "sha256:2195ada89f3a28d5a2412fdd549d306728065dd5ae22b39e560cc47b7fb9e644",
+      "metadata": {
+        "url": "https://www.office.com",
+        "final_url": "https://www.office.com/",
+        "title": "Microsoft 365 Copilot | Create, Share and Collaborate with Office and AI",
+        "fetch_time_ms": 2984.7569999983534,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 130213,
+          "markdown_tokens": 26,
+          "saved_tokens": 130187,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:675ecc313f2e182bee0b6905f388d832efe530c8752666c1320a6d0a2e27adfe",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 17
+      }
+    },
+    {
+      "url": "https://www.office.com",
+      "success": true,
+      "tokens": 69,
+      "injection_score": 0.3,
+      "content_hash": "sha256:9f4cf8f0ca0ba1bd9c84d958b068e37a21098a0010bb487c365b88dad84e662c",
+      "metadata": {
+        "url": "https://www.zoom.us",
+        "final_url": "https://www.zoom.com",
+        "title": "One platform to connect | Zoom",
+        "fetch_time_ms": 305.62216698308475,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 90873,
+          "markdown_tokens": 69,
+          "saved_tokens": 90804,
+          "savings_percent": 99.92
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:394f6a167f58559bcf5ec380476196544e416c713ca1fc36a90472484c1a2aff",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.zoom.us",
+      "success": true,
+      "tokens": 48,
+      "injection_score": 0.3,
+      "content_hash": "sha256:b53473b10a071a1452089a2fee6bd64b990c1eb046586c36d6362d243d61a83b",
+      "metadata": {
+        "url": "https://www.fandom.com",
+        "final_url": "https://www.fandom.com",
+        "title": "Fandom",
+        "fetch_time_ms": 391.8405410076957,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 27427,
+          "markdown_tokens": 48,
+          "saved_tokens": 27379,
+          "savings_percent": 99.82
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:b53473b10a071a1452089a2fee6bd64b990c1eb046586c36d6362d243d61a83b",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.medium.com",
+      "success": true,
+      "tokens": 68,
+      "injection_score": 0.0,
+      "content_hash": "sha256:f5cca6fb66a7fc39115cf441e77b54825bd0548353cba89ff05165bb59bcb5e2",
+      "metadata": {
+        "url": "https://www.salesforce.com",
+        "final_url": "https://www.salesforce.com/",
+        "title": "Access Denied",
+        "fetch_time_ms": 1303.7303749879356,
+        "status_code": 403,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 104,
+          "markdown_tokens": 68,
+          "saved_tokens": 36,
+          "savings_percent": 34.62
+        },
+        "risk_level": "safe",
+        "structural_hash": "sha256:c1772510d843a47c784d1d93ee00f236b6b15f724b4b3c94ebb3b10cc149cc75",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 40
+      }
+    },
+    {
+      "url": "https://www.fandom.com",
+      "success": true,
+      "tokens": 31,
+      "injection_score": 0.3,
+      "content_hash": "sha256:9774352a93b2adfb4a4cb0e760ea05e4cb1db0c2f7eba45cc0456d2fd5ee6a54",
+      "metadata": {
+        "url": "https://www.dropbox.com",
+        "final_url": "https://www.dropbox.com",
+        "title": "Dropbox.com",
+        "fetch_time_ms": 2038.3931249962188,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 200558,
+          "markdown_tokens": 31,
+          "saved_tokens": 200527,
+          "savings_percent": 99.98
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:9774352a93b2adfb4a4cb0e760ea05e4cb1db0c2f7eba45cc0456d2fd5ee6a54",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.salesforce.com",
+      "success": true,
+      "tokens": 284,
+      "injection_score": 0.304,
+      "content_hash": "sha256:4017024bca27159c1606e9f416a00213b7ca32b69630a2d6150a8caaa53d6d24",
+      "metadata": {
+        "url": "https://www.booking.com",
+        "final_url": "https://www.booking.com/",
+        "title": "Booking.com | Official site | The best hotels, flights, car rentals & accommodations",
+        "fetch_time_ms": 4246.243999979924,
+        "status_code": 202,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 299995,
+          "markdown_tokens": 284,
+          "saved_tokens": 299711,
+          "savings_percent": 99.91
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:5b93a5c26c46fdcac890c01779bec034fc337ffaf6ef2e1eb4d103168da089ab",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.dropbox.com",
+      "success": true,
+      "tokens": 156,
+      "injection_score": 0.3,
+      "content_hash": "sha256:3799e1930cf24293dc6f0de7c20868ec0ed896551eb27b5e0810bd6b3f92b219",
+      "metadata": {
+        "url": "https://www.tiktok.com",
+        "final_url": "https://www.tiktok.com/explore",
+        "title": "Explore - Find your favourite videos on TikTok",
+        "fetch_time_ms": 4516.329999984009,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 182403,
+          "markdown_tokens": 156,
+          "saved_tokens": 182247,
+          "savings_percent": 99.91
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:196fc17e80ec4385385906816b126f5795d3715f25c6191cfaf91306ef028c77",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 1
+      }
+    },
+    {
+      "url": "https://www.indeed.com",
+      "success": true,
+      "tokens": 98,
+      "injection_score": 0.3,
+      "content_hash": "sha256:f220ddd24cd1753b1fed0ce267dc1b3de65216489376f0bb8da7b98a0903e38d",
+      "metadata": {
+        "url": "https://www.Chase.com",
+        "final_url": "https://www.chase.com",
+        "title": "Credit Card, Mortgage, Banking, Auto | Chase Online | Chase.com",
+        "fetch_time_ms": 366.3742499775253,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 124173,
+          "markdown_tokens": 98,
+          "saved_tokens": 124075,
+          "savings_percent": 99.92
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:bd79a97eb6c8d9745b4bc52c93dd253a3c152d28e601950f97dc1a398367f134",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.booking.com",
+      "success": true,
+      "tokens": 17,
+      "injection_score": 0.3,
+      "content_hash": "sha256:db92f5b9d749fb4418f1c7729d8f4048eace4fa7ec12c88f5fbcd9414513c9ab",
+      "metadata": {
+        "url": "https://www.target.com",
+        "final_url": "https://www.target.com",
+        "title": "Target : Expect More. Pay Less.",
+        "fetch_time_ms": 823.451667005429,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 118136,
+          "markdown_tokens": 17,
+          "saved_tokens": 118119,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:db92f5b9d749fb4418f1c7729d8f4048eace4fa7ec12c88f5fbcd9414513c9ab",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.tiktok.com",
+      "success": true,
+      "tokens": 73,
+      "injection_score": 0.3,
+      "content_hash": "sha256:5140223c92031a568ea0bde3ed3605c7d1dbe59e00717b23bd4f4d47b6b1711c",
+      "metadata": {
+        "url": "https://www.weather.com",
+        "final_url": "https://weather.com/es-ES/tiempo/hoy/l/SPXX0050:1:SP?Goto=Redirected",
+        "title": "Pron\u00f3stico del tiempo y condiciones para Sol, Centro, Madrid - The Weather Channel | Weather.com",
+        "fetch_time_ms": 4349.040165980114,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 729128,
+          "markdown_tokens": 73,
+          "saved_tokens": 729055,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:d94f11ea2f8aeaa80e1ffd85620a93a4663c499616bf4ceb207fe82d24dfc0e4",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 41
+      }
+    },
+    {
+      "url": "https://www.Chase.com",
+      "success": true,
+      "tokens": 68,
+      "injection_score": 0.0,
+      "content_hash": "sha256:016601b5cba0afebdfd59709aab5c371db6aa53e842e2a55d6cb0719ab6fc1ba",
+      "metadata": {
+        "url": "https://www.homedepot.com",
+        "final_url": "https://www.homedepot.com/",
+        "title": "Access Denied",
+        "fetch_time_ms": 1026.251333008986,
+        "status_code": 403,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 104,
+          "markdown_tokens": 68,
+          "saved_tokens": 36,
+          "savings_percent": 34.62
+        },
+        "risk_level": "safe",
+        "structural_hash": "sha256:c1772510d843a47c784d1d93ee00f236b6b15f724b4b3c94ebb3b10cc149cc75",
+        "auto_mode_used": "render",
+        "auto_mode_reason": "fast_failed"
+      }
+    },
+    {
+      "url": "https://www.target.com",
+      "success": true,
+      "tokens": 14,
+      "injection_score": 0.35,
+      "content_hash": "sha256:1e1f800e8796478f5239232cd2bd2b6f9586ab3dbb9910bb54a848c85c913d33",
+      "metadata": {
+        "url": "https://www.foxnews.com",
+        "final_url": "https://www.foxnews.com/",
+        "title": "Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos",
+        "fetch_time_ms": 4005.5442089796998,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 248604,
+          "markdown_tokens": 14,
+          "saved_tokens": 248590,
+          "savings_percent": 99.99
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:1e1f800e8796478f5239232cd2bd2b6f9586ab3dbb9910bb54a848c85c913d33",
+        "auto_mode_used": "render",
+        "fast_mode_tokens": 9
+      }
+    },
+    {
+      "url": "https://www.adobe.com",
+      "success": true,
+      "tokens": 116,
+      "injection_score": 0.3,
+      "content_hash": "sha256:cf3430b40fcd61f1f6c9c1951f7f6d78c39b174dac62835e820c6e76ce9d2486",
+      "metadata": {
+        "url": "https://www.usps.com",
+        "final_url": "https://www.usps.com",
+        "title": "Welcome | USPS",
+        "fetch_time_ms": 164.64033399824984,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 32340,
+          "markdown_tokens": 116,
+          "saved_tokens": 32224,
+          "savings_percent": 99.64
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:6243475eedd3acbe77c3c15f9b744befda97a12668c24cd6105784bde6297e0c",
+        "auto_mode_used": "fast"
+      }
+    },
+    {
+      "url": "https://www.bestbuy.com",
+      "success": true,
+      "tokens": 442,
+      "injection_score": 0.0,
+      "content_hash": "sha256:0e7a12e77c29475bc8415cd36daf0b25d33b337001bbd60ba21aac9642c19d46",
+      "metadata": {
+        "url": "https://www.bestbuy.com",
+        "final_url": "https://www.bestbuy.com/",
+        "title": "Best Buy International: Select your Country - Best Buy",
+        "fetch_time_ms": 23284.321999992244,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "render",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 1943,
+          "markdown_tokens": 442,
+          "saved_tokens": 1501,
+          "savings_percent": 77.25
+        },
+        "risk_level": "safe",
+        "structural_hash": "sha256:c68388624e9a50591a85aba5b796b59ccb48796413f4592bd34e530db90a61e8",
+        "auto_mode_used": "render",
+        "auto_mode_reason": "fast_failed"
+      }
+    },
+    {
+      "url": "https://www.weather.com",
+      "success": true,
+      "tokens": 54,
+      "injection_score": 0.3,
+      "content_hash": "sha256:7a9db9b80c2e1ab6d212e993444b430fab0254104a5e802ffd9d6bed186a8f04",
+      "metadata": {
+        "url": "https://www.zillow.com",
+        "final_url": "https://www.zillow.com",
+        "title": "Zillow: Real Estate, Apartments, Mortgages & Home Values",
+        "fetch_time_ms": 691.4499999838881,
+        "status_code": 200,
+        "model": "gpt-4",
+        "mode": "fast",
+        "strict": true,
+        "token_savings": {
+          "html_tokens": 163469,
+          "markdown_tokens": 54,
+          "saved_tokens": 163415,
+          "savings_percent": 99.97
+        },
+        "risk_level": "low",
+        "structural_hash": "sha256:33975003245de208fe6f2f19fb3563fc236b57e58401d8009b41223873ef5b7a",
+        "auto_mode_used": "fast"
+      }
+    }
+  ],
+  "errors": {
+    "https://www.medium.com": "Page.goto: Timeout 180000ms exceeded.\nCall log:\n  - navigating to \"https://www.medium.com/\", waiting until \"networkidle\"\n",
+    "https://www.indeed.com": "Page.goto: Timeout 180000ms exceeded.\nCall log:\n  - navigating to \"https://www.indeed.com/\", waiting until \"networkidle\"\n",
+    "https://www.paypal.com": "Page.goto: Timeout 180000ms exceeded.\nCall log:\n  - navigating to \"https://www.paypal.com/\", waiting until \"networkidle\"\n",
+    "https://www.adobe.com": "Page.goto: Timeout 180000ms exceeded.\nCall log:\n  - navigating to \"https://www.adobe.com/\", waiting until \"networkidle\"\n",
+    "https://www.costco.com": "Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.costco.com/\nCall log:\n  - navigating to \"https://www.costco.com/\", waiting until \"networkidle\"\n",
+    "https://www.vimeo.com": "Page.goto: Timeout 180000ms exceeded.\nCall log:\n  - navigating to \"https://www.vimeo.com/\", waiting until \"networkidle\"\n"
+  }
+}

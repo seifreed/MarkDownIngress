@@ -11,7 +11,7 @@ from markdown_ingress.core.config import Config, ConfigLoader, load_config
 from markdown_ingress.core.plugin import Plugin, PluginLoader
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     # Core API
     "ingest",

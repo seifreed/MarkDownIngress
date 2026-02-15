@@ -31,7 +31,8 @@ def ingest(
     timeout: float = 30.0,
     auto_render_threshold: int = 50,
     stealth: bool = False,
-    disable_http2: bool = False
+    disable_http2: bool = False,
+    extreme_mode: bool = False
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -54,6 +55,7 @@ def ingest(
             If fast mode returns fewer tokens than this, retry with render mode.
         stealth: Enable stealth mode to avoid bot detection (render mode only)
         disable_http2: Disable HTTP/2 protocol, use HTTP/1.1 (render mode only)
+        extreme_mode: Enable extreme timeouts (up to 300s) and patient waiting (render mode only)
         
     Returns:
         SafeDocument with markdown content, metadata, and security analysis
@@ -74,18 +76,21 @@ def ingest(
         
         >>> # Stealth mode to avoid bot detection
         >>> doc = ingest("https://protected-site.com", mode="render", stealth=True)
+        
+        >>> # Extreme mode for very slow sites
+        >>> doc = ingest("https://slow-site.com", mode="render", extreme_mode=True)
     """
     # Auto mode: try fast first, fallback to render if needed
     if mode == "auto":
         try:
             # Try fast mode first
-            doc = _ingest_with_mode(url, "fast", strict, model, timeout, stealth, disable_http2)
+            doc = _ingest_with_mode(url, "fast", strict, model, timeout, stealth, disable_http2, extreme_mode)
             
             # Check if we got meaningful content
             if doc.token_estimate < auto_render_threshold:
                 # Content is minimal, likely a SPA - try render mode
                 if PLAYWRIGHT_AVAILABLE:
-                    doc_render = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2)
+                    doc_render = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2, extreme_mode)
                     # Use render result if it has more content
                     if doc_render.token_estimate > doc.token_estimate:
                         doc_render.metadata['auto_mode_used'] = 'render'
@@ -99,7 +104,7 @@ def ingest(
         except Exception as e:
             # If fast fails, try render as fallback
             if PLAYWRIGHT_AVAILABLE:
-                doc = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2)
+                doc = _ingest_with_mode(url, "render", strict, model, timeout, stealth, disable_http2, extreme_mode)
                 doc.metadata['auto_mode_used'] = 'render'
                 doc.metadata['auto_mode_reason'] = 'fast_failed'
                 return doc
@@ -107,7 +112,7 @@ def ingest(
                 raise e
     
     # Regular mode (fast or render explicitly specified)
-    return _ingest_with_mode(url, mode, strict, model, timeout, stealth, disable_http2)
+    return _ingest_with_mode(url, mode, strict, model, timeout, stealth, disable_http2, extreme_mode)
 
 
 def _ingest_with_mode(
@@ -117,7 +122,8 @@ def _ingest_with_mode(
     model: str,
     timeout: float,
     stealth: bool = False,
-    disable_http2: bool = False
+    disable_http2: bool = False,
+    extreme_mode: bool = False
 ) -> SafeDocument:
     """
     Internal function to perform ingestion with a specific mode.
@@ -141,7 +147,8 @@ def _ingest_with_mode(
         renderer = Renderer(
             timeout=timeout,
             stealth=stealth,
-            disable_http2=disable_http2
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode
         )
         fetch_result = renderer.render_sync(url)
     else:  # fast mode
@@ -263,10 +270,13 @@ def retry_ingest(
             # Enable stealth mode on retry attempts (attempt >= 1)
             use_stealth = enable_stealth and (attempt >= 1)
             
+            # Enable extreme mode on last attempt for ultimate patience
+            use_extreme = (attempt == max_retries - 1)
+            
             # Log retry attempt
             if attempt > 0:
                 print(f"[MarkDownIngress] Retry attempt {attempt + 1}/{max_retries} for {url}")
-                print(f"[MarkDownIngress] Timeout: {timeout}s, Stealth: {use_stealth}")
+                print(f"[MarkDownIngress] Timeout: {timeout}s, Stealth: {use_stealth}, Extreme: {use_extreme}")
             
             # For stealth mode, configure renderer with stealth settings
             doc = ingest(
@@ -276,11 +286,13 @@ def retry_ingest(
                 model=model,
                 timeout=timeout,
                 stealth=use_stealth,
+                extreme_mode=use_extreme,
             )
             
             # Success! Add retry metadata
             doc.metadata['retry_attempts'] = attempt + 1
             doc.metadata['retry_enabled'] = use_stealth
+            doc.metadata['extreme_mode_enabled'] = use_extreme
             doc.metadata['final_timeout'] = timeout
             
             if attempt > 0:
