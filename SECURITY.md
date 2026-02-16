@@ -23,7 +23,7 @@ Instead, please report them responsibly via one of these methods:
 3. Fill in the details
 
 ### Alternative: Email
-Send an email to **marc@example.com** with:
+Send an email to **mriverolopez@gmail.com** with:
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
@@ -204,7 +204,7 @@ We thank the following security researchers for responsible disclosure:
 
 ## Contact
 
-For security concerns: **marc@example.com**
+For security concerns: **mriverolopez@gmail.com**
 
 For general support: GitHub Issues
 

@@ -366,7 +366,7 @@ results = await processor.process_batch(urls)
 
 - GitHub Discussions for general questions
 - GitHub Issues for bugs/features
-- Email marc@example.com for private inquiries
+- Email mriverolopez@gmail.com for private inquiries
 
 ---
 
