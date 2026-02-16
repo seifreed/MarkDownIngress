@@ -11,7 +11,7 @@ from markdown_ingress.core.plugin import Plugin, PluginLoader
 from markdown_ingress.core.policy import Policy, PolicyEngine
 from markdown_ingress.models import SafeDocument, SecurityReport
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     # Core API
     "ingest",

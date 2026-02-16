@@ -14,6 +14,7 @@ from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.normalizer import Normalizer
 from markdown_ingress.core.scoring import Scorer
 from markdown_ingress.core.security import SecurityAnalyzer
+from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.tokens import TokenEstimator
 from markdown_ingress.models import SafeDocument, SecurityReport
 
@@ -40,6 +41,8 @@ def ingest(
     screenshot: Optional[Union[bool, str]] = None,
     extract_metadata: bool = True,
     extract_links: bool = True,
+    advanced_security: bool = False,
+    use_llm: bool = False,
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -63,6 +66,8 @@ def ingest(
         stealth: Enable stealth mode to avoid bot detection (render mode only)
         disable_http2: Disable HTTP/2 protocol, use HTTP/1.1 (render mode only)
         extreme_mode: Enable extreme timeouts (up to 300s) and patient waiting (render mode only)
+        advanced_security: Enable Nova-tracer advanced injection detection (v0.7.0)
+        use_llm: Enable LLM-based detection tier (slow but most accurate, v0.7.0)
 
     Returns:
         SafeDocument with markdown content, metadata, and security analysis
@@ -103,6 +108,8 @@ def ingest(
                 screenshot,
                 extract_metadata,
                 extract_links,
+                advanced_security,
+                use_llm,
             )
 
             # Check if we got meaningful content
@@ -121,6 +128,8 @@ def ingest(
                         screenshot,
                         extract_metadata,
                         extract_links,
+                        advanced_security,
+                        use_llm,
                     )
                     # Use render result if it has more content
                     if doc_render.token_estimate > doc.token_estimate:
@@ -147,6 +156,8 @@ def ingest(
                     screenshot,
                     extract_metadata,
                     extract_links,
+                    advanced_security,
+                    use_llm,
                 )
                 doc.metadata["auto_mode_used"] = "render"
                 doc.metadata["auto_mode_reason"] = "fast_failed"
@@ -167,6 +178,8 @@ def ingest(
         screenshot,
         extract_metadata,
         extract_links,
+        advanced_security,
+        use_llm,
     )
 
 
@@ -182,6 +195,8 @@ def _ingest_with_mode(
     screenshot: Optional[Union[bool, str]] = None,
     extract_metadata: bool = True,
     extract_links: bool = True,
+    advanced_security: bool = False,
+    use_llm: bool = False,
 ) -> SafeDocument:
     """
     Internal function to perform ingestion with a specific mode.
@@ -232,11 +247,17 @@ def _ingest_with_mode(
     # Step 5: Convert to Markdown
     markdown = md_converter.convert(extraction_result.html)
 
-    # Step 6: Analyze security
-    hidden_detected = extraction_result.removed_hidden > 0
-    security_analysis = security_analyzer.analyze(
-        extraction_result.text_content, hidden_content_detected=hidden_detected
+    # Step 6: Analyze security with SecurityEngine (v0.7.0)
+    # Build metadata for security analysis
+    security_metadata = {
+        "hidden_elements_count": extraction_result.removed_hidden,
+    }
+
+    # Use SecurityEngine for advanced analysis
+    security_engine = SecurityEngine(
+        strict=strict, advanced_security=advanced_security, use_llm=use_llm
     )
+    security_result = security_engine.analyze(extraction_result.text_content, security_metadata)
 
     # Step 7: Generate hashes
     content_hash = hasher.hash_content(markdown)
@@ -257,8 +278,10 @@ def _ingest_with_mode(
         "mode": mode,
         "strict": strict,
         "token_savings": token_savings,
-        "risk_level": scorer.get_risk_level(security_analysis.score),
+        "risk_level": scorer.get_risk_level(security_result["injection_score"]),
         "structural_hash": structural_hash,
+        "advanced_security": advanced_security,
+        "security_scan_method": security_result["scan_method"],
     }
     
     # Add screenshot path if captured
@@ -276,12 +299,14 @@ def _ingest_with_mode(
         metadata=metadata,
         token_estimate=token_count,
         content_hash=content_hash,
-        injection_score=security_analysis.score,
-        flags=security_analysis.flags,
+        injection_score=security_result["injection_score"],
+        flags=security_result["flags"],
         removed_elements=removed_elements,
         screenshot_path=screenshot_path,
         enriched_metadata=enriched_metadata,
         links=links,
+        nova_score=security_result.get("nova_score"),
+        nova_details=security_result.get("nova_details"),
     )
 
 

@@ -43,6 +43,10 @@ def cmd_ingest(args):
         extract_metadata = not getattr(args, "no_metadata", False)
         extract_links = not getattr(args, "no_links", False)
 
+        # Determine advanced security settings (v0.7.0)
+        advanced_security = getattr(args, "advanced_security", False)
+        use_llm = getattr(args, "use_llm", False)
+
         # Ingest content
         doc = ingest(
             url=args.url,
@@ -53,6 +57,8 @@ def cmd_ingest(args):
             screenshot=screenshot,
             extract_metadata=extract_metadata,
             extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
         )
 
         # Output results
@@ -69,6 +75,8 @@ def cmd_ingest(args):
                 "screenshot_path": doc.screenshot_path,
                 "enriched_metadata": doc.enriched_metadata,
                 "links": doc.links,
+                "nova_score": doc.nova_score,
+                "nova_details": doc.nova_details,
             }
 
             output = json.dumps(output_data, indent=2)
@@ -333,6 +341,16 @@ def main():
         "--no-metadata", action="store_true", help="Disable metadata extraction"
     )
     ingest_parser.add_argument("--no-links", action="store_true", help="Disable link extraction")
+    ingest_parser.add_argument(
+        "--advanced-security",
+        action="store_true",
+        help="Enable Nova-tracer advanced injection detection (requires nova-hunting)",
+    )
+    ingest_parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Enable LLM-based detection tier (slow but most accurate, requires ANTHROPIC_API_KEY)",
+    )
 
     # Batch command
     batch_parser = subparsers.add_parser("batch", help="Process multiple URLs from file")

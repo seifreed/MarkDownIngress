@@ -23,6 +23,9 @@ class SafeDocument:
     screenshot_path: str | None = None
     enriched_metadata: dict | None = None
     links: dict | None = None
+    # Nova-tracer integration (v0.7.0)
+    nova_score: float | None = None
+    nova_details: dict | None = None
 
     def __post_init__(self):
         """Validate injection score range"""
