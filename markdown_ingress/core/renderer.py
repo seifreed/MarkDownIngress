@@ -174,129 +174,34 @@ class Renderer:  # implements IRenderer protocol
         start_time = time.perf_counter()
 
         async with async_playwright() as p:
-            # Prepare browser arguments
-            browser_args = []
-
-            # Add stealth mode arguments if enabled
-            if self.stealth and STEALTH_AVAILABLE:
-                browser_args.extend(STEALTH_BROWSER_ARGS)
-
-            # Add HTTP/2 disable flag if needed
-            if self.disable_http2:
-                browser_args.append("--disable-http2")
-
-            # Launch browser
-            launch_options = {"headless": self.headless}
-            if browser_args:
-                launch_options["args"] = browser_args
-                # Remove automation indicators
-                launch_options["ignore_default_args"] = ["--enable-automation"]
-
+            browser_args = self._prepare_browser_args()
+            launch_options = self._prepare_launch_options(browser_args)
             browser = await p.chromium.launch(**launch_options)
 
             try:
-                # Prepare context options
-                if self.stealth and STEALTH_AVAILABLE:
-                    # Use stealth context options
-                    stealth_config = get_stealth_config()
-                    context_options = get_context_options(stealth_config)
-                    # Override user_agent if explicitly provided
-                    if self.user_agent:
-                        context_options["user_agent"] = self.user_agent
-                else:
-                    # Standard context options
-                    context_options = {
-                        "user_agent": self.user_agent,
-                        "viewport": {"width": 1920, "height": 1080},
-                        "bypass_csp": True,
-                        "ignore_https_errors": True,
-                    }
-
-                # Create context
+                context_options = self._prepare_context_options()
                 context = await browser.new_context(**context_options)
 
                 try:
-                    # Create page
                     page = await context.new_page()
-
-                    # Setup resource blocking if enabled
-                    blocker = None
-                    if self.block_resources:
-                        blocker = ResourceBlocker(
-                            block_images=self.block_images,
-                            block_fonts=self.block_fonts,
-                            block_media=self.block_media,
-                            block_ads=self.block_ads,
-                            block_trackers=self.block_trackers,
-                        )
-                        await blocker.setup_blocking(page)
-
-                    # Navigate to URL
+                    blocker = await self._setup_resource_blocking(page)
+                    
                     response = await page.goto(
                         url, timeout=self.timeout, wait_until=self.wait_until
                     )
 
-                    # Get final URL (after redirects)
-                    final_url = page.url
-
-                    # Get status code
-                    status_code = response.status if response else 200
-
-                    # Get rendered HTML
                     html = await page.content()
-
-                    # Capture screenshot if requested
-                    screenshot_path = None
-                    if self.screenshot:
-                        if self.screenshot is True:
-                            # Create temporary file
-                            temp_file = tempfile.NamedTemporaryFile(
-                                suffix=".png", delete=False, prefix="mdingress_screenshot_"
-                            )
-                            screenshot_path = temp_file.name
-                            temp_file.close()
-                        else:
-                            # Use provided path
-                            screenshot_path = self.screenshot
-
-                        # Take screenshot
-                        await page.screenshot(path=screenshot_path, full_page=True)
-
-                    # Get headers (convert to dict)
-                    headers = dict(response.headers) if response else {}
-
+                    screenshot_path = await self._capture_screenshot(page)
+                    
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-                    # Build metadata
-                    metadata = {
-                        "renderer": "playwright",
-                        "stealth_mode": self.stealth,
-                        "http2_disabled": self.disable_http2,
-                    }
-
-                    # Add screenshot path to metadata
-                    if screenshot_path:
-                        metadata["screenshot_path"] = screenshot_path
-
-                    # Add resource blocking stats if enabled
-                    if blocker:
-                        stats = blocker.get_stats()
-                        metadata.update(
-                            {
-                                "resource_blocking": True,
-                                "blocked_requests": stats["blocked_requests"],
-                                "total_requests": stats["total_requests"],
-                                "block_rate_pct": stats["block_rate_pct"],
-                                "blocked_by_type": stats["blocked_by_type"],
-                            }
-                        )
+                    metadata = self._build_metadata(screenshot_path, blocker)
 
                     return FetchResult(
                         html=html,
                         url=url,
-                        status_code=status_code,
-                        final_url=final_url,
-                        headers=headers,
+                        status_code=response.status if response else 200,
+                        final_url=page.url,
+                        headers=dict(response.headers) if response else {},
                         timing_ms=elapsed_ms,
                         metadata=metadata,
                     )
@@ -306,6 +211,99 @@ class Renderer:  # implements IRenderer protocol
 
             finally:
                 await browser.close()
+
+    def _prepare_browser_args(self) -> list[str]:
+        """Prepare browser launch arguments based on configuration."""
+        browser_args = []
+        
+        if self.stealth and STEALTH_AVAILABLE:
+            browser_args.extend(STEALTH_BROWSER_ARGS)
+        
+        if self.disable_http2:
+            browser_args.append("--disable-http2")
+        
+        return browser_args
+
+    def _prepare_launch_options(self, browser_args: list[str]) -> dict:
+        """Prepare browser launch options."""
+        launch_options = {"headless": self.headless}
+        
+        if browser_args:
+            launch_options["args"] = browser_args
+            launch_options["ignore_default_args"] = ["--enable-automation"]
+        
+        return launch_options
+
+    def _prepare_context_options(self) -> dict:
+        """Prepare browser context options based on stealth configuration."""
+        if self.stealth and STEALTH_AVAILABLE:
+            stealth_config = get_stealth_config()
+            context_options = get_context_options(stealth_config)
+            if self.user_agent:
+                context_options["user_agent"] = self.user_agent
+            return context_options
+        
+        return {
+            "user_agent": self.user_agent,
+            "viewport": {"width": 1920, "height": 1080},
+            "bypass_csp": True,
+            "ignore_https_errors": True,
+        }
+
+    async def _setup_resource_blocking(self, page):
+        """Setup resource blocking on the page if enabled."""
+        if not self.block_resources:
+            return None
+        
+        blocker = ResourceBlocker(
+            block_images=self.block_images,
+            block_fonts=self.block_fonts,
+            block_media=self.block_media,
+            block_ads=self.block_ads,
+            block_trackers=self.block_trackers,
+        )
+        await blocker.setup_blocking(page)
+        return blocker
+
+    async def _capture_screenshot(self, page) -> str | None:
+        """Capture page screenshot if requested."""
+        if not self.screenshot:
+            return None
+        
+        if self.screenshot is True:
+            temp_file = tempfile.NamedTemporaryFile(
+                suffix=".png", delete=False, prefix="mdingress_screenshot_"
+            )
+            screenshot_path = temp_file.name
+            temp_file.close()
+        else:
+            screenshot_path = self.screenshot
+        
+        await page.screenshot(path=screenshot_path, full_page=True)
+        return screenshot_path
+
+    def _build_metadata(self, screenshot_path: str | None, blocker) -> dict:
+        """Build metadata dictionary for the fetch result."""
+        metadata = {
+            "renderer": "playwright",
+            "stealth_mode": self.stealth,
+            "http2_disabled": self.disable_http2,
+        }
+        
+        if screenshot_path:
+            metadata["screenshot_path"] = screenshot_path
+        
+        if blocker:
+            stats = blocker.get_stats()
+            metadata.update({
+                "resource_blocking": True,
+                "blocked_requests": stats["blocked_requests"],
+                "total_requests": stats["total_requests"],
+                "block_rate_pct": stats["block_rate_pct"],
+                "blocked_by_type": stats["blocked_by_type"],
+            })
+        
+        return metadata
 
     async def _render_with_progressive_timeout(self, url: str) -> FetchResult:
         """
@@ -395,123 +393,34 @@ class Renderer:  # implements IRenderer protocol
         start_time = time.perf_counter()
 
         async with async_playwright() as p:
-            # Prepare browser arguments
-            browser_args = []
-
-            # Add stealth mode arguments if enabled
-            if self.stealth and STEALTH_AVAILABLE:
-                browser_args.extend(STEALTH_BROWSER_ARGS)
-
-            # Add HTTP/2 disable flag if needed
-            if self.disable_http2:
-                browser_args.append("--disable-http2")
-
-            # Launch browser
-            launch_options = {"headless": self.headless}
-            if browser_args:
-                launch_options["args"] = browser_args
-                launch_options["ignore_default_args"] = ["--enable-automation"]
-
+            browser_args = self._prepare_browser_args()
+            launch_options = self._prepare_launch_options(browser_args)
             browser = await p.chromium.launch(**launch_options)
 
             try:
-                # Prepare context options
-                if self.stealth and STEALTH_AVAILABLE:
-                    stealth_config = get_stealth_config()
-                    context_options = get_context_options(stealth_config)
-                    if self.user_agent:
-                        context_options["user_agent"] = self.user_agent
-                else:
-                    context_options = {
-                        "user_agent": self.user_agent,
-                        "viewport": {"width": 1920, "height": 1080},
-                        "bypass_csp": True,
-                        "ignore_https_errors": True,
-                    }
-
+                context_options = self._prepare_context_options()
                 context = await browser.new_context(**context_options)
 
                 try:
                     page = await context.new_page()
+                    blocker = await self._setup_resource_blocking(page)
 
-                    # Setup resource blocking if enabled
-                    blocker = None
-                    if self.block_resources:
-                        blocker = ResourceBlocker(
-                            block_images=self.block_images,
-                            block_fonts=self.block_fonts,
-                            block_media=self.block_media,
-                            block_ads=self.block_ads,
-                            block_trackers=self.block_trackers,
-                        )
-                        await blocker.setup_blocking(page)
-
-                    # Navigate to URL
                     response = await page.goto(url, timeout=timeout_ms, wait_until=self.wait_until)
-
-                    # Smart content waiting
                     await self._wait_for_content(page, max_wait=min(30, timeout_ms // 1000))
 
-                    # Get final URL and status
-                    final_url = page.url
-                    status_code = response.status if response else 200
-
-                    # Get rendered HTML
                     html = await page.content()
-
-                    # Capture screenshot if requested
-                    screenshot_path = None
-                    if self.screenshot:
-                        if self.screenshot is True:
-                            # Create temporary file
-                            temp_file = tempfile.NamedTemporaryFile(
-                                suffix=".png", delete=False, prefix="mdingress_screenshot_"
-                            )
-                            screenshot_path = temp_file.name
-                            temp_file.close()
-                        else:
-                            # Use provided path
-                            screenshot_path = self.screenshot
-
-                        # Take screenshot
-                        await page.screenshot(path=screenshot_path, full_page=True)
-
-                    # Get headers
-                    headers = dict(response.headers) if response else {}
-
+                    screenshot_path = await self._capture_screenshot(page)
+                    
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-                    # Build metadata
-                    metadata = {
-                        "renderer": "playwright",
-                        "stealth_mode": self.stealth,
-                        "http2_disabled": self.disable_http2,
-                        "smart_wait_used": True,
-                    }
-
-                    # Add screenshot path to metadata
-                    if screenshot_path:
-                        metadata["screenshot_path"] = screenshot_path
-
-                    # Add resource blocking stats if enabled
-                    if blocker:
-                        stats = blocker.get_stats()
-                        metadata.update(
-                            {
-                                "resource_blocking": True,
-                                "blocked_requests": stats["blocked_requests"],
-                                "total_requests": stats["total_requests"],
-                                "block_rate_pct": stats["block_rate_pct"],
-                                "blocked_by_type": stats["blocked_by_type"],
-                            }
-                        )
+                    metadata = self._build_metadata(screenshot_path, blocker)
+                    metadata["smart_wait_used"] = True
 
                     return FetchResult(
                         html=html,
                         url=url,
-                        status_code=status_code,
-                        final_url=final_url,
-                        headers=headers,
+                        status_code=response.status if response else 200,
+                        final_url=page.url,
+                        headers=dict(response.headers) if response else {},
                         timing_ms=elapsed_ms,
                         metadata=metadata,
                     )
