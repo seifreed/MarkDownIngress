@@ -115,7 +115,7 @@ def _display_header(args):
 def _display_basic_info(doc, args):
     """Display basic document information"""
     console.print(f"[bold]Title:[/bold] {doc.metadata.get('title', 'N/A')}")
-    console.print(f"🔗 [bold]URL:[/bold] {args.url}")
+    console.print(f"[bold]URL:[/bold] {args.url}")
     console.print()
 
 
@@ -295,7 +295,7 @@ def _create_batch_results_table(urls, batch_result):
     
     for url, error in batch_result.errors.items():
         url_display = url[:37] + "..." if len(url) > 40 else url
-        table.add_row(url_display, "[red]✗", "-", "-")
+        table.add_row(url_display, "[red]X", "-", "-")
     
     return table
 
