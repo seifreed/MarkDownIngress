@@ -141,24 +141,24 @@ def _display_security_info(doc):
         else "yellow" if doc.injection_score < 0.7 else "red"
     )
     console.print(
-        f"🔒 [bold]Injection Score:[/bold] [{score_color}]{doc.injection_score:.3f}[/{score_color}] ({risk_level})"
+        f"[bold]Injection Score:[/bold] [{score_color}]{doc.injection_score:.3f}[/{score_color}] ({risk_level})"
     )
     
     if doc.flags:
-        console.print(f"⚠️  [bold]Flags:[/bold] {', '.join(doc.flags)}")
+        console.print(f"[bold]Flags:[/bold] {', '.join(doc.flags)}")
     
     if doc.removed_elements.get("hidden_elements", 0) > 0:
         console.print(
-            f"🗑️  [bold]Removed hidden elements:[/bold] {doc.removed_elements['hidden_elements']}"
+            f"[bold]Removed hidden elements:[/bold] {doc.removed_elements['hidden_elements']}"
         )
     console.print()
 
 
 def _display_metadata(doc):
     """Display document metadata"""
-    console.print(f"🔑 [bold]Hash:[/bold] {doc.content_hash}")
+    console.print(f"[bold]Hash:[/bold] {doc.content_hash}")
     console.print(
-        f"⏱️  [bold]Fetch time:[/bold] {doc.metadata.get('fetch_time_ms', 0):.0f}ms"
+        f"[bold]Fetch time:[/bold] {doc.metadata.get('fetch_time_ms', 0):.0f}ms"
     )
     console.print()
     console.print("=" * 60)
