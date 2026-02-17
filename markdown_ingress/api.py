@@ -5,27 +5,8 @@ Main API for MarkDownIngress
 import time
 from typing import Literal, Optional, Union
 
-from markdown_ingress.core.extractor import Extractor
-from markdown_ingress.core.fetcher import Fetcher
-from markdown_ingress.core.hashing import Hasher
-from markdown_ingress.core.link_analyzer import LinkAnalyzer
-from markdown_ingress.core.markdown import MarkdownConverter
-from markdown_ingress.core.metadata_extractor import MetadataExtractor
-from markdown_ingress.core.normalizer import Normalizer
-from markdown_ingress.core.scoring import Scorer
-from markdown_ingress.core.security import SecurityAnalyzer
-from markdown_ingress.core.security_engine import SecurityEngine
-from markdown_ingress.core.tokens import TokenEstimator
+from markdown_ingress.core.orchestrator import IngestOrchestrator, PLAYWRIGHT_AVAILABLE
 from markdown_ingress.models import SafeDocument, SecurityReport
-
-# Import renderer only if needed (optional dependency)
-try:
-    from markdown_ingress.core.renderer import Renderer
-
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    Renderer = None
 
 
 def ingest(
@@ -201,112 +182,23 @@ def _ingest_with_mode(
     """
     Internal function to perform ingestion with a specific mode.
     """
-    # Initialize components
-    extractor = Extractor(strict=strict)
-    normalizer = Normalizer()
-    md_converter = MarkdownConverter()
-    hasher = Hasher()
-    token_estimator = TokenEstimator(model=model)
-    security_analyzer = SecurityAnalyzer(strict=strict)
-    scorer = Scorer()
-
-    # Step 1: Fetch HTML (mode-dependent)
-    if mode == "render":
-        if not PLAYWRIGHT_AVAILABLE:
-            raise ImportError(
-                "Render mode requires Playwright. Install with: "
-                "pip install 'markdown-ingress[render]' && playwright install"
-            )
-        renderer = Renderer(
-            timeout=timeout,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-        )
-        fetch_result = renderer.render_sync(url)
-    else:  # fast mode
-        fetcher = Fetcher(timeout=timeout)
-        fetch_result = fetcher.fetch_sync(url)
-
-    # Step 2: Extract main content and clean
-    extraction_result = extractor.extract(fetch_result.html, fetch_result.url)
-
-    # Step 3: Extract enriched metadata if requested
-    enriched_metadata = None
-    if extract_metadata:
-        metadata_extractor = MetadataExtractor()
-        enriched_metadata = metadata_extractor.extract(fetch_result.html, fetch_result.url)
-
-    # Step 4: Extract and analyze links if requested
-    links = None
-    if extract_links:
-        link_analyzer = LinkAnalyzer()
-        links = link_analyzer.analyze(extraction_result.html, fetch_result.url)
-
-    # Step 5: Convert to Markdown
-    markdown = md_converter.convert(extraction_result.html)
-
-    # Step 6: Analyze security with SecurityEngine (v0.7.0)
-    # Build metadata for security analysis
-    security_metadata = {
-        "hidden_elements_count": extraction_result.removed_hidden,
-    }
-
-    # Use SecurityEngine for advanced analysis
-    security_engine = SecurityEngine(
-        strict=strict, advanced_security=advanced_security, use_llm=use_llm
-    )
-    security_result = security_engine.analyze(extraction_result.text_content, security_metadata)
-
-    # Step 7: Generate hashes
-    content_hash = hasher.hash_content(markdown)
-    structural_hash = hasher.hash_structural(markdown)
-
-    # Step 8: Estimate tokens
-    token_count = token_estimator.estimate(markdown)
-    token_savings = token_estimator.estimate_savings(fetch_result.html, markdown)
-
-    # Build metadata
-    metadata = {
-        "url": fetch_result.url,
-        "final_url": fetch_result.final_url,
-        "title": extraction_result.title,
-        "fetch_time_ms": fetch_result.timing_ms,
-        "status_code": fetch_result.status_code,
-        "model": model,
-        "mode": mode,
-        "strict": strict,
-        "token_savings": token_savings,
-        "risk_level": scorer.get_risk_level(security_result["injection_score"]),
-        "structural_hash": structural_hash,
-        "advanced_security": advanced_security,
-        "security_scan_method": security_result["scan_method"],
-    }
+    # Create orchestrator and execute pipeline
+    orchestrator = IngestOrchestrator()
     
-    # Add screenshot path if captured
-    screenshot_path = fetch_result.metadata.get("screenshot_path")
-
-    # Build removed elements summary
-    removed_elements = {
-        "tags": extraction_result.removed_tags,
-        "hidden_elements": extraction_result.removed_hidden,
-    }
-
-    # Create SafeDocument
-    return SafeDocument(
-        markdown=markdown,
-        metadata=metadata,
-        token_estimate=token_count,
-        content_hash=content_hash,
-        injection_score=security_result["injection_score"],
-        flags=security_result["flags"],
-        removed_elements=removed_elements,
-        screenshot_path=screenshot_path,
-        enriched_metadata=enriched_metadata,
-        links=links,
-        nova_score=security_result.get("nova_score"),
-        nova_details=security_result.get("nova_details"),
+    return orchestrator.execute(
+        url=url,
+        mode=mode,
+        strict=strict,
+        model=model,
+        timeout=timeout,
+        stealth=stealth,
+        disable_http2=disable_http2,
+        extreme_mode=extreme_mode,
+        screenshot=screenshot,
+        extract_metadata=extract_metadata,
+        extract_links=extract_links,
+        advanced_security=advanced_security,
+        use_llm=use_llm,
     )
 
 
