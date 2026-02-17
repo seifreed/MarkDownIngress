@@ -253,7 +253,11 @@ def retry_ingest(
         >>> print(f"Attempts: {doc.metadata['retry_attempts']}")
         >>> print(f"Final timeout: {doc.metadata['final_timeout']}s")
     """
-    last_exception = None
+    # Validate parameters
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
+    
+    last_exception: Optional[Exception] = None
 
     for attempt in range(max_retries):
         try:

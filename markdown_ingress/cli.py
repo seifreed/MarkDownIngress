@@ -425,6 +425,10 @@ def main():
                         # Parse no-metadata and no-links
                         self.no_metadata = "--no-metadata" in sys.argv
                         self.no_links = "--no-links" in sys.argv
+                        
+                        # Parse security flags (v0.7.0)
+                        self.advanced_security = "--advanced-security" in sys.argv
+                        self.use_llm = "--use-llm" in sys.argv
 
                 legacy_args = IngestArgs()
                 cmd_ingest(legacy_args)
