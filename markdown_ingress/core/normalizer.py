@@ -7,7 +7,7 @@ import unicodedata
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 
-class Normalizer:
+class Normalizer:  # implements INormalizer protocol
     """Normalize content for deterministic output"""
 
     # Zero-width and invisible Unicode characters

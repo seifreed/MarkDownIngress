@@ -24,7 +24,7 @@ except ImportError:
     STEALTH_AVAILABLE = False
 
 
-class Renderer:
+class Renderer:  # implements IRenderer protocol
     """Headless browser renderer using Playwright for JavaScript-heavy sites"""
 
     DEFAULT_TIMEOUT = 30000  # milliseconds

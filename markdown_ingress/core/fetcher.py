@@ -9,7 +9,7 @@ import httpx
 from markdown_ingress.models import FetchResult
 
 
-class Fetcher:
+class Fetcher:  # implements IFetcher protocol
     """HTTP fetcher for fast mode (no JS rendering)"""
 
     DEFAULT_TIMEOUT = 30.0

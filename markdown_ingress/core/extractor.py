@@ -8,7 +8,7 @@ from selectolax.parser import HTMLParser
 from markdown_ingress.models import ExtractionResult
 
 
-class Extractor:
+class Extractor:  # implements IExtractor protocol
     """Extract main content and remove unnecessary elements"""
 
     REMOVE_TAGS = ["script", "style", "nav", "footer", "aside", "iframe", "noscript"]

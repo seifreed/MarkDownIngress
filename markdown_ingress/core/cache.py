@@ -12,7 +12,7 @@ from typing import Any
 from markdown_ingress.models import SafeDocument
 
 
-class Cache(ABC):
+class Cache(ABC):  # implements ICacheBackend protocol
     """Abstract cache interface"""
 
     @abstractmethod
@@ -57,7 +57,7 @@ class Cache(ABC):
         return hashlib.sha256(key_data.encode()).hexdigest()
 
 
-class MemoryCache(Cache):
+class MemoryCache(Cache):  # implements ICacheBackend protocol
     """In-memory cache implementation"""
 
     def __init__(self, default_ttl: int = 3600):
@@ -139,7 +139,7 @@ class MemoryCache(Cache):
         }
 
 
-class SQLiteCache(Cache):
+class SQLiteCache(Cache):  # implements ICacheBackend protocol
     """SQLite-based persistent cache"""
 
     def __init__(self, db_path: str = ".cache/markdowningress.db", default_ttl: int = 3600):
