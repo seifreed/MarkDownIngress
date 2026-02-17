@@ -59,20 +59,35 @@ class MetadataExtractor:
                 return content
 
         # Try schema.org JSON-LD
+        return self._extract_author_from_jsonld(parser)
+
+    def _extract_author_from_jsonld(self, parser: HTMLParser) -> str | None:
+        """Extract author from schema.org JSON-LD scripts"""
         scripts = parser.css('script[type="application/ld+json"]')
         for script in scripts:
-            try:
-                data = json.loads(script.text())
-                if isinstance(data, dict):
-                    author = data.get("author")
-                    if author:
-                        if isinstance(author, dict):
-                            return author.get("name", "")
-                        elif isinstance(author, str):
-                            return author
-            except (json.JSONDecodeError, AttributeError):
-                continue
+            author = self._parse_author_from_script(script)
+            if author:
+                return author
+        return None
 
+    def _parse_author_from_script(self, script) -> str | None:
+        """Parse author from a single JSON-LD script tag"""
+        try:
+            data = json.loads(script.text())
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        author = data.get("author")
+        if not author:
+            return None
+
+        if isinstance(author, dict):
+            return author.get("name", "")
+        if isinstance(author, str):
+            return author
         return None
 
     def _extract_published_date(self, parser: HTMLParser) -> str | None:
@@ -99,18 +114,7 @@ class MetadataExtractor:
                 return content
 
         # Try schema.org JSON-LD
-        scripts = parser.css('script[type="application/ld+json"]')
-        for script in scripts:
-            try:
-                data = json.loads(script.text())
-                if isinstance(data, dict):
-                    date_published = data.get("datePublished")
-                    if date_published:
-                        return date_published
-            except (json.JSONDecodeError, AttributeError):
-                continue
-
-        return None
+        return self._extract_date_from_jsonld(parser, "datePublished")
 
     def _extract_modified_date(self, parser: HTMLParser) -> str | None:
         """Extract modified/updated date from meta tags or schema.org"""
@@ -136,18 +140,29 @@ class MetadataExtractor:
                 return content
 
         # Try schema.org JSON-LD
+        return self._extract_date_from_jsonld(parser, "dateModified")
+
+    def _extract_date_from_jsonld(self, parser: HTMLParser, date_field: str) -> str | None:
+        """Extract a date field from schema.org JSON-LD scripts"""
         scripts = parser.css('script[type="application/ld+json"]')
         for script in scripts:
-            try:
-                data = json.loads(script.text())
-                if isinstance(data, dict):
-                    date_modified = data.get("dateModified")
-                    if date_modified:
-                        return date_modified
-            except (json.JSONDecodeError, AttributeError):
-                continue
-
+            date_value = self._parse_date_from_script(script, date_field)
+            if date_value:
+                return date_value
         return None
+
+    def _parse_date_from_script(self, script, date_field: str) -> str | None:
+        """Parse a date field from a single JSON-LD script tag"""
+        try:
+            data = json.loads(script.text())
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        date_value = data.get(date_field)
+        return date_value if date_value else None
 
     def _extract_language(self, parser: HTMLParser, html: str) -> str | None:
         """Extract language from html lang attribute, then detect from content"""
