@@ -119,3 +119,8 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Project config files (not tracked)
+.gitignore
+.dockerignore
+.pre-commit-config.yaml
