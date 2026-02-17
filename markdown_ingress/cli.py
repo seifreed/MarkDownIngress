@@ -18,7 +18,8 @@ from markdown_ingress import __version__, ingest
 from markdown_ingress.core.batch import BatchProcessor
 from markdown_ingress.core.scoring import Scorer
 
-console = Console()
+# Force UTF-8 encoding for console output (fixes Windows emoji issues)
+console = Console(force_terminal=True)
 
 
 @dataclass
@@ -107,7 +108,7 @@ def _display_header(args):
 
 def _display_basic_info(doc, args):
     """Display basic document information"""
-    console.print(f"📄 [bold]Title:[/bold] {doc.metadata.get('title', 'N/A')}")
+    console.print(f"[bold]Title:[/bold] {doc.metadata.get('title', 'N/A')}")
     console.print(f"🔗 [bold]URL:[/bold] {args.url}")
     console.print()
 
@@ -118,10 +119,10 @@ def _display_token_info(doc):
     if token_savings:
         saved = token_savings.get("tokens_saved", 0)
         percentage = token_savings.get("percentage_saved", 0.0)
-        console.print(f"✔ [green]Tokens: {doc.token_estimate}[/green]")
-        console.print(f"  ↳ Saved: {saved:,} tokens ({percentage:.1f}% reduction)")
+        console.print(f"[green]Tokens: {doc.token_estimate}[/green]")
+        console.print(f"  Saved: {saved:,} tokens ({percentage:.1f}% reduction)")
     else:
-        console.print(f"✔ [green]Tokens: {doc.token_estimate}[/green]")
+        console.print(f"[green]Tokens: {doc.token_estimate}[/green]")
     console.print()
 
 
@@ -181,7 +182,7 @@ def _save_json_output(output_data, args):
     output = json.dumps(output_data, indent=2)
     if args.save:
         Path(args.save).write_text(output)
-        console.print(f"[green]✓ JSON saved to {args.save}")
+        console.print(f"[green]JSON saved to {args.save}")
     else:
         print(output)
 
@@ -191,7 +192,7 @@ def _save_markdown_output(doc, args):
     if args.save:
         Path(args.save).write_text(doc.markdown)
         console.print()
-        console.print(f"[green]✓ Markdown saved to {args.save}")
+        console.print(f"[green]Markdown saved to {args.save}")
 
 
 def cmd_ingest(args):
@@ -268,7 +269,7 @@ def _display_batch_summary(batch_result):
     console.print()
     console.print("[bold]Batch Processing Summary[/bold]")
     console.print("=" * 60)
-    console.print(f"✓ Successful: [green]{batch_result.successful}[/green]")
+    console.print(f"Successful: [green]{batch_result.successful}[/green]")
     console.print(f"✗ Failed: [red]{batch_result.failed}[/red]")
     console.print()
 
@@ -284,7 +285,7 @@ def _create_batch_results_table(urls, batch_result):
     for i, (url, doc) in enumerate(zip(urls, batch_result.documents)):
         if doc:
             url_display = url[:37] + "..." if len(url) > 40 else url
-            table.add_row(url_display, "[green]✓", str(doc.token_estimate), f"{doc.injection_score:.2f}")
+            table.add_row(url_display, "[green]OK", str(doc.token_estimate), f"{doc.injection_score:.2f}")
     
     for url, error in batch_result.errors.items():
         url_display = url[:37] + "..." if len(url) > 40 else url
@@ -341,7 +342,7 @@ def _save_batch_results(args, urls, batch_result):
     else:
         _save_batch_markdown(output_path, batch_result)
     
-    console.print(f"[green]✓ Results saved to {args.output}")
+    console.print(f"[green]Results saved to {args.output}")
 
 
 def cmd_batch(args):
