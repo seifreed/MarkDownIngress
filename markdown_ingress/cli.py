@@ -6,20 +6,26 @@ MarkDownIngress CLI
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 
 from markdown_ingress import __version__, ingest
 from markdown_ingress.core.batch import BatchProcessor
 from markdown_ingress.core.scoring import Scorer
 
-# Force UTF-8 encoding for console output (fixes Windows emoji issues)
-console = Console(force_terminal=True)
+# Detect Windows and configure console accordingly
+is_windows = sys.platform == "win32"
+console = Console(
+    force_terminal=not is_windows,  # Disable fancy features on Windows
+    legacy_windows=is_windows,      # Use legacy mode on Windows
+    no_color=is_windows             # Disable colors on Windows (safest)
+)
 
 
 @dataclass
@@ -246,8 +252,8 @@ def _create_batch_processor(args):
 
 async def _process_batch_with_progress(processor, urls):
     """Process URLs with progress bar"""
+    # Simplified progress bar without spinner (Windows compatible)
     with Progress(
-        SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
@@ -270,7 +276,7 @@ def _display_batch_summary(batch_result):
     console.print("[bold]Batch Processing Summary[/bold]")
     console.print("=" * 60)
     console.print(f"Successful: [green]{batch_result.successful}[/green]")
-    console.print(f"✗ Failed: [red]{batch_result.failed}[/red]")
+    console.print(f"Failed: [red]{batch_result.failed}[/red]")
     console.print()
 
 

@@ -131,6 +131,6 @@ def test_screenshot_json_serialization():
         
         # Should be serializable
         json_str = json.dumps(output_data)
-        # Normalize path separators for cross-platform testing
-        normalized_path = screenshot_path.replace("\\", "/")
-        assert normalized_path in json_str or screenshot_path in json_str
+        # Deserialize and compare paths (handles Windows escaping)
+        parsed_data = json.loads(json_str)
+        assert parsed_data["screenshot_path"] == doc.screenshot_path
