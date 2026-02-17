@@ -3,6 +3,7 @@ MarkDownIngress - Deterministic, Injection-Resistant Web → Markdown Engine for
 """
 
 from markdown_ingress.api import generate_security_report, ingest, retry_ingest
+from markdown_ingress.config_models import IngestConfig, RenderConfig
 from markdown_ingress.core.batch import BatchProcessor, BatchResult
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult
 from markdown_ingress.core.cache import Cache, MemoryCache, SQLiteCache
@@ -20,6 +21,9 @@ __all__ = [
     # Models
     "SafeDocument",
     "SecurityReport",
+    # Configuration dataclasses (v0.7.1)
+    "IngestConfig",
+    "RenderConfig",
     # Batch processing
     "BatchProcessor",
     "BatchResult",

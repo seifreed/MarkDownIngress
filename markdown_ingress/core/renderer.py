@@ -6,7 +6,9 @@ import asyncio
 import logging
 import tempfile
 import time
+from typing import Optional, Union
 
+from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.models import FetchResult
 
@@ -49,57 +51,110 @@ class Renderer:  # implements IRenderer protocol
 
     def __init__(
         self,
-        timeout: float = 30.0,
-        wait_until: str = "networkidle",
-        headless: bool = True,
-        user_agent: str | None = None,
-        stealth: bool = False,
-        disable_http2: bool = False,
-        extreme_mode: bool = False,
-        block_resources: bool = True,
-        block_images: bool = True,
-        block_fonts: bool = True,
-        block_media: bool = True,
-        block_ads: bool = True,
-        block_trackers: bool = True,
-        screenshot: str | None = None,
+        config: Optional[RenderConfig] = None,
+        # Backward compatibility: accept individual parameters
+        timeout: Optional[float] = None,
+        wait_until: Optional[str] = None,
+        headless: Optional[bool] = None,
+        user_agent: Optional[str] = None,
+        stealth: Optional[bool] = None,
+        disable_http2: Optional[bool] = None,
+        extreme_mode: Optional[bool] = None,
+        block_resources: Optional[bool] = None,
+        block_images: Optional[bool] = None,
+        block_fonts: Optional[bool] = None,
+        block_media: Optional[bool] = None,
+        block_ads: Optional[bool] = None,
+        block_trackers: Optional[bool] = None,
+        screenshot: Optional[Union[bool, str]] = None,
     ):
         """
         Initialize Playwright renderer.
 
         Args:
-            timeout: Navigation timeout in seconds
-            wait_until: When to consider navigation complete ('networkidle', 'load', 'domcontentloaded')
-            headless: Run browser in headless mode
-            user_agent: Custom user agent (optional)
-            stealth: Enable stealth mode to avoid bot detection
-            disable_http2: Disable HTTP/2 protocol (used for fallback)
-            extreme_mode: Enable extreme timeouts (up to 300s) and patient waiting
-            block_resources: Enable resource blocking for faster loads
-            block_images: Block images when resource blocking enabled
-            block_fonts: Block fonts when resource blocking enabled
-            block_media: Block media (video/audio) when resource blocking enabled
-            block_ads: Block advertising domains when resource blocking enabled
-            block_trackers: Block analytics/tracking domains when resource blocking enabled
-            screenshot: Screenshot path (str) or True for temp file, None to disable
+            config: RenderConfig object with all settings (recommended)
+            timeout: Navigation timeout in seconds (deprecated, use config)
+            wait_until: When to consider navigation complete (deprecated, use config)
+            headless: Run browser in headless mode (deprecated, use config)
+            user_agent: Custom user agent (deprecated, use config)
+            stealth: Enable stealth mode (deprecated, use config)
+            disable_http2: Disable HTTP/2 protocol (deprecated, use config)
+            extreme_mode: Enable extreme timeouts (deprecated, use config)
+            block_resources: Enable resource blocking (deprecated, use config)
+            block_images: Block images (deprecated, use config)
+            block_fonts: Block fonts (deprecated, use config)
+            block_media: Block media (deprecated, use config)
+            block_ads: Block ads (deprecated, use config)
+            block_trackers: Block trackers (deprecated, use config)
+            screenshot: Screenshot path or True for temp (deprecated, use config)
         """
-        self.timeout = int(timeout * 1000)  # Convert to milliseconds
-        self.wait_until = wait_until
-        self.headless = headless
-        self.stealth = stealth
-        self.disable_http2 = disable_http2
-        self.extreme_mode = extreme_mode
+        # If no config provided, create from individual parameters or defaults
+        if config is None:
+            config = RenderConfig(
+                timeout=timeout if timeout is not None else 30.0,
+                wait_until=wait_until if wait_until is not None else "networkidle",
+                headless=headless if headless is not None else True,
+                user_agent=user_agent,
+                stealth=stealth if stealth is not None else False,
+                disable_http2=disable_http2 if disable_http2 is not None else False,
+                extreme_mode=extreme_mode if extreme_mode is not None else False,
+                block_resources=block_resources if block_resources is not None else True,
+                block_images=block_images if block_images is not None else True,
+                block_fonts=block_fonts if block_fonts is not None else True,
+                block_media=block_media if block_media is not None else True,
+                block_ads=block_ads if block_ads is not None else True,
+                block_trackers=block_trackers if block_trackers is not None else True,
+                screenshot=screenshot,
+            )
+        else:
+            # Config provided - override with any explicit parameters
+            if timeout is not None:
+                config.timeout = timeout
+            if wait_until is not None:
+                config.wait_until = wait_until
+            if headless is not None:
+                config.headless = headless
+            if user_agent is not None:
+                config.user_agent = user_agent
+            if stealth is not None:
+                config.stealth = stealth
+            if disable_http2 is not None:
+                config.disable_http2 = disable_http2
+            if extreme_mode is not None:
+                config.extreme_mode = extreme_mode
+            if block_resources is not None:
+                config.block_resources = block_resources
+            if block_images is not None:
+                config.block_images = block_images
+            if block_fonts is not None:
+                config.block_fonts = block_fonts
+            if block_media is not None:
+                config.block_media = block_media
+            if block_ads is not None:
+                config.block_ads = block_ads
+            if block_trackers is not None:
+                config.block_trackers = block_trackers
+            if screenshot is not None:
+                config.screenshot = screenshot
+        
+        # Store configuration
+        self.timeout = int(config.timeout * 1000)  # Convert to milliseconds
+        self.wait_until = config.wait_until
+        self.headless = config.headless
+        self.stealth = config.stealth
+        self.disable_http2 = config.disable_http2
+        self.extreme_mode = config.extreme_mode
         self.user_agent = (
-            user_agent
+            config.user_agent
             or "Mozilla/5.0 (compatible; MarkDownIngress/0.2; +https://github.com/markdowningress)"
         )
-        self.block_resources = block_resources
-        self.block_images = block_images
-        self.block_fonts = block_fonts
-        self.block_media = block_media
-        self.block_ads = block_ads
-        self.block_trackers = block_trackers
-        self.screenshot = screenshot
+        self.block_resources = config.block_resources
+        self.block_images = config.block_images
+        self.block_fonts = config.block_fonts
+        self.block_media = config.block_media
+        self.block_ads = config.block_ads
+        self.block_trackers = config.block_trackers
+        self.screenshot = config.screenshot
 
     async def render(self, url: str) -> FetchResult:
         """
@@ -128,8 +183,8 @@ class Renderer:  # implements IRenderer protocol
             error_str = str(e)
             # Check for HTTP/2 protocol error
             if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:
-                # Retry with HTTP/2 disabled
-                retry_renderer = Renderer(
+                # Retry with HTTP/2 disabled - create config from current settings
+                retry_config = RenderConfig(
                     timeout=self.timeout / 1000.0,  # Convert back to seconds
                     wait_until=self.wait_until,
                     headless=self.headless,
@@ -145,6 +200,7 @@ class Renderer:  # implements IRenderer protocol
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
                 )
+                retry_renderer = Renderer(config=retry_config)
                 result = await retry_renderer._render_with_browser(url)
                 # Mark as HTTP/2 fallback
                 result.metadata["http2_fallback"] = True
@@ -329,7 +385,7 @@ class Renderer:  # implements IRenderer protocol
                 )
 
                 # Create temporary renderer with this strategy
-                temp_renderer = Renderer(
+                temp_config = RenderConfig(
                     timeout=timeout_ms / 1000.0,
                     wait_until=wait_state,
                     headless=self.headless,
@@ -345,6 +401,7 @@ class Renderer:  # implements IRenderer protocol
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
                 )
+                temp_renderer = Renderer(config=temp_config)
 
                 # Try rendering with smart waiting
                 result = await temp_renderer._render_with_smart_wait(url, timeout_ms)

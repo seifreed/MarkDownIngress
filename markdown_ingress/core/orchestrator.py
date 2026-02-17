@@ -7,6 +7,7 @@ the web-to-markdown ingestion pipeline, separating concerns from the API layer.
 
 from typing import Literal, Optional, Union
 
+from markdown_ingress.config_models import IngestConfig, RenderConfig
 from markdown_ingress.core.extractor import Extractor
 from markdown_ingress.core.fetcher import Fetcher
 from markdown_ingress.core.hashing import Hasher
@@ -74,65 +75,112 @@ class IngestOrchestrator:
     def execute(
         self,
         url: str,
-        mode: Literal["fast", "render"],
-        strict: bool = True,
-        model: str = "gpt-4",
-        timeout: float = 30.0,
-        stealth: bool = False,
-        disable_http2: bool = False,
-        extreme_mode: bool = False,
+        config: Optional[IngestConfig] = None,
+        # Backward compatibility: accept individual parameters
+        mode: Optional[Literal["fast", "render"]] = None,
+        strict: Optional[bool] = None,
+        model: Optional[str] = None,
+        timeout: Optional[float] = None,
+        stealth: Optional[bool] = None,
+        disable_http2: Optional[bool] = None,
+        extreme_mode: Optional[bool] = None,
         screenshot: Optional[Union[bool, str]] = None,
-        extract_metadata: bool = True,
-        extract_links: bool = True,
-        advanced_security: bool = False,
-        use_llm: bool = False,
+        extract_metadata: Optional[bool] = None,
+        extract_links: Optional[bool] = None,
+        advanced_security: Optional[bool] = None,
+        use_llm: Optional[bool] = None,
     ) -> SafeDocument:
         """
         Execute the complete ingestion pipeline.
         
         Args:
             url: Target URL to ingest
-            mode: Fetching mode ('fast' or 'render')
-            strict: Enable strict security mode
-            model: LLM model name for token estimation
-            timeout: Request timeout in seconds
-            stealth: Enable stealth mode (render mode only)
-            disable_http2: Disable HTTP/2 protocol (render mode only)
-            extreme_mode: Enable extreme timeouts (render mode only)
-            screenshot: Screenshot configuration
-            extract_metadata: Extract enriched metadata
-            extract_links: Extract and analyze links
-            advanced_security: Enable Nova-tracer advanced injection detection
-            use_llm: Enable LLM-based detection tier
+            config: IngestConfig object with all settings (recommended)
+            mode: Fetching mode (deprecated, use config)
+            strict: Enable strict security mode (deprecated, use config)
+            model: LLM model name for token estimation (deprecated, use config)
+            timeout: Request timeout in seconds (deprecated, use config)
+            stealth: Enable stealth mode (deprecated, use config)
+            disable_http2: Disable HTTP/2 protocol (deprecated, use config)
+            extreme_mode: Enable extreme timeouts (deprecated, use config)
+            screenshot: Screenshot configuration (deprecated, use config)
+            extract_metadata: Extract enriched metadata (deprecated, use config)
+            extract_links: Extract and analyze links (deprecated, use config)
+            advanced_security: Enable Nova-tracer detection (deprecated, use config)
+            use_llm: Enable LLM-based detection (deprecated, use config)
             
         Returns:
             SafeDocument with markdown content, metadata, and security analysis
         """
+        # If no config provided, create from individual parameters or defaults
+        if config is None:
+            config = IngestConfig(
+                mode=mode if mode is not None else "auto",
+                strict=strict if strict is not None else True,
+                model=model if model is not None else "gpt-4",
+                timeout=timeout if timeout is not None else 30.0,
+                stealth=stealth if stealth is not None else False,
+                disable_http2=disable_http2 if disable_http2 is not None else False,
+                extreme_mode=extreme_mode if extreme_mode is not None else False,
+                screenshot=screenshot,
+                extract_metadata=extract_metadata if extract_metadata is not None else True,
+                extract_links=extract_links if extract_links is not None else True,
+                advanced_security=advanced_security if advanced_security is not None else False,
+                use_llm=use_llm if use_llm is not None else False,
+            )
+        else:
+            # Config provided - override with any explicit parameters
+            if mode is not None:
+                config.mode = mode
+            if strict is not None:
+                config.strict = strict
+            if model is not None:
+                config.model = model
+            if timeout is not None:
+                config.timeout = timeout
+            if stealth is not None:
+                config.stealth = stealth
+            if disable_http2 is not None:
+                config.disable_http2 = disable_http2
+            if extreme_mode is not None:
+                config.extreme_mode = extreme_mode
+            if screenshot is not None:
+                config.screenshot = screenshot
+            if extract_metadata is not None:
+                config.extract_metadata = extract_metadata
+            if extract_links is not None:
+                config.extract_links = extract_links
+            if advanced_security is not None:
+                config.advanced_security = advanced_security
+            if use_llm is not None:
+                config.use_llm = use_llm
+        
         # Initialize components with defaults if not injected
-        extractor = self.extractor or Extractor(strict=strict)
+        extractor = self.extractor or Extractor(strict=config.strict)
         normalizer = self.normalizer or Normalizer()
         md_converter = self.md_converter or MarkdownConverter()
         hasher = self.hasher or Hasher()
-        token_estimator = self.token_estimator or TokenEstimator(model=model)
+        token_estimator = self.token_estimator or TokenEstimator(model=config.model)
         scorer = self.scorer or Scorer()
 
         # Step 1: Fetch HTML (mode-dependent)
-        if mode == "render":
+        if config.mode == "render":
             if not PLAYWRIGHT_AVAILABLE:
                 raise ImportError(
                     "Render mode requires Playwright. Install with: "
                     "pip install 'markdown-ingress[render]' && playwright install"
                 )
-            renderer = Renderer(
-                timeout=timeout,
-                stealth=stealth,
-                disable_http2=disable_http2,
-                extreme_mode=extreme_mode,
-                screenshot=screenshot,
+            render_config = RenderConfig(
+                timeout=config.timeout,
+                stealth=config.stealth,
+                disable_http2=config.disable_http2,
+                extreme_mode=config.extreme_mode,
+                screenshot=config.screenshot,
             )
+            renderer = Renderer(config=render_config)
             fetch_result = renderer.render_sync(url)
         else:  # fast mode
-            fetcher = Fetcher(timeout=timeout)
+            fetcher = Fetcher(timeout=config.timeout)
             fetch_result = fetcher.fetch_sync(url)
 
         # Step 2: Extract main content and clean
@@ -140,13 +188,13 @@ class IngestOrchestrator:
 
         # Step 3: Extract enriched metadata if requested
         enriched_metadata = None
-        if extract_metadata:
+        if config.extract_metadata:
             metadata_extractor = self.metadata_extractor or MetadataExtractor()
             enriched_metadata = metadata_extractor.extract(fetch_result.html, fetch_result.url)
 
         # Step 4: Extract and analyze links if requested
         links = None
-        if extract_links:
+        if config.extract_links:
             link_analyzer = self.link_analyzer or LinkAnalyzer()
             links = link_analyzer.analyze(extraction_result.html, fetch_result.url)
 
@@ -159,7 +207,7 @@ class IngestOrchestrator:
         }
 
         security_engine = SecurityEngine(
-            strict=strict, advanced_security=advanced_security, use_llm=use_llm
+            strict=config.strict, advanced_security=config.advanced_security, use_llm=config.use_llm
         )
         security_result = security_engine.analyze(extraction_result.text_content, security_metadata)
 
@@ -178,13 +226,13 @@ class IngestOrchestrator:
             "title": extraction_result.title,
             "fetch_time_ms": fetch_result.timing_ms,
             "status_code": fetch_result.status_code,
-            "model": model,
-            "mode": mode,
-            "strict": strict,
+            "model": config.model,
+            "mode": config.mode,
+            "strict": config.strict,
             "token_savings": token_savings,
             "risk_level": scorer.get_risk_level(security_result["injection_score"]),
             "structural_hash": structural_hash,
-            "advanced_security": advanced_security,
+            "advanced_security": config.advanced_security,
             "security_scan_method": security_result["scan_method"],
         }
 
