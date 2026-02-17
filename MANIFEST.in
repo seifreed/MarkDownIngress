@@ -1,7 +1,0 @@
-include LICENSE
-include README.md
-include CHANGELOG.md
-include pyproject.toml
-recursive-include markdown_ingress *.py
-recursive-exclude tests *
-recursive-exclude examples *
