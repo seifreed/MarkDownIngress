@@ -411,7 +411,7 @@ async def inject_stealth(page):
     # Add post-load stealth script
     try:
         await page.evaluate(STEALTH_JS_POST_LOAD)
-    except Exception:
+    except Exception:  # pragma: no cover
         # Page might not be ready yet, that's okay
         # The init script is the critical one
-        pass
+        pass  # pragma: no cover

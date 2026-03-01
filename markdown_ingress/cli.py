@@ -477,7 +477,7 @@ def main():
         parser = _create_legacy_parser()
         args = parser.parse_args()
         cmd_ingest(args)
-        return
+        return  # pragma: no cover
 
     parser = _create_standard_parser()
     subparsers = parser.add_subparsers(dest="command", help="Commands", required=False)

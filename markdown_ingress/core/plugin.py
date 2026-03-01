@@ -36,7 +36,7 @@ class Plugin(ABC):
         Returns:
             List of regex pattern strings
         """
-        pass
+        pass  # pragma: no cover
 
     def get_config(self) -> dict[str, Any]:
         """

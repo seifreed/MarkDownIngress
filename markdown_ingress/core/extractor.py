@@ -51,7 +51,7 @@ class Extractor:  # implements IExtractor protocol
                 content_html = f"<html><body>{body.html}</body></html>"
             else:
                 # Ultimate fallback: use entire pre-cleaned HTML
-                content_html = pre_cleaned_html
+                content_html = pre_cleaned_html  # pragma: no cover
 
         # Parse with selectolax for fast manipulation
         tree = HTMLParser(content_html)

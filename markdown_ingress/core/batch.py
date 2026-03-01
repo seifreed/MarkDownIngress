@@ -21,9 +21,9 @@ try:
     from markdown_ingress.core.renderer import Renderer
 
     RENDERER_AVAILABLE = True
-except ImportError:
-    RENDERER_AVAILABLE = False
-    Renderer = None
+except ImportError:  # pragma: no cover
+    RENDERER_AVAILABLE = False  # pragma: no cover
+    Renderer = None  # pragma: no cover
 
 
 @dataclass

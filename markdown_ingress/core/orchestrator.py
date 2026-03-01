@@ -30,9 +30,9 @@ try:
     from markdown_ingress.core.renderer import Renderer
 
     PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    Renderer = None
+except ImportError:  # pragma: no cover
+    PLAYWRIGHT_AVAILABLE = False  # pragma: no cover
+    Renderer = None  # pragma: no cover
 
 
 class IngestOrchestrator:

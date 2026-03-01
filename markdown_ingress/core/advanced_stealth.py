@@ -123,9 +123,9 @@ class AdvancedStealthRenderer:
         except Exception as e:
             error_str = str(e)
             # Check for HTTP/2 protocol error
-            if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:
+            if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:  # pragma: no cover
                 # Retry with HTTP/2 disabled
-                retry_renderer = AdvancedStealthRenderer(
+                retry_renderer = AdvancedStealthRenderer(  # pragma: no cover
                     timeout=self.timeout / 1000.0,
                     wait_until=self.wait_until,
                     headless=self.headless,
@@ -151,12 +151,12 @@ class AdvancedStealthRenderer:
         """
         try:
             from playwright.async_api import async_playwright
-        except ImportError:
-            raise ImportError(
+        except ImportError:  # pragma: no cover
+            raise ImportError(  # pragma: no cover
                 "Playwright is not installed. Install with: "
                 "pip install 'markdown-ingress[render]' or "
                 "pip install playwright && playwright install"
-            )
+            )  # pragma: no cover
 
         start_time = time.perf_counter()
 

@@ -13,11 +13,11 @@ try:
     from nova import NovaMatcher, NovaParser, NovaRule  # noqa: F401
 
     NOVA_AVAILABLE = True
-except ImportError:
-    NOVA_AVAILABLE = False
-    logger.warning(
+except ImportError:  # pragma: no cover
+    NOVA_AVAILABLE = False  # pragma: no cover
+    logger.warning(  # pragma: no cover
         "nova-hunting not installed. Install with: pip install nova-hunting"
-    )
+    )  # pragma: no cover
 
 _BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection.nova"
 
@@ -33,7 +33,7 @@ class NovaGuard:
         rules_path: str | None = None,
     ):
         if not NOVA_AVAILABLE:
-            raise ImportError("nova-hunting not installed")
+            raise ImportError("nova-hunting not installed")  # pragma: no cover
 
         self.enable_keywords = enable_keywords
         self.enable_semantics = enable_semantics

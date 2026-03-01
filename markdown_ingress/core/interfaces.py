@@ -29,7 +29,7 @@ class IFetcher(Protocol):
         Raises:
             httpx.HTTPError: On network/HTTP errors
         """
-        ...
+        ...  # pragma: no cover
 
     def fetch_sync(self, url: str) -> FetchResult:
         """
@@ -41,7 +41,7 @@ class IFetcher(Protocol):
         Returns:
             FetchResult with HTML content and metadata
         """
-        ...
+        ...  # pragma: no cover
 
 
 class IRenderer(Protocol):
@@ -62,7 +62,7 @@ class IRenderer(Protocol):
             playwright._impl._errors.TimeoutError: On timeout
             playwright._impl._errors.Error: On navigation errors
         """
-        ...
+        ...  # pragma: no cover
 
     def render_sync(self, url: str) -> FetchResult:
         """
@@ -74,7 +74,7 @@ class IRenderer(Protocol):
         Returns:
             FetchResult with rendered HTML
         """
-        ...
+        ...  # pragma: no cover
 
 
 class IExtractor(Protocol):
@@ -91,7 +91,7 @@ class IExtractor(Protocol):
         Returns:
             ExtractionResult with cleaned HTML and metadata
         """
-        ...
+        ...  # pragma: no cover
 
 
 class INormalizer(Protocol):
@@ -107,7 +107,7 @@ class INormalizer(Protocol):
         Returns:
             Normalized text
         """
-        ...
+        ...  # pragma: no cover
 
     def normalize_unicode(self, text: str) -> str:
         """
@@ -119,7 +119,7 @@ class INormalizer(Protocol):
         Returns:
             NFC-normalized text
         """
-        ...
+        ...  # pragma: no cover
 
     def normalize_whitespace(self, text: str) -> str:
         """
@@ -131,7 +131,7 @@ class INormalizer(Protocol):
         Returns:
             Text with normalized whitespace
         """
-        ...
+        ...  # pragma: no cover
 
     def normalize_url(self, url: str) -> str:
         """
@@ -143,7 +143,7 @@ class INormalizer(Protocol):
         Returns:
             Normalized URL without tracking params
         """
-        ...
+        ...  # pragma: no cover
 
 
 class ICacheBackend(Protocol):
@@ -159,7 +159,7 @@ class ICacheBackend(Protocol):
         Returns:
             SafeDocument if found and not expired, None otherwise
         """
-        ...
+        ...  # pragma: no cover
 
     def set(self, key: str, document: SafeDocument, ttl: int | None = None) -> None:
         """
@@ -170,7 +170,7 @@ class ICacheBackend(Protocol):
             document: SafeDocument to store
             ttl: Time-to-live in seconds (None = use default)
         """
-        ...
+        ...  # pragma: no cover
 
     def delete(self, key: str) -> None:
         """
@@ -179,13 +179,13 @@ class ICacheBackend(Protocol):
         Args:
             key: Cache key
         """
-        ...
+        ...  # pragma: no cover
 
     def clear(self) -> None:
         """
         Clear entire cache.
         """
-        ...
+        ...  # pragma: no cover
 
     def exists(self, key: str) -> bool:
         """
@@ -197,4 +197,4 @@ class ICacheBackend(Protocol):
         Returns:
             True if key exists and is not expired
         """
-        ...
+        ...  # pragma: no cover
