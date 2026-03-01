@@ -33,7 +33,7 @@ class BatchResult:
     total: int
     successful: int
     failed: int
-    documents: list[SafeDocument] = field(default_factory=list)
+    documents: list[SafeDocument | None] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)  # url -> error message
 
     @property
@@ -184,7 +184,7 @@ class BatchProcessor:
         total = len(urls)
         successful = 0
         failed = 0
-        documents = []
+        documents: list[SafeDocument | None] = [None] * total
         errors = {}
 
         # Create semaphore for concurrency control
@@ -200,7 +200,7 @@ class BatchProcessor:
                         self.on_progress(index + 1, total, url)
 
                     doc = await self.process_url(url)
-                    documents.append(doc)
+                    documents[index] = doc
                     successful += 1
 
                 except Exception as e:

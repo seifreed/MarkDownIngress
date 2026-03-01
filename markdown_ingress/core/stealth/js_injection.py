@@ -91,7 +91,7 @@ if (!window.chrome.runtime) {
 const originalQuery = window.navigator.permissions.query;
 window.navigator.permissions.query = (parameters) => {
     if (parameters.name === 'notifications') {
-        return Promise.resolve({ 
+        return Promise.resolve({
             state: Notification.permission,
             onchange: null,
         });

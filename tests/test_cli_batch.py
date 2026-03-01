@@ -4,8 +4,14 @@ Tests for CLI batch command
 
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+
+def _cli_cmd(*args: str) -> list[str]:
+    """Run CLI through current Python interpreter for environment portability."""
+    return [sys.executable, "-m", "markdown_ingress.cli", *args]
 
 
 class TestCLIBatch:
@@ -25,7 +31,7 @@ http://example.org
 
             # Run batch command
             result = subprocess.run(
-                ["markdown-ingress", "batch", str(urls_file), "--output", str(output_dir)],
+                _cli_cmd("batch", str(urls_file), "--output", str(output_dir)),
                 capture_output=True,
                 text=True,
             )
@@ -46,14 +52,7 @@ http://example.org
             output_file = Path(tmpdir) / "results.json"
 
             result = subprocess.run(
-                [
-                    "markdown-ingress",
-                    "batch",
-                    str(urls_file),
-                    "--json",
-                    "--output",
-                    str(output_file),
-                ],
+                _cli_cmd("batch", str(urls_file), "--json", "--output", str(output_file)),
                 capture_output=True,
                 text=True,
             )
@@ -83,15 +82,7 @@ http://example.org
             output_dir = Path(tmpdir) / "output"
 
             result = subprocess.run(
-                [
-                    "markdown-ingress",
-                    "batch",
-                    str(urls_file),
-                    "--output",
-                    str(output_dir),
-                    "--concurrent",
-                    "2",
-                ],
+                _cli_cmd("batch", str(urls_file), "--output", str(output_dir), "--concurrent", "2"),
                 capture_output=True,
                 text=True,
             )
@@ -113,8 +104,7 @@ http://example.net
             output_file = Path(tmpdir) / "results.json"
 
             result = subprocess.run(
-                [
-                    "markdown-ingress",
+                _cli_cmd(
                     "batch",
                     str(urls_file),
                     "--concurrent",
@@ -122,7 +112,7 @@ http://example.net
                     "--json",
                     "--output",
                     str(output_file),
-                ],
+                ),
                 capture_output=True,
                 text=True,
             )
@@ -138,7 +128,7 @@ class TestCLIIngest:
     def test_ingest_subcommand(self):
         """Ingest subcommand works"""
         result = subprocess.run(
-            ["markdown-ingress", "ingest", "http://example.com", "--no-content"],
+            _cli_cmd("ingest", "http://example.com", "--no-content"),
             capture_output=True,
             text=True,
         )
@@ -150,7 +140,7 @@ class TestCLIIngest:
     def test_ingest_json_output(self):
         """Ingest can output JSON"""
         result = subprocess.run(
-            ["markdown-ingress", "ingest", "http://example.com", "--json"],
+            _cli_cmd("ingest", "http://example.com", "--json"),
             capture_output=True,
             text=True,
         )
@@ -167,14 +157,13 @@ class TestCLIIngest:
             output_file = Path(tmpdir) / "output.md"
 
             result = subprocess.run(
-                [
-                    "markdown-ingress",
+                _cli_cmd(
                     "ingest",
                     "http://example.com",
                     "--save",
                     str(output_file),
                     "--no-content",
-                ],
+                ),
                 capture_output=True,
                 text=True,
             )
@@ -187,7 +176,7 @@ class TestCLIIngest:
     def test_legacy_url_mode(self):
         """Legacy mode works via ingest subcommand"""
         result = subprocess.run(
-            ["markdown-ingress", "ingest", "http://example.com", "--no-content"],
+            _cli_cmd("ingest", "http://example.com", "--no-content"),
             capture_output=True,
             text=True,
         )

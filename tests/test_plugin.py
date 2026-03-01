@@ -12,6 +12,7 @@ from markdown_ingress.core.plugin import Plugin, PluginInfo, PluginLoader
 
 class TestPlugin(Plugin):
     """Test plugin implementation"""
+    __test__ = False
 
     def __init__(self):
         super().__init__()

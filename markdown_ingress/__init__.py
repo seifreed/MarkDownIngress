@@ -21,7 +21,7 @@ __all__ = [
     # Models
     "SafeDocument",
     "SecurityReport",
-    # Configuration dataclasses (v0.7.1)
+    # Configuration dataclasses (v0.7.0)
     "IngestConfig",
     "RenderConfig",
     # Batch processing

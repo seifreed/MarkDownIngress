@@ -14,7 +14,7 @@ from markdown_ingress.api import generate_security_report, ingest, retry_ingest
 app = FastAPI(
     title="MarkDownIngress API",
     description="Deterministic Web → Markdown Engine for LLM Pipelines",
-    version = "0.6.0",
+    version="0.7.0",
 )
 
 
@@ -269,7 +269,7 @@ async def security_report_endpoint(request: IngestRequest):
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "healthy", "version": "0.6.0", "service": "MarkDownIngress API"}
+    return {"status": "healthy", "version": "0.7.0", "service": "MarkDownIngress API"}
 
 
 @app.get("/")
@@ -277,7 +277,7 @@ async def root():
     """Root endpoint"""
     return {
         "message": "MarkDownIngress API - See /docs for interactive documentation",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "endpoints": {
             "docs": "/docs",
             "health": "/health",

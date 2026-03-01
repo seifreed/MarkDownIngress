@@ -2,7 +2,6 @@
 Tests for link extraction and analysis
 """
 
-import pytest
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 
 
@@ -19,7 +18,7 @@ def test_extract_internal_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["internal"]) == 3
     assert "https://example.com/page1" in result["internal"]
     assert "https://example.com/page2" in result["internal"]
@@ -38,7 +37,7 @@ def test_extract_external_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["external"]) == 2
     assert "https://google.com" in result["external"]
     assert "https://github.com/repo" in result["external"]
@@ -56,7 +55,7 @@ def test_extract_anchor_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["anchors"]) == 2
     assert "#section1" in result["anchors"]
     assert "#section2" in result["anchors"]
@@ -75,7 +74,7 @@ def test_skip_mailto_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert result["total"] == 0
     assert len(result["internal"]) == 0
     assert len(result["external"]) == 0
@@ -94,7 +93,7 @@ def test_count_by_domain():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert result["by_domain"]["google.com"] == 2
     assert result["by_domain"]["github.com"] == 1
 
@@ -113,7 +112,7 @@ def test_deduplicate_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["internal"]) == 1
     assert len(result["external"]) == 1
 
@@ -131,7 +130,7 @@ def test_total_count():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert result["total"] == 3
 
 
@@ -146,7 +145,7 @@ def test_empty_html():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert result["total"] == 0
     assert len(result["internal"]) == 0
     assert len(result["external"]) == 0
@@ -167,7 +166,7 @@ def test_relative_urls():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com/dir/page")
-    
+
     assert len(result["internal"]) == 3
 
 
@@ -182,7 +181,7 @@ def test_subdomain_as_external():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["external"]) == 1
     assert "https://sub.example.com" in result["external"]
 
@@ -198,7 +197,7 @@ def test_case_insensitive_domain():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["internal"]) == 1
 
 
@@ -221,7 +220,7 @@ def test_mixed_links():
     """
     analyzer = LinkAnalyzer()
     result = analyzer.analyze(html, "https://example.com")
-    
+
     assert len(result["internal"]) == 3
     assert len(result["external"]) == 3
     assert len(result["anchors"]) == 2

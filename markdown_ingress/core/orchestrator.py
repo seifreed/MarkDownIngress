@@ -5,18 +5,22 @@ This module contains the IngestOrchestrator class that coordinates
 the web-to-markdown ingestion pipeline, separating concerns from the API layer.
 """
 
-from typing import Literal, Optional, Union
+import copy
+from typing import Literal
 
 from markdown_ingress.config_models import IngestConfig, RenderConfig
+from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.extractor import Extractor
 from markdown_ingress.core.fetcher import Fetcher
 from markdown_ingress.core.hashing import Hasher
-from markdown_ingress.core.interfaces import IExtractor, IFetcher, INormalizer, IRenderer
+from markdown_ingress.core.interfaces import IExtractor, INormalizer
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 from markdown_ingress.core.markdown import MarkdownConverter
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
-from markdown_ingress.core.normalizer import Normalizer
+from markdown_ingress.core.plugin import PluginLoader
+from markdown_ingress.core.policy import PolicyEngine
 from markdown_ingress.core.scoring import Scorer
+from markdown_ingress.core.security import InjectionPattern, SecurityAnalyzer
 from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.tokens import TokenEstimator
 from markdown_ingress.models import SafeDocument
@@ -34,25 +38,25 @@ except ImportError:
 class IngestOrchestrator:
     """
     Orchestrates the web → markdown ingestion pipeline.
-    
+
     Coordinates fetching, extraction, conversion, and security analysis
     using dependency injection pattern for better testability and maintainability.
     """
 
     def __init__(
         self,
-        extractor: Optional[IExtractor] = None,
-        normalizer: Optional[INormalizer] = None,
-        md_converter: Optional[MarkdownConverter] = None,
-        hasher: Optional[Hasher] = None,
-        token_estimator: Optional[TokenEstimator] = None,
-        scorer: Optional[Scorer] = None,
-        metadata_extractor: Optional[MetadataExtractor] = None,
-        link_analyzer: Optional[LinkAnalyzer] = None,
+        extractor: IExtractor | None = None,
+        normalizer: INormalizer | None = None,
+        md_converter: MarkdownConverter | None = None,
+        hasher: Hasher | None = None,
+        token_estimator: TokenEstimator | None = None,
+        scorer: Scorer | None = None,
+        metadata_extractor: MetadataExtractor | None = None,
+        link_analyzer: LinkAnalyzer | None = None,
     ):
         """
         Initialize orchestrator with optional dependency injection.
-        
+
         Args:
             extractor: HTML content extractor (implements IExtractor)
             normalizer: HTML normalizer (implements INormalizer)
@@ -75,24 +79,24 @@ class IngestOrchestrator:
     def execute(
         self,
         url: str,
-        config: Optional[IngestConfig] = None,
+        config: IngestConfig | None = None,
         # Backward compatibility: accept individual parameters
-        mode: Optional[Literal["fast", "render"]] = None,
-        strict: Optional[bool] = None,
-        model: Optional[str] = None,
-        timeout: Optional[float] = None,
-        stealth: Optional[bool] = None,
-        disable_http2: Optional[bool] = None,
-        extreme_mode: Optional[bool] = None,
-        screenshot: Optional[Union[bool, str]] = None,
-        extract_metadata: Optional[bool] = None,
-        extract_links: Optional[bool] = None,
-        advanced_security: Optional[bool] = None,
-        use_llm: Optional[bool] = None,
+        mode: Literal["fast", "render"] | None = None,
+        strict: bool | None = None,
+        model: str | None = None,
+        timeout: float | None = None,
+        stealth: bool | None = None,
+        disable_http2: bool | None = None,
+        extreme_mode: bool | None = None,
+        screenshot: bool | str | None = None,
+        extract_metadata: bool | None = None,
+        extract_links: bool | None = None,
+        advanced_security: bool | None = None,
+        use_llm: bool | None = None,
     ) -> SafeDocument:
         """
         Execute the complete ingestion pipeline.
-        
+
         Args:
             url: Target URL to ingest
             config: IngestConfig object with all settings (recommended)
@@ -108,7 +112,7 @@ class IngestOrchestrator:
             extract_links: Extract and analyze links (deprecated, use config)
             advanced_security: Enable Nova-tracer detection (deprecated, use config)
             use_llm: Enable LLM-based detection (deprecated, use config)
-            
+
         Returns:
             SafeDocument with markdown content, metadata, and security analysis
         """
@@ -154,14 +158,24 @@ class IngestOrchestrator:
                 config.advanced_security = advanced_security
             if use_llm is not None:
                 config.use_llm = use_llm
-        
+
         # Initialize components with defaults if not injected
         extractor = self.extractor or Extractor(strict=config.strict)
-        normalizer = self.normalizer or Normalizer()
         md_converter = self.md_converter or MarkdownConverter()
         hasher = self.hasher or Hasher()
         token_estimator = self.token_estimator or TokenEstimator(model=config.model)
         scorer = self.scorer or Scorer()
+
+        # Step 0: Cache lookup (if enabled)
+        cache_backend = config.cache
+        cache_key = None
+        if cache_backend is not None:
+            cache_key = Cache.make_key(url=url, mode=config.mode, strict=config.strict)
+            cached = cache_backend.get(cache_key)
+            if cached is not None:
+                cached_copy = copy.deepcopy(cached)
+                cached_copy.metadata["cache_hit"] = True
+                return cached_copy
 
         # Step 1: Fetch HTML (mode-dependent)
         if config.mode == "render":
@@ -211,6 +225,38 @@ class IngestOrchestrator:
         )
         security_result = security_engine.analyze(extraction_result.text_content, security_metadata)
 
+        # Optional extension: custom/plugin patterns integrated into scoring path.
+        extra_patterns = list(config.custom_patterns)
+        plugins_loaded = 0
+        if config.plugin_dirs:
+            plugin_loader = PluginLoader()
+            for plugin_dir in config.plugin_dirs:
+                plugins_loaded += plugin_loader.load_from_directory(plugin_dir)
+            extra_patterns.extend(plugin_loader.get_all_patterns())
+
+        if extra_patterns:
+            custom_defs = [
+                InjectionPattern(
+                    pattern=pattern,
+                    weight=0.5,
+                    description=f"custom_pattern_{idx + 1}",
+                )
+                for idx, pattern in enumerate(extra_patterns)
+            ]
+
+            class ExtendedSecurityAnalyzer(SecurityAnalyzer):
+                INJECTION_PATTERNS = SecurityAnalyzer.INJECTION_PATTERNS + custom_defs
+
+            extended_analyzer = ExtendedSecurityAnalyzer(strict=config.strict)
+            extended_analysis = extended_analyzer.analyze(
+                extraction_result.text_content,
+                hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
+            )
+            security_result["injection_score"] = max(
+                security_result["injection_score"], extended_analysis.score
+            )
+            security_result["flags"] = list(set(security_result["flags"] + extended_analysis.flags))
+
         # Step 7: Generate hashes
         content_hash = hasher.hash_content(markdown)
         structural_hash = hasher.hash_structural(markdown)
@@ -234,7 +280,17 @@ class IngestOrchestrator:
             "structural_hash": structural_hash,
             "advanced_security": config.advanced_security,
             "security_scan_method": security_result["scan_method"],
+            "custom_patterns_count": len(extra_patterns),
+            "plugins_loaded": plugins_loaded,
         }
+
+        # Apply policy decision on final score.
+        policy_engine = PolicyEngine.from_name(config.policy_name)
+        policy_action = policy_engine.get_action(security_result["injection_score"])
+        metadata["policy"] = config.policy_name
+        metadata["policy_action"] = policy_action
+        if policy_action == "block":
+            security_result["flags"] = list(set(security_result["flags"] + ["policy_block"]))
 
         # Add screenshot path if captured
         screenshot_path = fetch_result.metadata.get("screenshot_path")
@@ -246,7 +302,7 @@ class IngestOrchestrator:
         }
 
         # Create SafeDocument
-        return SafeDocument(
+        document = SafeDocument(
             markdown=markdown,
             metadata=metadata,
             token_estimate=token_count,
@@ -260,3 +316,10 @@ class IngestOrchestrator:
             nova_score=security_result.get("nova_score"),
             nova_details=security_result.get("nova_details"),
         )
+
+        # Step 9: Cache write-through (if enabled)
+        if cache_backend is not None and cache_key is not None:
+            cache_backend.set(cache_key, document, ttl=config.cache_ttl)
+            document.metadata["cache_hit"] = False
+
+        return document

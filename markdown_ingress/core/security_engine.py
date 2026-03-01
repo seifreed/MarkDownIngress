@@ -8,7 +8,6 @@ Implements progressive security scanning:
 """
 
 import logging
-from typing import Dict
 
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
 from markdown_ingress.core.security import SecurityAnalyzer
@@ -48,7 +47,7 @@ class SecurityEngine:
                 logger.warning(f"Failed to initialize Nova-tracer: {e}")
                 self.nova = None
 
-    def analyze(self, markdown: str, metadata: dict) -> Dict:
+    def analyze(self, markdown: str, metadata: dict) -> dict:
         """
         Analyze text for prompt injection.
 

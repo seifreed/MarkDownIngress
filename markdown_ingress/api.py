@@ -3,30 +3,35 @@ Main API for MarkDownIngress
 """
 
 import time
-from typing import Literal, Optional, Union
+from typing import Literal
 
 from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.core.orchestrator import IngestOrchestrator, PLAYWRIGHT_AVAILABLE
+from markdown_ingress.core.orchestrator import PLAYWRIGHT_AVAILABLE, IngestOrchestrator
 from markdown_ingress.models import SafeDocument, SecurityReport
 
 
 def ingest(
     url: str,
-    config: Optional[IngestConfig] = None,
+    config: IngestConfig | None = None,
     # Backward compatibility: accept individual parameters
-    mode: Optional[Literal["fast", "render", "auto"]] = None,
-    strict: Optional[bool] = None,
-    model: Optional[str] = None,
-    timeout: Optional[float] = None,
-    auto_render_threshold: Optional[int] = None,
-    stealth: Optional[bool] = None,
-    disable_http2: Optional[bool] = None,
-    extreme_mode: Optional[bool] = None,
-    screenshot: Optional[Union[bool, str]] = None,
-    extract_metadata: Optional[bool] = None,
-    extract_links: Optional[bool] = None,
-    advanced_security: Optional[bool] = None,
-    use_llm: Optional[bool] = None,
+    mode: Literal["fast", "render", "auto"] | None = None,
+    strict: bool | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    auto_render_threshold: int | None = None,
+    stealth: bool | None = None,
+    disable_http2: bool | None = None,
+    extreme_mode: bool | None = None,
+    screenshot: bool | str | None = None,
+    extract_metadata: bool | None = None,
+    extract_links: bool | None = None,
+    advanced_security: bool | None = None,
+    use_llm: bool | None = None,
+    cache: object | None = None,
+    cache_ttl: int | None = None,
+    policy_name: str | None = None,
+    custom_patterns: list[str] | None = None,
+    plugin_dirs: list[str] | None = None,
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -78,7 +83,7 @@ def ingest(
 
         >>> # Extreme mode for very slow sites
         >>> doc = ingest("https://slow-site.com", mode="render", extreme_mode=True)
-        
+
         >>> # Using config object (new, recommended way)
         >>> config = IngestConfig(mode="auto", stealth=True, timeout=60.0)
         >>> doc = ingest("https://example.com", config=config)
@@ -99,6 +104,11 @@ def ingest(
             extract_links=extract_links if extract_links is not None else True,
             advanced_security=advanced_security if advanced_security is not None else False,
             use_llm=use_llm if use_llm is not None else False,
+            cache=cache,
+            cache_ttl=cache_ttl,
+            policy_name=policy_name if policy_name is not None else "normal",
+            custom_patterns=custom_patterns or [],
+            plugin_dirs=plugin_dirs or [],
         )
     else:
         # Config provided - override with any explicit parameters
@@ -128,7 +138,17 @@ def ingest(
             config.advanced_security = advanced_security
         if use_llm is not None:
             config.use_llm = use_llm
-    
+        if cache is not None:
+            config.cache = cache
+        if cache_ttl is not None:
+            config.cache_ttl = cache_ttl
+        if policy_name is not None:
+            config.policy_name = policy_name
+        if custom_patterns is not None:
+            config.custom_patterns = custom_patterns
+        if plugin_dirs is not None:
+            config.plugin_dirs = plugin_dirs
+
     # Auto mode: try fast first, fallback to render if needed
     if config.mode == "auto":
         try:
@@ -170,7 +190,7 @@ def _ingest_with_config(url: str, config: IngestConfig) -> SafeDocument:
     """
     # Create orchestrator and execute pipeline
     orchestrator = IngestOrchestrator()
-    
+
     return orchestrator.execute(url=url, config=config)
 
 
@@ -228,8 +248,8 @@ def retry_ingest(
     # Validate parameters
     if max_retries < 1:
         raise ValueError("max_retries must be >= 1")
-    
-    last_exception: Optional[Exception] = None
+
+    last_exception: Exception | None = None
 
     for attempt in range(max_retries):
         try:

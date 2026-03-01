@@ -1,14 +1,10 @@
 """
 Nova-tracer integration for advanced prompt injection detection.
 
-Uses the NOVA Framework for 3-tier detection:
-- Tier 1: Keyword/regex patterns (~1ms)
-- Tier 2: Semantic similarity ML (~50ms)
-- Tier 3: LLM evaluation with Claude (~500-2000ms)
+This integration is optional and degrades safely when NOVA rules are not configured.
 """
 
 import logging
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +27,7 @@ class NovaGuard:
         enable_keywords: bool = True,
         enable_semantics: bool = True,
         enable_llm: bool = False,
-        rules_path: Optional[str] = None,
+        rules_path: str | None = None,
     ):
         if not NOVA_AVAILABLE:
             raise ImportError("nova-hunting not installed")
@@ -44,24 +40,29 @@ class NovaGuard:
         if rules_path:
             self.rules = load_rules(rules_path)
         else:
-            # Use bundled rules (we'll add these)
             self.rules = self._load_bundled_rules()
 
-        # Initialize scanner
-        self.scanner = NovaScanner(
-            rules=self.rules,
-            enable_keywords=enable_keywords,
-            enable_semantics=enable_semantics,
-            enable_llm=enable_llm,
-        )
+        # Initialize scanner only if we have actual rules.
+        self.scanner = None
+        if self.rules:
+            self.scanner = NovaScanner(
+                rules=self.rules,
+                enable_keywords=enable_keywords,
+                enable_semantics=enable_semantics,
+                enable_llm=enable_llm,
+            )
+        else:
+            logger.warning(
+                "Nova-tracer enabled but no rules were loaded. "
+                "Provide rules_path to activate semantic/LLM scanning."
+            )
 
     def _load_bundled_rules(self):
         """Load bundled NOVA rules for prompt injection detection."""
-        # For now, return basic rule
-        # TODO: Bundle actual .nov files in package
+        # No bundled rules yet. Caller must provide rules_path.
         return []
 
-    def scan(self, text: str) -> Dict:
+    def scan(self, text: str) -> dict:
         """
         Scan text for prompt injection attempts.
 
@@ -75,6 +76,22 @@ class NovaGuard:
 
         start = time.time()
 
+        if self.scanner is None:
+            return {
+                "score": 0.0,
+                "severity": "unknown",
+                "matched_rules": [],
+                "categories": [],
+                "scan_time_ms": 0.0,
+                "rules_loaded": 0,
+                "disabled_reason": "no_rules_configured",
+                "tiers_used": {
+                    "keywords": False,
+                    "semantics": False,
+                    "llm": False,
+                },
+            }
+
         result = self.scanner.scan(text)
         scan_time_ms = (time.time() - start) * 1000
 
@@ -84,6 +101,7 @@ class NovaGuard:
             "matched_rules": result.rules if hasattr(result, "rules") else [],
             "categories": result.categories if hasattr(result, "categories") else [],
             "scan_time_ms": scan_time_ms,
+            "rules_loaded": len(self.rules),
             "tiers_used": {
                 "keywords": self.enable_keywords,
                 "semantics": self.enable_semantics,

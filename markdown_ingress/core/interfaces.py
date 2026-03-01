@@ -8,7 +8,7 @@ These interfaces define contracts for core components, making it easier to:
 - Get better IDE support
 """
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 from markdown_ingress.models import ExtractionResult, FetchResult, SafeDocument
 
@@ -149,7 +149,7 @@ class INormalizer(Protocol):
 class ICacheBackend(Protocol):
     """Protocol for cache backend implementations."""
 
-    def get(self, key: str) -> Optional[SafeDocument]:
+    def get(self, key: str) -> SafeDocument | None:
         """
         Get document from cache.
 
@@ -161,7 +161,7 @@ class ICacheBackend(Protocol):
         """
         ...
 
-    def set(self, key: str, document: SafeDocument, ttl: Optional[int] = None) -> None:
+    def set(self, key: str, document: SafeDocument, ttl: int | None = None) -> None:
         """
         Store document in cache.
 

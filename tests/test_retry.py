@@ -39,7 +39,7 @@ def test_retry_ingest_success_first_attempt(mock_document):
 
         # Verify metadata was added
         assert result.metadata["retry_attempts"] == 1
-        assert result.metadata["retry_enabled"] == False
+        assert not result.metadata["retry_enabled"]
         assert result.metadata["final_timeout"] == 60.0
 
         # Verify ingest was called once
@@ -62,7 +62,7 @@ def test_retry_ingest_with_retry(mock_document):
 
         # Verify retry metadata
         assert result.metadata["retry_attempts"] == 2
-        assert result.metadata["retry_enabled"] == True
+        assert result.metadata["retry_enabled"]
         assert result.metadata["final_timeout"] == 90.0
 
         # Verify ingest was called twice
@@ -79,7 +79,7 @@ def test_retry_ingest_timeout_escalation(mock_document):
             mock_document,
         ]
 
-        result = retry_ingest(url="https://example.com", max_retries=3, initial_timeout=60.0)
+        retry_ingest(url="https://example.com", max_retries=3, initial_timeout=60.0)
 
         # Verify timeout escalation
         calls = mock_ingest.call_args_list
@@ -119,12 +119,12 @@ def test_retry_ingest_default_parameters(mock_document):
     with patch("markdown_ingress.api.ingest") as mock_ingest:
         mock_ingest.return_value = mock_document
 
-        result = retry_ingest(url="https://example.com")
+        retry_ingest(url="https://example.com")
 
         # Verify defaults were used
         call_args = mock_ingest.call_args[1]
         assert call_args["mode"] == "auto"
-        assert call_args["strict"] == True
+        assert call_args["strict"]
         assert call_args["model"] == "gpt-4"
         assert call_args["timeout"] == 60.0
 
@@ -134,7 +134,7 @@ def test_retry_ingest_custom_parameters(mock_document):
     with patch("markdown_ingress.api.ingest") as mock_ingest:
         mock_ingest.return_value = mock_document
 
-        result = retry_ingest(
+        retry_ingest(
             url="https://example.com",
             mode="render",
             strict=False,
@@ -147,7 +147,7 @@ def test_retry_ingest_custom_parameters(mock_document):
         # Verify custom values were passed
         call_args = mock_ingest.call_args[1]
         assert call_args["mode"] == "render"
-        assert call_args["strict"] == False
+        assert not call_args["strict"]
         assert call_args["model"] == "gpt-3.5"
         assert call_args["timeout"] == 90.0
 
@@ -190,6 +190,6 @@ def test_retry_ingest_stealth_only_on_retry(mock_document):
         result = retry_ingest(url="https://example.com", enable_stealth=True)
 
         # First attempt: stealth should be False
-        assert result.metadata["retry_enabled"] == True
+        assert result.metadata["retry_enabled"]
         # But it's only enabled on the second attempt
         assert result.metadata["retry_attempts"] == 2

@@ -96,3 +96,32 @@ def test_batch_result_stats():
     # Empty result
     empty = BatchResult(total=0, successful=0, failed=0)
     assert empty.success_rate == 0.0
+
+
+@pytest.mark.asyncio
+async def test_batch_preserves_url_order_under_concurrency(monkeypatch):
+    """Ensure documents keep input URL order even when tasks finish out of order."""
+    urls = [
+        "https://example.com/slow",
+        "https://example.com/fast",
+    ]
+    processor = BatchProcessor(mode="fast", max_concurrent=2, timeout=5.0)
+
+    async def fake_process_url(url):
+        import asyncio
+
+        delay = 0.05 if "slow" in url else 0.001
+        await asyncio.sleep(delay)
+        return type(
+            "Doc",
+            (),
+            {"markdown": url, "token_estimate": 1, "injection_score": 0.0, "content_hash": "sha256:x", "metadata": {}},
+        )()
+
+    monkeypatch.setattr(processor, "process_url", fake_process_url)
+
+    result = await processor.process_batch_async(urls)
+    assert result.documents[0] is not None
+    assert result.documents[1] is not None
+    assert result.documents[0].markdown == "https://example.com/slow"
+    assert result.documents[1].markdown == "https://example.com/fast"

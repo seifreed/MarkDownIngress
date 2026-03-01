@@ -2,7 +2,6 @@
 Tests for metadata extraction
 """
 
-import pytest
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
 

@@ -22,23 +22,24 @@ All public APIs are re-exported here for backward compatibility.
 import asyncio
 import time
 
-from markdown_ingress.models import FetchResult
-
 # Import all public APIs from stealth submodules
+from markdown_ingress.core import stealth as _stealth
 from markdown_ingress.core.stealth import (
-    ADVANCED_USER_AGENTS,
-    ADVANCED_VIEWPORT_SIZES,
     AdvancedStealthConfig,
-    REALISTIC_HEADERS,
-    STEALTH_JS_INJECTION,
-    STEALTH_JS_POST_LOAD,
-    TIMEZONES,
-    ULTRA_STEALTH_ARGS,
     get_advanced_context_options,
     get_advanced_stealth_config,
     inject_stealth,
 )
+from markdown_ingress.models import FetchResult
 
+# Backward-compatible re-exports expected by tests and older integrations.
+ADVANCED_USER_AGENTS = _stealth.ADVANCED_USER_AGENTS
+ADVANCED_VIEWPORT_SIZES = _stealth.ADVANCED_VIEWPORT_SIZES
+REALISTIC_HEADERS = _stealth.REALISTIC_HEADERS
+STEALTH_JS_INJECTION = _stealth.STEALTH_JS_INJECTION
+STEALTH_JS_POST_LOAD = _stealth.STEALTH_JS_POST_LOAD
+TIMEZONES = _stealth.TIMEZONES
+ULTRA_STEALTH_ARGS = _stealth.ULTRA_STEALTH_ARGS
 
 # ============================================================================
 # ADVANCED STEALTH RENDERER

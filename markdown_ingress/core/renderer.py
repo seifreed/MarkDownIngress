@@ -6,7 +6,6 @@ import asyncio
 import logging
 import tempfile
 import time
-from typing import Optional, Union
 
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.resource_blocker import ResourceBlocker
@@ -51,22 +50,22 @@ class Renderer:  # implements IRenderer protocol
 
     def __init__(
         self,
-        config: Optional[RenderConfig] = None,
+        config: RenderConfig | None = None,
         # Backward compatibility: accept individual parameters
-        timeout: Optional[float] = None,
-        wait_until: Optional[str] = None,
-        headless: Optional[bool] = None,
-        user_agent: Optional[str] = None,
-        stealth: Optional[bool] = None,
-        disable_http2: Optional[bool] = None,
-        extreme_mode: Optional[bool] = None,
-        block_resources: Optional[bool] = None,
-        block_images: Optional[bool] = None,
-        block_fonts: Optional[bool] = None,
-        block_media: Optional[bool] = None,
-        block_ads: Optional[bool] = None,
-        block_trackers: Optional[bool] = None,
-        screenshot: Optional[Union[bool, str]] = None,
+        timeout: float | None = None,
+        wait_until: str | None = None,
+        headless: bool | None = None,
+        user_agent: str | None = None,
+        stealth: bool | None = None,
+        disable_http2: bool | None = None,
+        extreme_mode: bool | None = None,
+        block_resources: bool | None = None,
+        block_images: bool | None = None,
+        block_fonts: bool | None = None,
+        block_media: bool | None = None,
+        block_ads: bool | None = None,
+        block_trackers: bool | None = None,
+        screenshot: bool | str | None = None,
     ):
         """
         Initialize Playwright renderer.
@@ -136,7 +135,7 @@ class Renderer:  # implements IRenderer protocol
                 config.block_trackers = block_trackers
             if screenshot is not None:
                 config.screenshot = screenshot
-        
+
         # Store configuration
         self.timeout = int(config.timeout * 1000)  # Convert to milliseconds
         self.wait_until = config.wait_until
@@ -241,14 +240,14 @@ class Renderer:  # implements IRenderer protocol
                 try:
                     page = await context.new_page()
                     blocker = await self._setup_resource_blocking(page)
-                    
+
                     response = await page.goto(
                         url, timeout=self.timeout, wait_until=self.wait_until
                     )
 
                     html = await page.content()
                     screenshot_path = await self._capture_screenshot(page)
-                    
+
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     metadata = self._build_metadata(screenshot_path, blocker)
 
@@ -271,23 +270,23 @@ class Renderer:  # implements IRenderer protocol
     def _prepare_browser_args(self) -> list[str]:
         """Prepare browser launch arguments based on configuration."""
         browser_args = []
-        
+
         if self.stealth and STEALTH_AVAILABLE:
             browser_args.extend(STEALTH_BROWSER_ARGS)
-        
+
         if self.disable_http2:
             browser_args.append("--disable-http2")
-        
+
         return browser_args
 
     def _prepare_launch_options(self, browser_args: list[str]) -> dict:
         """Prepare browser launch options."""
         launch_options = {"headless": self.headless}
-        
+
         if browser_args:
             launch_options["args"] = browser_args
             launch_options["ignore_default_args"] = ["--enable-automation"]
-        
+
         return launch_options
 
     def _prepare_context_options(self) -> dict:
@@ -298,7 +297,7 @@ class Renderer:  # implements IRenderer protocol
             if self.user_agent:
                 context_options["user_agent"] = self.user_agent
             return context_options
-        
+
         return {
             "user_agent": self.user_agent,
             "viewport": {"width": 1920, "height": 1080},
@@ -310,7 +309,7 @@ class Renderer:  # implements IRenderer protocol
         """Setup resource blocking on the page if enabled."""
         if not self.block_resources:
             return None
-        
+
         blocker = ResourceBlocker(
             block_images=self.block_images,
             block_fonts=self.block_fonts,
@@ -325,7 +324,7 @@ class Renderer:  # implements IRenderer protocol
         """Capture page screenshot if requested."""
         if not self.screenshot:
             return None
-        
+
         if self.screenshot is True:
             temp_file = tempfile.NamedTemporaryFile(
                 suffix=".png", delete=False, prefix="mdingress_screenshot_"
@@ -334,7 +333,7 @@ class Renderer:  # implements IRenderer protocol
             temp_file.close()
         else:
             screenshot_path = self.screenshot
-        
+
         await page.screenshot(path=screenshot_path, full_page=True)
         return screenshot_path
 
@@ -345,10 +344,10 @@ class Renderer:  # implements IRenderer protocol
             "stealth_mode": self.stealth,
             "http2_disabled": self.disable_http2,
         }
-        
+
         if screenshot_path:
             metadata["screenshot_path"] = screenshot_path
-        
+
         if blocker:
             stats = blocker.get_stats()
             metadata.update({
@@ -358,7 +357,7 @@ class Renderer:  # implements IRenderer protocol
                 "block_rate_pct": stats["block_rate_pct"],
                 "blocked_by_type": stats["blocked_by_type"],
             })
-        
+
         return metadata
 
     async def _render_with_progressive_timeout(self, url: str) -> FetchResult:
@@ -467,7 +466,7 @@ class Renderer:  # implements IRenderer protocol
 
                     html = await page.content()
                     screenshot_path = await self._capture_screenshot(page)
-                    
+
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     metadata = self._build_metadata(screenshot_path, blocker)
                     metadata["smart_wait_used"] = True
@@ -519,15 +518,15 @@ class Renderer:  # implements IRenderer protocol
                 () => {
                     const body = document.body;
                     if (!body) return false;
-                    
+
                     // Check for meaningful text content
                     const text = body.innerText || '';
                     if (text.trim().length < 50) return false;
-                    
+
                     // Check for at least one content element
                     const hasContent = document.querySelector('p, article, main, [role="main"]');
                     if (!hasContent) return false;
-                    
+
                     // Check for loading indicators (common patterns)
                     const loadingIndicators = document.querySelectorAll(
                         '[class*="loading"], [class*="spinner"], [id*="loading"]'
@@ -538,7 +537,7 @@ class Renderer:  # implements IRenderer protocol
                             return false;  // Still loading
                         }
                     }
-                    
+
                     return true;
                 }
                 """,

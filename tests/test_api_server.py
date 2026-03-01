@@ -2,9 +2,10 @@
 Tests for FastAPI server endpoints
 """
 
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
+
 from markdown_ingress.api_server import app
 from markdown_ingress.models import SafeDocument, SecurityReport
 
@@ -61,7 +62,7 @@ def test_root_endpoint():
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
-    assert data["version"] == "0.6.0"
+    assert data["version"] == "0.7.0"
     assert "message" in data
     assert "endpoints" in data
 
@@ -72,7 +73,7 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert data["version"] == "0.6.0"
+    assert data["version"] == "0.7.0"
     assert data["service"] == "MarkDownIngress API"
 
 
@@ -80,7 +81,7 @@ def test_health_endpoint():
 def test_ingest_endpoint_basic(mock_ingest):
     """Test basic ingestion endpoint with fast mode"""
     mock_ingest.return_value = create_mock_document()
-    
+
     response = client.post(
         "/ingest",
         json={
@@ -92,7 +93,7 @@ def test_ingest_endpoint_basic(mock_ingest):
     )
     assert response.status_code == 200
     data = response.json()
-    
+
     # Check response structure
     assert "markdown" in data
     assert "metadata" in data
@@ -101,7 +102,7 @@ def test_ingest_endpoint_basic(mock_ingest):
     assert "flags" in data
     assert "content_hash" in data
     assert "removed_elements" in data
-    
+
     # Check data types
     assert isinstance(data["markdown"], str)
     assert isinstance(data["metadata"], dict)
@@ -109,7 +110,7 @@ def test_ingest_endpoint_basic(mock_ingest):
     assert isinstance(data["injection_score"], float)
     assert isinstance(data["flags"], list)
     assert isinstance(data["content_hash"], str)
-    
+
     # Check injection score range
     assert 0.0 <= data["injection_score"] <= 1.0
 
@@ -118,7 +119,7 @@ def test_ingest_endpoint_basic(mock_ingest):
 def test_ingest_endpoint_auto_mode(mock_ingest):
     """Test ingestion with auto mode"""
     mock_ingest.return_value = create_mock_document()
-    
+
     response = client.post(
         "/ingest",
         json={
@@ -160,7 +161,7 @@ def test_ingest_endpoint_invalid_url():
 def test_ingest_endpoint_with_stealth(mock_ingest):
     """Test ingestion with stealth mode enabled"""
     mock_ingest.return_value = create_mock_document()
-    
+
     response = client.post(
         "/ingest",
         json={
@@ -176,7 +177,7 @@ def test_ingest_endpoint_with_stealth(mock_ingest):
 def test_retry_ingest_endpoint(mock_retry):
     """Test retry ingestion endpoint"""
     mock_retry.return_value = create_mock_document()
-    
+
     response = client.post(
         "/ingest/retry",
         json={
@@ -188,7 +189,7 @@ def test_retry_ingest_endpoint(mock_retry):
     )
     assert response.status_code == 200
     data = response.json()
-    
+
     # Should have retry metadata
     assert "metadata" in data
     assert "retry_attempts" in data["metadata"]
@@ -199,7 +200,7 @@ def test_retry_ingest_endpoint(mock_retry):
 def test_batch_ingest_endpoint(mock_ingest):
     """Test batch ingestion endpoint"""
     mock_ingest.return_value = create_mock_document()
-    
+
     response = client.post(
         "/ingest/batch",
         json={
@@ -213,16 +214,16 @@ def test_batch_ingest_endpoint(mock_ingest):
     )
     assert response.status_code == 200
     data = response.json()
-    
+
     # Check response structure
     assert "results" in data
     assert "success_count" in data
     assert "failure_count" in data
-    
+
     # Check results
     assert isinstance(data["results"], list)
     assert len(data["results"]) == 2
-    
+
     # Each result should have url and success fields
     for result in data["results"]:
         assert "url" in result
@@ -266,7 +267,7 @@ def test_batch_ingest_too_many_urls():
 def test_security_report_endpoint(mock_report):
     """Test security report generation endpoint"""
     mock_report.return_value = create_mock_security_report()
-    
+
     response = client.post(
         "/security/report",
         json={
@@ -278,7 +279,7 @@ def test_security_report_endpoint(mock_report):
     )
     assert response.status_code == 200
     data = response.json()
-    
+
     # Check response structure
     assert "injection_score" in data
     assert "risk_level" in data
@@ -292,14 +293,14 @@ def test_security_report_endpoint(mock_report):
     assert "content_hash" in data
     assert "structural_hash" in data
     assert "removed_elements" in data
-    
+
     # Check data types
     assert isinstance(data["injection_score"], float)
     assert isinstance(data["risk_level"], str)
     assert isinstance(data["flags"], list)
     assert isinstance(data["hidden_content_detected"], bool)
     assert isinstance(data["hidden_elements_count"], int)
-    
+
     # Check valid risk levels
     assert data["risk_level"] in ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"]
 
@@ -308,7 +309,7 @@ def test_security_report_endpoint(mock_report):
 def test_timeout_validation(mock_ingest):
     """Test timeout parameter validation"""
     mock_ingest.return_value = create_mock_document()
-    
+
     # Too low
     response = client.post(
         "/ingest",
@@ -319,7 +320,7 @@ def test_timeout_validation(mock_ingest):
         }
     )
     assert response.status_code == 422
-    
+
     # Too high
     response = client.post(
         "/ingest",
@@ -330,7 +331,7 @@ def test_timeout_validation(mock_ingest):
         }
     )
     assert response.status_code == 422
-    
+
     # Valid range
     response = client.post(
         "/ingest",
@@ -347,7 +348,7 @@ def test_timeout_validation(mock_ingest):
 def test_max_retries_validation(mock_retry):
     """Test max_retries parameter validation"""
     mock_retry.return_value = create_mock_document()
-    
+
     # Too low
     response = client.post(
         "/ingest/retry",
@@ -357,7 +358,7 @@ def test_max_retries_validation(mock_retry):
         }
     )
     assert response.status_code == 422
-    
+
     # Too high
     response = client.post(
         "/ingest/retry",
@@ -367,7 +368,7 @@ def test_max_retries_validation(mock_retry):
         }
     )
     assert response.status_code == 422
-    
+
     # Valid range
     response = client.post(
         "/ingest/retry",
@@ -384,16 +385,16 @@ def test_openapi_docs():
     response = client.get("/openapi.json")
     assert response.status_code == 200
     openapi_schema = response.json()
-    
+
     # Check basic OpenAPI structure
     assert "openapi" in openapi_schema
     assert "info" in openapi_schema
     assert "paths" in openapi_schema
-    
+
     # Check API info
     assert openapi_schema["info"]["title"] == "MarkDownIngress API"
-    assert openapi_schema["info"]["version"] == "0.6.0"
-    
+    assert openapi_schema["info"]["version"] == "0.7.0"
+
     # Check endpoints exist
     assert "/ingest" in openapi_schema["paths"]
     assert "/ingest/retry" in openapi_schema["paths"]

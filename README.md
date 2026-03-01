@@ -588,8 +588,8 @@ markdown_ingress/
 |---------|--------|----------|
 | **v0.1** | ✅ Released | Fast mode, injection detection, CLI, token estimation |
 | **v0.2** | ✅ Released | Playwright render mode, SPA support |
-| **v0.3** | ✅ **Current** | ✨ Batch processing, caching, policy engine, 51 tests |
-| **v0.4** | 📋 Planned | Enhanced reports, benchmarking, plugin discovery |
+| **v0.7** | ✅ **Current** | ✨ Auto mode, advanced security hooks, metadata/link extraction, API + CLI |
+| **v0.8** | 📋 Planned | Policy/cache/plugin hardening, stronger offline test fixtures, docs cleanup |
 
 ---
 
