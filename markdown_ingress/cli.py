@@ -339,14 +339,20 @@ def _save_batch_results(args, urls, batch_result):
         return
 
     output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.json:
+        # If user passed a directory, save results.json inside it
+        if output_path.is_dir() or (not output_path.suffix and not output_path.exists()):
+            output_path.mkdir(parents=True, exist_ok=True)
+            output_path = output_path / "results.json"
+        else:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
         _save_batch_json(output_path, urls, batch_result)
     else:
+        output_path.mkdir(parents=True, exist_ok=True)
         _save_batch_markdown(output_path, batch_result)
 
-    console.print(f"[green]Results saved to {args.output}")
+    console.print(f"[green]Results saved to {output_path}")
 
 
 def cmd_batch(args):

@@ -193,9 +193,29 @@ class IngestOrchestrator:
             )
             renderer = Renderer(config=render_config)
             fetch_result = renderer.render_sync(url)
-        else:  # fast mode
+        else:  # fast or auto mode
             fetcher = Fetcher(timeout=config.timeout)
-            fetch_result = fetcher.fetch_sync(url)
+            try:
+                fetch_result = fetcher.fetch_sync(url)
+            except Exception as fast_exc:
+                # Auto-fallback: if fast mode fails and Playwright is available, try render mode
+                if PLAYWRIGHT_AVAILABLE and config.mode == "auto":
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "Fast fetch failed for %s (%s), retrying with Playwright render mode",
+                        url, type(fast_exc).__name__,
+                    )
+                    render_config = RenderConfig(
+                        timeout=config.timeout,
+                        stealth=config.stealth,
+                        disable_http2=config.disable_http2,
+                        extreme_mode=True,  # use all fallback wait strategies on auto-retry
+                        screenshot=config.screenshot,
+                    )
+                    renderer = Renderer(config=render_config)
+                    fetch_result = renderer.render_sync(url)
+                else:
+                    raise
 
         # Step 2: Extract main content and clean
         extraction_result = extractor.extract(fetch_result.html, fetch_result.url)

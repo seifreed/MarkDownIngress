@@ -1,0 +1,54 @@
+rule IgnorePreviousInstructions {
+    meta:
+        description = "Detects attempts to override previous instructions"
+        severity = "high"
+        category = "prompt_injection"
+    keywords:
+        $ignore = "ignore"
+        $previous = "previous instructions"
+    condition:
+        $ignore and $previous
+}
+
+rule JailbreakPatterns {
+    meta:
+        description = "Detects common jailbreak phrases"
+        severity = "high"
+        category = "jailbreak"
+    keywords:
+        $jailbreak = "jailbreak"
+        $dan = "do anything now"
+        $no_filter = "no restrictions"
+        $bypass_safety = "bypass safety"
+    condition:
+        $jailbreak or $dan or $no_filter or $bypass_safety
+}
+
+rule RevealSecrets {
+    meta:
+        description = "Detects attempts to extract system prompts or secrets"
+        severity = "high"
+        category = "exfiltration"
+    keywords:
+        $reveal = "reveal"
+        $system_prompt = "system prompt"
+        $print_instructions = "print your instructions"
+        $disregard = "disregard"
+        $override = "override"
+    condition:
+        ($reveal and $system_prompt) or $print_instructions or ($disregard and $override)
+}
+
+rule ActAs {
+    meta:
+        description = "Detects role-playing injection attempts"
+        severity = "medium"
+        category = "persona_injection"
+    keywords:
+        $act_as = "act as"
+        $pretend = "pretend you are"
+        $you_are_now = "you are now"
+        $forget = "forget you are"
+    condition:
+        $act_as or $pretend or $you_are_now or $forget
+}

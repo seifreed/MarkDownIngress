@@ -47,14 +47,14 @@ class MetadataExtractor:
         # Try meta author tag
         meta_author = parser.css_first('meta[name="author"]')
         if meta_author:
-            content = meta_author.attributes.get("content", "").strip()
+            content = (meta_author.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try article:author (Open Graph)
         og_author = parser.css_first('meta[property="article:author"]')
         if og_author:
-            content = og_author.attributes.get("content", "").strip()
+            content = (og_author.attributes.get("content") or "").strip()
             if content:
                 return content
 
@@ -95,21 +95,21 @@ class MetadataExtractor:
         # Try article:published_time (Open Graph)
         og_published = parser.css_first('meta[property="article:published_time"]')
         if og_published:
-            content = og_published.attributes.get("content", "").strip()
+            content = (og_published.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try meta datePublished
         meta_published = parser.css_first('meta[name="datePublished"]')
         if meta_published:
-            content = meta_published.attributes.get("content", "").strip()
+            content = (meta_published.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try meta publishdate
         meta_publishdate = parser.css_first('meta[name="publishdate"]')
         if meta_publishdate:
-            content = meta_publishdate.attributes.get("content", "").strip()
+            content = (meta_publishdate.attributes.get("content") or "").strip()
             if content:
                 return content
 
@@ -121,21 +121,21 @@ class MetadataExtractor:
         # Try article:modified_time (Open Graph)
         og_modified = parser.css_first('meta[property="article:modified_time"]')
         if og_modified:
-            content = og_modified.attributes.get("content", "").strip()
+            content = (og_modified.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try meta dateModified
         meta_modified = parser.css_first('meta[name="dateModified"]')
         if meta_modified:
-            content = meta_modified.attributes.get("content", "").strip()
+            content = (meta_modified.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try meta last-modified
         meta_lastmod = parser.css_first('meta[name="last-modified"]')
         if meta_lastmod:
-            content = meta_lastmod.attributes.get("content", "").strip()
+            content = (meta_lastmod.attributes.get("content") or "").strip()
             if content:
                 return content
 
@@ -169,7 +169,7 @@ class MetadataExtractor:
         # Try html lang attribute
         html_tag = parser.css_first("html")
         if html_tag:
-            lang = html_tag.attributes.get("lang", "").strip()
+            lang = (html_tag.attributes.get("lang") or "").strip()
             if lang:
                 # Normalize language code (e.g., en-US -> en)
                 lang_code = lang.split("-")[0].lower()
@@ -179,7 +179,7 @@ class MetadataExtractor:
         # Try meta content-language
         meta_lang = parser.css_first('meta[http-equiv="content-language"]')
         if meta_lang:
-            content = meta_lang.attributes.get("content", "").strip()
+            content = (meta_lang.attributes.get("content") or "").strip()
             if content:
                 lang_code = content.split("-")[0].lower()
                 if lang_code:
@@ -207,21 +207,21 @@ class MetadataExtractor:
         # Try meta description
         meta_desc = parser.css_first('meta[name="description"]')
         if meta_desc:
-            content = meta_desc.attributes.get("content", "").strip()
+            content = (meta_desc.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try og:description
         og_desc = parser.css_first('meta[property="og:description"]')
         if og_desc:
-            content = og_desc.attributes.get("content", "").strip()
+            content = (og_desc.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try twitter:description
         twitter_desc = parser.css_first('meta[name="twitter:description"]')
         if twitter_desc:
-            content = twitter_desc.attributes.get("content", "").strip()
+            content = (twitter_desc.attributes.get("content") or "").strip()
             if content:
                 return content
 
@@ -232,14 +232,14 @@ class MetadataExtractor:
         # Try meta keywords
         meta_keywords = parser.css_first('meta[name="keywords"]')
         if meta_keywords:
-            content = meta_keywords.attributes.get("content", "").strip()
+            content = (meta_keywords.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try article:tag (Open Graph)
         og_tags = parser.css('meta[property="article:tag"]')
         if og_tags:
-            tags = [tag.attributes.get("content", "").strip() for tag in og_tags]
+            tags = [(tag.attributes.get("content") or "").strip() for tag in og_tags]
             tags = [t for t in tags if t]
             if tags:
                 return ", ".join(tags)
@@ -251,14 +251,14 @@ class MetadataExtractor:
         # Try link rel=canonical
         canonical_link = parser.css_first('link[rel="canonical"]')
         if canonical_link:
-            href = canonical_link.attributes.get("href", "").strip()
+            href = (canonical_link.attributes.get("href") or "").strip()
             if href:
                 return href
 
         # Try og:url
         og_url = parser.css_first('meta[property="og:url"]')
         if og_url:
-            content = og_url.attributes.get("content", "").strip()
+            content = (og_url.attributes.get("content") or "").strip()
             if content:
                 return content
 
@@ -270,14 +270,14 @@ class MetadataExtractor:
         # Try og:site_name
         og_site = parser.css_first('meta[property="og:site_name"]')
         if og_site:
-            content = og_site.attributes.get("content", "").strip()
+            content = (og_site.attributes.get("content") or "").strip()
             if content:
                 return content
 
         # Try application-name
         app_name = parser.css_first('meta[name="application-name"]')
         if app_name:
-            content = app_name.attributes.get("content", "").strip()
+            content = (app_name.attributes.get("content") or "").strip()
             if content:
                 return content
 

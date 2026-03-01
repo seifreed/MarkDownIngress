@@ -36,6 +36,8 @@ dependencies = [
     "PyYAML>=6.0",      # v0.4: Config file support
     "rich>=14.0",       # v0.4: CLI progress bars
     "langdetect>=1.0.9", # v0.6: Language detection for metadata
+    "nova-hunting>=0.1.0", # Advanced prompt injection detection
+    "playwright>=1.43.0",  # JS rendering for SPAs and bot-protected sites
 ]
 
 [project.urls]
@@ -60,9 +62,6 @@ api = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0.0",
-]
-security = [
-    "nova-hunting>=0.1.0",  # Advanced prompt injection detection
 ]
 all = [
     "playwright>=1.43.0",

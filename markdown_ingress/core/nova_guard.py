@@ -5,18 +5,21 @@ This integration is optional and degrades safely when NOVA rules are not configu
 """
 
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 try:
-    from nova_hunting import NovaScanner, load_rules
+    from nova import NovaMatcher, NovaParser, NovaRule  # noqa: F401
 
     NOVA_AVAILABLE = True
 except ImportError:
     NOVA_AVAILABLE = False
     logger.warning(
-        "nova-hunting not installed. Install with: pip install markdown-ingress[security]"
+        "nova-hunting not installed. Install with: pip install nova-hunting"
     )
+
+_BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection.nova"
 
 
 class NovaGuard:
@@ -38,19 +41,17 @@ class NovaGuard:
 
         # Load NOVA rules
         if rules_path:
-            self.rules = load_rules(rules_path)
+            parser = NovaParser()
+            with open(rules_path) as f:
+                self.rules = [parser.parse(f.read())]
         else:
             self.rules = self._load_bundled_rules()
-
-        # Initialize scanner only if we have actual rules.
-        self.scanner = None
+        self.matchers: list = []
         if self.rules:
-            self.scanner = NovaScanner(
-                rules=self.rules,
-                enable_keywords=enable_keywords,
-                enable_semantics=enable_semantics,
-                enable_llm=enable_llm,
-            )
+            for rule in self.rules:
+                self.matchers.append(
+                    NovaMatcher(rule=rule, create_llm_evaluator=enable_llm)
+                )
         else:
             logger.warning(
                 "Nova-tracer enabled but no rules were loaded. "
@@ -59,8 +60,20 @@ class NovaGuard:
 
     def _load_bundled_rules(self):
         """Load bundled NOVA rules for prompt injection detection."""
-        # No bundled rules yet. Caller must provide rules_path.
-        return []
+        if not _BUNDLED_RULES_PATH.exists():
+            return []
+        parser = NovaParser()
+        rules = []
+        with open(_BUNDLED_RULES_PATH) as f:
+            content = f.read()
+        # Parse each rule block individually
+        import re
+        for block in re.findall(r"rule\s+\w+\s*\{[^}]+(?:\{[^}]*\}[^}]*)?\}", content, re.DOTALL):
+            try:
+                rules.append(parser.parse(block.strip()))
+            except Exception as e:
+                logger.debug("Failed to parse bundled rule: %s", e)
+        return rules
 
     def scan(self, text: str) -> dict:
         """
@@ -76,7 +89,7 @@ class NovaGuard:
 
         start = time.time()
 
-        if self.scanner is None:
+        if not self.matchers:
             return {
                 "score": 0.0,
                 "severity": "unknown",
@@ -92,14 +105,28 @@ class NovaGuard:
                 },
             }
 
-        result = self.scanner.scan(text)
+        scores = []
+        matched_rules = []
+        categories = []
+        for matcher in self.matchers:
+            result = matcher.check_prompt(text)
+            if result.get("matched"):
+                scores.append(1.0)
+                matched_rules.append(result.get("rule_name", "unknown"))
+                meta = result.get("meta", {})
+                if "category" in meta:
+                    categories.append(meta["category"])
+            else:
+                scores.append(0.0)
+
+        score = max(scores) if scores else 0.0
         scan_time_ms = (time.time() - start) * 1000
 
         return {
-            "score": result.score if hasattr(result, "score") else 0.0,
-            "severity": result.severity if hasattr(result, "severity") else "low",
-            "matched_rules": result.rules if hasattr(result, "rules") else [],
-            "categories": result.categories if hasattr(result, "categories") else [],
+            "score": score,
+            "severity": "high" if score >= 0.7 else "medium" if score >= 0.3 else "low",
+            "matched_rules": matched_rules,
+            "categories": categories,
             "scan_time_ms": scan_time_ms,
             "rules_loaded": len(self.rules),
             "tiers_used": {
