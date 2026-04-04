@@ -1,6 +1,93 @@
 """Test configuration and fixtures"""
 
+import os
+from pathlib import Path
+
 import pytest
+
+
+def pytest_addoption(parser):
+    """Register opt-in controls for large live-network baseline tests."""
+    parser.addoption(
+        "--run-url-baseline",
+        action="store_true",
+        default=False,
+        help="Run the live URL dataset baseline test.",
+    )
+    parser.addoption(
+        "--url-baseline-limit",
+        action="store",
+        default=os.environ.get("MDI_URL_BASELINE_LIMIT", "250"),
+        help="Number of dataset URLs to test (0 = full dataset).",
+    )
+    parser.addoption(
+        "--run-url-campaign",
+        action="store_true",
+        default=False,
+        help="Run the large-scale URL campaign test.",
+    )
+    parser.addoption(
+        "--url-campaign-limit",
+        action="store",
+        default=os.environ.get("MDI_URL_CAMPAIGN_LIMIT", "50000"),
+        help="Number of unique dataset URLs to process in the campaign.",
+    )
+    parser.addoption(
+        "--url-campaign-scenarios",
+        action="store",
+        default=os.environ.get("MDI_URL_CAMPAIGN_SCENARIOS", ""),
+        help="Comma-separated scenario names for the URL campaign (default = all enabled scenarios).",
+    )
+    parser.addoption(
+        "--url-campaign-concurrency",
+        action="store",
+        default=os.environ.get("MDI_URL_CAMPAIGN_CONCURRENCY", "32"),
+        help="Threadpool concurrency used by the URL campaign.",
+    )
+    parser.addoption(
+        "--url-campaign-batch-size",
+        action="store",
+        default=os.environ.get("MDI_URL_CAMPAIGN_BATCH_SIZE", "64"),
+        help="Batch size used by the URL campaign scheduler.",
+    )
+    parser.addoption(
+        "--url-campaign-resume-dir",
+        action="store",
+        default=os.environ.get("MDI_URL_CAMPAIGN_RESUME_DIR", ""),
+        help="Existing campaign run directory to resume.",
+    )
+
+
+def pytest_configure(config):
+    """Register custom markers used in this test suite."""
+    config.addinivalue_line(
+        "markers",
+        "baseline: large opt-in baseline tests against external datasets",
+    )
+    config.addinivalue_line(
+        "markers",
+        "network: tests that require live external network access",
+    )
+    config.addinivalue_line(
+        "markers",
+        "campaign: massive live-network campaign tests against external datasets",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip large live baselines unless explicitly requested."""
+    if config.getoption("--run-url-baseline") or config.getoption("--run-url-campaign"):
+        return
+
+    skip_baseline = pytest.mark.skip(
+        reason="requires --run-url-baseline/--run-url-campaign or MDI_RUN_URL_BASELINE=1"
+    )
+    if os.environ.get("MDI_RUN_URL_BASELINE") == "1" or os.environ.get("MDI_RUN_URL_CAMPAIGN") == "1":
+        return
+
+    for item in items:
+        if "baseline" in item.keywords or "campaign" in item.keywords:
+            item.add_marker(skip_baseline)
 
 
 @pytest.fixture
@@ -105,3 +192,16 @@ def html_with_noise():
     </body>
     </html>
     """
+
+
+@pytest.fixture
+def rich_article_html():
+    """Realistic article fixture with structured elements and prompt-injection signals."""
+    fixture_path = Path(__file__).parent / "fixtures" / "rich_article.html"
+    return fixture_path.read_text(encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def allow_local_urls_for_local_test_servers(monkeypatch):
+    """Allow loopback URLs in tests that exercise local HTTP fixtures."""
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")

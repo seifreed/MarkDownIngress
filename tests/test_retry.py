@@ -4,9 +4,11 @@ Tests for retry_ingest functionality
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from markdown_ingress import retry_ingest
+from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument
 
 
@@ -86,6 +88,37 @@ def test_retry_ingest_timeout_escalation(mock_document):
         assert calls[0][1]["timeout"] == 60.0  # First attempt
         assert calls[1][1]["timeout"] == 90.0  # Second attempt
         assert calls[2][1]["timeout"] == 120.0  # Third attempt
+
+
+def test_retry_ingest_timeout_escalation_respects_max_timeout(mock_document):
+    with patch("markdown_ingress.api.ingest") as mock_ingest:
+        mock_ingest.side_effect = [
+            TimeoutError("Timeout 1"),
+            TimeoutError("Timeout 2"),
+            mock_document,
+        ]
+
+        retry_ingest(
+            url="https://example.com",
+            max_retries=3,
+            initial_timeout=60.0,
+            max_timeout=75.0,
+        )
+
+        calls = mock_ingest.call_args_list
+        assert calls[0][1]["timeout"] == 60.0
+        assert calls[1][1]["timeout"] == 75.0
+        assert calls[2][1]["timeout"] == 75.0
+
+
+def test_retry_ingest_rejects_max_timeout_below_initial_timeout():
+    with pytest.raises(ValueError, match="max_timeout must be greater than or equal to initial_timeout"):
+        retry_ingest(
+            url="https://example.com",
+            max_retries=3,
+            initial_timeout=60.0,
+            max_timeout=10.0,
+        )
 
 
 def test_retry_ingest_all_retries_fail():
@@ -193,3 +226,39 @@ def test_retry_ingest_stealth_only_on_retry(mock_document):
         assert result.metadata["retry_enabled"]
         # But it's only enabled on the second attempt
         assert result.metadata["retry_attempts"] == 2
+
+
+def test_retry_ingest_retries_http_status_error(mock_document):
+    request = httpx.Request("GET", "https://example.com")
+    response = httpx.Response(503, request=request)
+
+    with patch("markdown_ingress.api.ingest") as mock_ingest:
+        mock_ingest.side_effect = [
+            httpx.HTTPStatusError("server unavailable", request=request, response=response),
+            mock_document,
+        ]
+
+        result = retry_ingest(url="https://example.com", max_retries=2)
+
+        assert mock_ingest.call_count == 2
+        assert result.metadata["retry_attempts"] == 2
+
+
+def test_retry_ingest_does_not_retry_policy_block():
+    blocked_doc = SafeDocument(
+        markdown="# Blocked",
+        metadata={"url": "https://example.com", "policy_action": "block"},
+        token_estimate=1,
+        content_hash="blocked",
+        injection_score=1.0,
+        flags=["policy_block"],
+        removed_elements={},
+    )
+
+    with patch("markdown_ingress.api.ingest") as mock_ingest:
+        mock_ingest.side_effect = PolicyBlockedError("Blocked by policy", document=blocked_doc)
+
+        with pytest.raises(PolicyBlockedError):
+            retry_ingest(url="https://example.com", max_retries=3)
+
+        assert mock_ingest.call_count == 1

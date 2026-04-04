@@ -1,15 +1,13 @@
 """
 Comprehensive tests for maximum coverage across core modules.
 """
-import asyncio
-import os
-import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import httpx
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # models.py
@@ -124,12 +122,10 @@ def test_get_context_options_with_config():
 def test_get_advanced_context_options_with_geolocation():
     """browser_config.py line 295: geolocation in context options"""
     from markdown_ingress.core.stealth.browser_config import (
-        AdvancedStealthConfig,
         get_advanced_context_options,
+        get_advanced_stealth_config,
     )
-    config = AdvancedStealthConfig.__new__(AdvancedStealthConfig)
-    # Build config via get_advanced_stealth_config and patch geolocation
-    from markdown_ingress.core.stealth.browser_config import get_advanced_stealth_config
+
     real_config = get_advanced_stealth_config()
     real_config.geolocation = {"latitude": 40.7128, "longitude": -74.0060}
     opts = get_advanced_context_options(real_config)
@@ -139,7 +135,10 @@ def test_get_advanced_context_options_with_geolocation():
 
 def test_get_advanced_context_options_with_permissions():
     """browser_config.py line 291: permissions branch"""
-    from markdown_ingress.core.stealth.browser_config import get_advanced_stealth_config, get_advanced_context_options
+    from markdown_ingress.core.stealth.browser_config import (
+        get_advanced_context_options,
+        get_advanced_stealth_config,
+    )
     cfg = get_advanced_stealth_config()
     cfg.permissions = ["geolocation"]
     opts = get_advanced_context_options(cfg)
@@ -197,7 +196,6 @@ def test_security_engine_nova_scan_exception(monkeypatch):
 def test_security_engine_advanced_security_nova_init_failure(monkeypatch):
     """security_engine.py lines 46-48: NovaGuard init fails"""
     import markdown_ingress.core.security_engine as se_module
-    original = se_module.NovaGuard
 
     class FailingNovaGuard:
         def __init__(self, **kwargs):
@@ -235,20 +233,22 @@ def test_nova_guard_scan_injection():
 
 
 def test_nova_guard_no_matchers():
-    """nova_guard.py lines 74-75, 93: no matchers path"""
+    """nova_guard.py lines 74-75, 93: no matchers path returns disabled state"""
     from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
     if not NOVA_AVAILABLE:
         pytest.skip("nova-hunting not installed")
     guard = NovaGuard()
     guard.matchers = []
     result = guard.scan("test content")
-    assert result["score"] == 0.0
+    # When no rules configured, score is None (not 0.0) to indicate disabled state
+    assert result["score"] is None
+    assert result["severity"] == "disabled"
     assert result.get("disabled_reason") == "no_rules_configured"
 
 
 def test_nova_guard_rules_path(tmp_path):
     """nova_guard.py line 36: rules_path branch"""
-    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard, _BUNDLED_RULES_PATH
+    from markdown_ingress.core.nova_guard import _BUNDLED_RULES_PATH, NOVA_AVAILABLE, NovaGuard
     if not NOVA_AVAILABLE:
         pytest.skip("nova-hunting not installed")
     if not _BUNDLED_RULES_PATH.exists():
@@ -320,6 +320,7 @@ def _start_server(handler_class, host="127.0.0.1", port=0):
 def test_fetcher_decode_response_fallback():
     """fetcher.py lines 38-40: UnicodeDecodeError -> latin-1 fallback"""
     from unittest.mock import MagicMock
+
     from markdown_ingress.core.fetcher import _decode_response
 
     # Create a mock response with non-UTF8 bytes (valid latin-1)
@@ -334,6 +335,7 @@ def test_fetcher_decode_response_fallback():
 def test_fetcher_decode_response_bad_charset():
     """fetcher.py lines 38-40: LookupError for unknown charset"""
     from unittest.mock import MagicMock
+
     from markdown_ingress.core.fetcher import _decode_response
 
     mock_response = MagicMock()
@@ -341,6 +343,117 @@ def test_fetcher_decode_response_bad_charset():
     mock_response.content = b"hello world"
     result = _decode_response(mock_response)
     assert result == "hello world"
+
+
+class _PdfHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        payload = b"%PDF-1.4\\n1 0 obj\\n<< /Type /Catalog >>\\nendobj\\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, f, *a):
+        return
+
+
+class _RetryAfterThenOkHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
+    def do_GET(self):
+        _RetryAfterThenOkHandler.request_count += 1
+        if _RetryAfterThenOkHandler.request_count == 1:
+            self.send_response(429)
+            self.send_header("Retry-After", "1")
+            self.end_headers()
+            return
+
+        html = b"<html><body><p>ok after retry</p></body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def log_message(self, f, *a):
+        return
+
+
+class _RateLimitedBurstHandler(BaseHTTPRequestHandler):
+    last_request_at = 0.0
+    min_interval = 0.2
+
+    def do_GET(self):
+        now = time.monotonic()
+        too_fast = (
+            _RateLimitedBurstHandler.last_request_at > 0
+            and now - _RateLimitedBurstHandler.last_request_at < _RateLimitedBurstHandler.min_interval
+        )
+        _RateLimitedBurstHandler.last_request_at = now
+        if too_fast:
+            self.send_response(429)
+            self.end_headers()
+            return
+
+        html = b"<html><body><p>ok burst</p></body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.end_headers()
+        self.wfile.write(html)
+
+    def log_message(self, f, *a):
+        return
+
+
+def test_fetcher_rejects_pdf_content_type():
+    """fetcher.py: real PDF response should fail early with UnsupportedContentTypeError."""
+    server, port = _start_server(_PdfHandler)
+    try:
+        from markdown_ingress.core.fetcher import Fetcher, UnsupportedContentTypeError
+
+        fetcher = Fetcher(timeout=5.0)
+        with pytest.raises(UnsupportedContentTypeError, match="application/pdf"):
+            fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+    finally:
+        server.shutdown()
+
+
+def test_fetcher_429_retry_after_then_success():
+    """fetcher.py: real 429 + Retry-After should back off and then succeed."""
+    _RetryAfterThenOkHandler.request_count = 0
+    server, port = _start_server(_RetryAfterThenOkHandler)
+    try:
+        from markdown_ingress.core.fetcher import Fetcher
+
+        fetcher = Fetcher(timeout=5.0)
+        started = time.perf_counter()
+        result = fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+        elapsed = time.perf_counter() - started
+
+        assert result.status_code == 200
+        assert _RetryAfterThenOkHandler.request_count == 2
+        assert elapsed >= 1.0
+    finally:
+        server.shutdown()
+
+
+def test_fetcher_throttles_same_host_bursts():
+    """fetcher.py: per-host throttling should avoid immediate 429 burst failures."""
+    _RateLimitedBurstHandler.last_request_at = 0.0
+    server, port = _start_server(_RateLimitedBurstHandler)
+    try:
+        from markdown_ingress.core.fetcher import Fetcher
+
+        fetcher = Fetcher(timeout=5.0, domain_request_interval=0.25)
+        first = fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+        second = fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+    finally:
+        server.shutdown()
 
 
 class _RetryThenOkHandler(BaseHTTPRequestHandler):
@@ -613,8 +726,8 @@ def test_metadata_extractor_language_meta():
 
 def test_sqlite_cache_clear(tmp_path):
     """cache.py lines 216-217: SQLiteCache.clear()"""
-    from markdown_ingress.models import SafeDocument
     from markdown_ingress.core.cache import SQLiteCache
+    from markdown_ingress.models import SafeDocument
     db_path = str(tmp_path / "test_cache.db")
     cache = SQLiteCache(db_path=db_path, default_ttl=3600)
     doc = SafeDocument(
@@ -819,6 +932,7 @@ def test_link_analyzer_skip_mailto_tel():
 async def test_resource_blocker_route_continue_exception():
     """resource_blocker.py lines 138-140: exception in route.continue_()"""
     from unittest.mock import AsyncMock, MagicMock
+
     from markdown_ingress.core.resource_blocker import ResourceBlocker
 
     blocker = ResourceBlocker()
@@ -829,9 +943,6 @@ async def test_resource_blocker_route_continue_exception():
     mock_route.request.url = "http://example.com/script.js"
     mock_route.continue_ = AsyncMock(side_effect=Exception("already handled"))
     mock_route.abort = AsyncMock()
-
-    # Patch _handle_route to trigger the exception path
-    original_should_block = blocker._should_block
 
     call_count = [0]
 
@@ -941,8 +1052,8 @@ def test_benchmark_generate_report_empty():
 
 def test_benchmark_run_single_all_fail(monkeypatch):
     """benchmark.py lines 85-86, 89: all iterations fail"""
-    from markdown_ingress.core.benchmark import Benchmark
     import markdown_ingress.core.benchmark as bm_module
+    from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
@@ -955,8 +1066,8 @@ def test_benchmark_run_single_all_fail(monkeypatch):
 
 def test_benchmark_run_batch_skip_failures(monkeypatch):
     """benchmark.py lines 152-154: skip failed URLs in batch"""
-    from markdown_ingress.core.benchmark import Benchmark
     import markdown_ingress.core.benchmark as bm_module
+    from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
@@ -969,8 +1080,8 @@ def test_benchmark_run_batch_skip_failures(monkeypatch):
 
 def test_benchmark_compare_modes_both_fail(monkeypatch):
     """benchmark.py lines 169-183: compare_modes with both failing"""
-    from markdown_ingress.core.benchmark import Benchmark
     import markdown_ingress.core.benchmark as bm_module
+    from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
@@ -988,8 +1099,9 @@ def test_benchmark_compare_modes_both_fail(monkeypatch):
 @pytest.mark.asyncio
 async def test_inject_stealth():
     """stealth/js_injection.py lines 409-417"""
-    playwright = pytest.importorskip("playwright")
+    pytest.importorskip("playwright")
     from playwright.async_api import async_playwright
+
     from markdown_ingress.core.stealth.js_injection import inject_stealth
 
     async with async_playwright() as p:
@@ -1022,7 +1134,7 @@ def test_batch_processor_auto_mode():
     """batch.py lines 101-112: auto mode path"""
     server, port = _start_server(_SimpleHtmlHandler)
     try:
-        from markdown_ingress.core.batch import BatchProcessor
+        from markdown_ingress.application.batch import BatchProcessor
         processor = BatchProcessor(mode="auto", timeout=10.0)
         result = processor.process_batch([f"http://127.0.0.1:{port}/"])
         assert result.total == 1
@@ -1032,37 +1144,37 @@ def test_batch_processor_auto_mode():
 
 def test_batch_processor_render_mode_no_playwright(monkeypatch):
     """batch.py lines 116-119: render mode without RENDERER_AVAILABLE"""
-    import markdown_ingress.core.batch as batch_module
+    import markdown_ingress.application.batch as batch_module
     monkeypatch.setattr(batch_module, "RENDERER_AVAILABLE", False)
-    from markdown_ingress.core.batch import BatchProcessor
+    from markdown_ingress.application.batch import BatchProcessor
     processor = BatchProcessor(mode="render", timeout=5.0)
     result = processor.process_batch(["http://example.com"])
     assert result.failed == 1
-    assert "example.com" in list(result.errors.keys())[0]
+    assert any("example.com" in err.url for err in result.errors)
 
 
 # ---------------------------------------------------------------------------
 # Additional missing coverage
 # ---------------------------------------------------------------------------
 
-def test_scorer_get_risk_level_unknown():
-    """scoring.py line 41: return 'unknown' for out-of-range score"""
+def test_scorer_get_risk_level_edge_cases():
+    """scoring.py: out-of-range scores clamp to nearest valid level"""
     from markdown_ingress.core.scoring import Scorer
     scorer = Scorer()
-    assert scorer.get_risk_level(1.5) == "unknown"
-    assert scorer.get_risk_level(-0.5) == "unknown"
+    assert scorer.get_risk_level(1.5) == "critical"
+    assert scorer.get_risk_level(-0.5) == "safe"
 
 
 def test_nova_guard_is_available():
     """nova_guard.py line 142: is_available()"""
-    from markdown_ingress.core.nova_guard import NovaGuard, NOVA_AVAILABLE
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
     assert NovaGuard.is_available() == NOVA_AVAILABLE
 
 
 def test_nova_guard_no_bundled_rules(monkeypatch, tmp_path):
     """nova_guard.py lines 56-59, 64: no rules loaded warning"""
-    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE
     import markdown_ingress.core.nova_guard as ng_module
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE
     if not NOVA_AVAILABLE:
         pytest.skip("nova-hunting not installed")
 
@@ -1072,15 +1184,16 @@ def test_nova_guard_no_bundled_rules(monkeypatch, tmp_path):
     guard = NovaGuard()
     assert guard.rules == []
     assert guard.matchers == []
-    # Scan still works with no matchers
+    # Scan still works with no matchers, returns disabled state
     result = guard.scan("test")
-    assert result["score"] == 0.0
+    assert result["score"] is None
+    assert result["severity"] == "disabled"
 
 
 def test_nova_guard_bundled_rules_parse_error(monkeypatch, tmp_path):
     """nova_guard.py lines 74-75: parse error in bundled rule"""
-    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE
     import markdown_ingress.core.nova_guard as ng_module
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE
     if not NOVA_AVAILABLE:
         pytest.skip("nova-hunting not installed")
 
@@ -1095,7 +1208,124 @@ def test_nova_guard_bundled_rules_parse_error(monkeypatch, tmp_path):
     assert isinstance(guard.matchers, list)
 
 
-def test_security_analyzer_hidden_content_flag():
+def test_nova_guard_path_traversal_protection():
+    """nova_guard.py: path traversal protection for rules_path"""
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+    if not NOVA_AVAILABLE:
+        pytest.skip("nova-hunting not installed")
+
+    # Test 1: Path traversal with '..' should be rejected
+    with pytest.raises(ValueError, match="Path traversal not allowed"):
+        NovaGuard(rules_path="../../../etc/passwd")
+
+    # Test 2: URL-encoded path traversal should be rejected
+    with pytest.raises(ValueError, match="Path traversal not allowed"):
+        NovaGuard(rules_path="/tmp/%2e%2e/passwd")
+
+    # Test 3: Non-existent file should raise FileNotFoundError (path checks come first)
+    with pytest.raises((FileNotFoundError, ValueError)):
+        NovaGuard(rules_path="/nonexistent/path/to/rules.nova")
+
+
+def test_nova_guard_path_outside_allowed_dirs():
+    """nova_guard.py: paths outside allowed directories should be rejected"""
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+    if not NOVA_AVAILABLE:
+        pytest.skip("nova-hunting not installed")
+
+    # Create a temp file outside the bundled rules directory
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".nova", delete=False) as f:
+        f.write('rule TestRule { match { "test" } }')
+        temp_path = f.name
+
+    try:
+        # Even with a valid .nova file, paths outside allowed dirs should be rejected
+        with pytest.raises(ValueError, match="outside permitted locations"):
+            NovaGuard(rules_path=temp_path)
+    finally:
+        import os
+        os.unlink(temp_path)
+
+
+def test_nova_guard_severity_thresholds():
+    """nova_guard.py: configurable severity thresholds"""
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+    if not NOVA_AVAILABLE:
+        pytest.skip("nova-hunting not installed")
+
+    # Test 1: Default thresholds
+    guard = NovaGuard()
+    assert guard.severity_high_threshold == 0.7
+    assert guard.severity_medium_threshold == 0.3
+
+    # Test 2: Custom thresholds
+    guard_custom = NovaGuard(
+        severity_high_threshold=0.8,
+        severity_medium_threshold=0.4
+    )
+    assert guard_custom.severity_high_threshold == 0.8
+    assert guard_custom.severity_medium_threshold == 0.4
+
+    # Test 3: Invalid thresholds should raise ValueError
+    with pytest.raises(ValueError, match="Invalid severity thresholds"):
+        NovaGuard(severity_high_threshold=0.2, severity_medium_threshold=0.8)
+
+    # Test 4: Thresholds out of range
+    with pytest.raises(ValueError, match="Invalid severity thresholds"):
+        NovaGuard(severity_high_threshold=1.5, severity_medium_threshold=0.3)
+
+
+def test_nova_guard_scan_with_custom_thresholds():
+    """nova_guard.py: scan uses custom thresholds for severity"""
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+    if not NOVA_AVAILABLE:
+        pytest.skip("nova-hunting not installed")
+
+    # Create guard with custom thresholds
+    guard = NovaGuard(
+        severity_high_threshold=0.9,
+        severity_medium_threshold=0.5
+    )
+
+    # Scan content and check severity is calculated with custom thresholds
+    result = guard.scan("This is normal content about programming.")
+    # For low scores, should still be "low" regardless of thresholds
+    if result["score"] is not None and result["score"] < 0.5:
+        assert result["severity"] == "low"
+
+
+def test_nova_guard_allowed_rules_dirs():
+    """nova_guard.py: custom allowed_rules_dirs parameter"""
+    from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+    import tempfile
+    if not NOVA_AVAILABLE:
+        pytest.skip("nova-hunting not installed")
+
+    # Create a temp directory and a rules file with valid Nova syntax
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rules_file = Path(tmpdir) / "test.nova"
+        # Use valid Nova rule syntax with keywords and condition
+        rules_file.write_text('''
+rule TestRule {
+    meta:
+        description = "Test rule for allowed dirs"
+        severity = "medium"
+        category = "test"
+    keywords:
+        $test = "test_pattern"
+    condition:
+        $test
+}
+''')
+
+        # Should work when tmpdir is in allowed_rules_dirs
+        guard = NovaGuard(
+            rules_path=str(rules_file),
+            allowed_rules_dirs=[tmpdir]
+        )
+        assert guard.rules is not None
+        assert len(guard.rules) == 1
     """security.py line 196: hidden_content flag"""
     from markdown_ingress.core.security import SecurityAnalyzer
     analyzer = SecurityAnalyzer()
@@ -1183,8 +1413,8 @@ def test_fetcher_fixed_user_agent(local_http_server):
 @pytest.fixture(scope="module")
 def local_http_server():
     """Simple HTTP server for coverage tests."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1283,7 +1513,6 @@ def test_metadata_extractor_content_type_forum():
 
 def test_config_loader_default_location(tmp_path, monkeypatch):
     """config.py lines 121-122: config file found at a default location."""
-    import os
     from markdown_ingress.core.config import ConfigLoader
 
     # Write a config at the first default location (.markdowningress.yaml)
@@ -1307,7 +1536,7 @@ def test_config_loader_default_location(tmp_path, monkeypatch):
 async def test_batch_processor_render_mode(local_http_server):
     """batch.py lines 118-119: BatchProcessor(mode='render') uses Renderer."""
     pytest.importorskip("playwright")
-    from markdown_ingress.core.batch import BatchProcessor
+    from markdown_ingress.application.batch import BatchProcessor
 
     processor = BatchProcessor(mode="render", timeout=20.0)
     result = await processor.process_batch_async([local_http_server])

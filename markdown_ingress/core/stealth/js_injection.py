@@ -10,6 +10,34 @@ This module provides:
 - Console debug protection
 """
 
+import random
+
+# ============================================================================
+# WEBGL FINGERPRINT POOL
+# Realistic GPU/driver combinations for fingerprint randomization
+# ============================================================================
+
+WEBGL_FINGERPRINTS = [
+    ("Intel Inc.", "Intel Iris OpenGL Engine"),
+    ("Intel Inc.", "Intel(R) UHD Graphics 630"),
+    ("NVIDIA Corporation", "NVIDIA GeForce GTX 1060/PCIe/SSE2"),
+    ("NVIDIA Corporation", "NVIDIA GeForce RTX 3070/PCIe/SSE2"),
+    ("NVIDIA Corporation", "NVIDIA GeForce RTX 3080/PCIe/SSE2"),
+    ("AMD", "AMD Radeon RX 580 Series"),
+    ("AMD", "AMD Radeon RX 6800 XT"),
+    ("Apple Inc.", "Apple M1"),
+    ("Apple Inc.", "Apple M2"),
+]
+
+
+def _get_random_webgl_fingerprint() -> tuple[str, str]:
+    """Get a random WebGL fingerprint from the pool.
+
+    Returns:
+        Tuple of (vendor, renderer) strings
+    """
+    return random.choice(WEBGL_FINGERPRINTS)
+
 
 # ============================================================================
 # COMPREHENSIVE STEALTH JAVASCRIPT INJECTION
@@ -20,10 +48,18 @@ STEALTH_JS_INJECTION = """
 // Core WebDriver Detection Patches
 // ============================================================================
 
-// Override navigator.webdriver (most common detection)
-Object.defineProperty(navigator, 'webdriver', {
-    get: () => false,
+// BUG FIX: Real browsers return false for navigator.webdriver, not undefined
+// Returning undefined makes it obvious the property has been tampered with
+Object.defineProperty(Navigator.prototype, 'webdriver', {
+    get: function() { return false; },
+    configurable: true,
+    enumerable: true,
 });
+
+// Also delete the property from navigator instance if it exists
+try {
+    delete navigator.webdriver;
+} catch (e) {}
 
 // Override automation-controlled flag
 Object.defineProperty(navigator, 'automationControlled', {
@@ -87,16 +123,18 @@ if (!window.chrome.runtime) {
 // Permissions API Patches
 // ============================================================================
 
-// Override permissions.query to return realistic values
+// BUG FIX: Use function() instead of arrow function to preserve this binding
+// Arrow functions don't have their own this, which can be detected
 const originalQuery = window.navigator.permissions.query;
-window.navigator.permissions.query = (parameters) => {
+window.navigator.permissions.query = function(parameters) {
     if (parameters.name === 'notifications') {
         return Promise.resolve({
             state: Notification.permission,
             onchange: null,
         });
     }
-    return originalQuery(parameters);
+    // BUG FIX: Use .call() with correct context (navigator.permissions, not window.navigator.permissions)
+    return originalQuery.call(this, parameters);
 };
 
 // ============================================================================
@@ -156,10 +194,11 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {
     get: () => hardwareConcurrency,
 });
 
-// Add realistic device memory (in GB)
+// Add realistic device memory (in GB) — capture once to avoid detection
+const deviceMemory = [4, 8, 16][Math.floor(Math.random() * 3)];
 if (!navigator.deviceMemory) {
     Object.defineProperty(navigator, 'deviceMemory', {
-        get: () => [4, 8, 16][Math.floor(Math.random() * 3)],
+        get: () => deviceMemory,
     });
 }
 
@@ -167,16 +206,18 @@ if (!navigator.deviceMemory) {
 // WebGL Fingerprinting Patches
 // ============================================================================
 
-// Override WebGL parameters to provide consistent, realistic values
+// BUG FIX: Use randomized fingerprints from a pool of realistic values
+// Static fingerprints make all library users trackable as a group
+// Placeholders will be replaced with random values at injection time
 const getParameter = WebGLRenderingContext.prototype.getParameter;
 WebGLRenderingContext.prototype.getParameter = function(parameter) {
     // UNMASKED_VENDOR_WEBGL
     if (parameter === 37445) {
-        return 'Intel Inc.';
+        return '__WEBGL_VENDOR__';
     }
     // UNMASKED_RENDERER_WEBGL
     if (parameter === 37446) {
-        return 'Intel Iris OpenGL Engine';
+        return '__WEBGL_RENDERER__';
     }
     return getParameter.apply(this, [parameter]);
 };
@@ -186,10 +227,10 @@ if (typeof WebGL2RenderingContext !== 'undefined') {
     const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
     WebGL2RenderingContext.prototype.getParameter = function(parameter) {
         if (parameter === 37445) {
-            return 'Intel Inc.';
+            return '__WEBGL_VENDOR__';
         }
         if (parameter === 37446) {
-            return 'Intel Iris OpenGL Engine';
+            return '__WEBGL_RENDERER__';
         }
         return getParameter2.apply(this, [parameter]);
     };
@@ -202,8 +243,11 @@ if (typeof WebGL2RenderingContext !== 'undefined') {
 // Add noise to canvas fingerprinting attempts
 const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
 HTMLCanvasElement.prototype.toDataURL = function(type) {
-    // Only add noise for fingerprinting attempts (small canvases)
-    if (this.width < 100 && this.height < 100) {
+    // BUG FIX: Use <= 280 to include boundary case (280x280 canvas)
+    // Fingerprinting canvases can be wide but short (e.g., 280x60 for text rendering)
+    // Using || ensures any canvas with at least one small dimension gets noise
+    // Previously < 280 would miss exactly 280x280 canvases used for fingerprinting
+    if (this.width <= 280 || this.height <= 280) {
         const ctx = this.getContext('2d');
         if (ctx) {
             const imageData = ctx.getImageData(0, 0, this.width, this.height);
@@ -264,14 +308,19 @@ Object.defineProperty(screen, 'availHeight', {
 // Date and Time Consistency
 // ============================================================================
 
-// Ensure timezone consistency
+// Ensure timezone consistency — preserve prototype and static methods
 const originalDateTimeFormat = Intl.DateTimeFormat;
-Intl.DateTimeFormat = function(...args) {
+const wrappedDateTimeFormat = function(...args) {
     if (args.length === 0 || !args[0]) {
         args[0] = 'en-US';
     }
     return new originalDateTimeFormat(...args);
 };
+wrappedDateTimeFormat.prototype = originalDateTimeFormat.prototype;
+wrappedDateTimeFormat.supportedLocalesOf = originalDateTimeFormat.supportedLocalesOf;
+Object.defineProperty(wrappedDateTimeFormat, 'name', { value: 'DateTimeFormat' });
+Object.defineProperty(wrappedDateTimeFormat, 'length', { value: originalDateTimeFormat.length });
+Intl.DateTimeFormat = wrappedDateTimeFormat;
 
 // ============================================================================
 // Notification Patches
@@ -405,8 +454,18 @@ async def inject_stealth(page):
         >>> await inject_stealth(page)
         >>> await page.goto("https://example.com")
     """
+    # Get random WebGL fingerprint for this session
+    webgl_vendor, webgl_renderer = _get_random_webgl_fingerprint()
+
+    # Replace placeholders with random values
+    stealth_js = STEALTH_JS_INJECTION.replace(
+        '__WEBGL_VENDOR__', webgl_vendor
+    ).replace(
+        '__WEBGL_RENDERER__', webgl_renderer
+    )
+
     # Inject main stealth script before page loads
-    await page.add_init_script(STEALTH_JS_INJECTION)
+    await page.add_init_script(stealth_js)
 
     # Add post-load stealth script
     try:

@@ -6,8 +6,34 @@ to speed up rendering and reduce bandwidth usage.
 """
 
 import logging
+import threading
+from urllib.parse import unquote, urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_url_fully(url: str) -> str:
+    """Decode URL recursively to handle multi-level encoding.
+
+    This prevents bypasses where URLs are double or triple encoded
+    to evade detection (e.g., %252e -> %2e -> . bypasses patterns
+    looking for dots).
+
+    Args:
+        url: URL string that may contain percent-encoded characters.
+
+    Returns:
+        Fully decoded URL string (lowercase for consistent matching).
+    """
+    decoded = unquote(url)
+    # Keep decoding until no change (handles double/triple encoding)
+    # Limit iterations to prevent infinite loops on malicious input
+    max_iterations = 10
+    iterations = 0
+    while decoded != unquote(decoded) and iterations < max_iterations:
+        decoded = unquote(decoded)
+        iterations += 1
+    return decoded.lower()
 
 
 # Resource types that can be blocked
@@ -19,13 +45,9 @@ BLOCKED_RESOURCE_TYPES = [
 ]
 
 # Domain patterns commonly used for ads and tracking
-BLOCKED_DOMAINS = [
+_TRACKER_DOMAINS = [
     "google-analytics.com",
     "googletagmanager.com",
-    "facebook.com/tr",
-    "doubleclick.net",
-    "googlesyndication.com",
-    "adservice.google",
     "facebook.net",
     "scorecardresearch.com",
     "quantserve.com",
@@ -33,17 +55,57 @@ BLOCKED_DOMAINS = [
     "mouseflow.com",
     "fullstory.com",
     "clarity.ms",
-    "segment.com",
+    "segment.io",
+    "cdn.segment.com",
+    "api.segment.com",
     "mixpanel.com",
     "amplitude.com",
-    "ads",
-    "analytics",
-    "tracking",
-    "tracker",
-    "pixel",
-    "beacon",
-    "telemetry",
 ]
+
+_AD_DOMAINS = [
+    "doubleclick.net",
+    "googlesyndication.com",
+    "adservice.google",
+    "adnxs.com",
+    "adsrvr.org",
+    "criteo.com",
+    "taboola.com",
+    "outbrain.com",
+]
+
+_TRACKER_HOST_PATH_PATTERNS = [
+    ("facebook.com", "/tr"),
+]
+
+BLOCKED_DOMAINS = _TRACKER_DOMAINS + [f"{host}{path}" for host, path in _TRACKER_HOST_PATH_PATTERNS] + _AD_DOMAINS
+
+# Patterns matched against the URL domain only (not the full path)
+# to avoid false positives like "loads" matching "ads".
+_TRACKER_DOMAIN_ONLY_PATTERNS = [
+    "analytics.",
+    "tracker.",
+    "telemetry.",
+]
+
+_AD_DOMAIN_ONLY_PATTERNS = [
+    "ads.",
+    ".ads.",
+]
+
+# Path-level patterns: matched against the full URL but use boundary-aware
+# patterns (slash or dot prefix) to avoid substring false positives.
+_TRACKER_PATH_PATTERNS = [
+    "/tracking.",
+    "/tracking/",
+    "/pixel.",
+    "/pixel/",
+    "/beacon.",
+    "/beacon/",
+    "/beacon?",
+]
+
+_DOMAIN_ONLY_PATTERNS = _AD_DOMAIN_ONLY_PATTERNS + _TRACKER_DOMAIN_ONLY_PATTERNS
+_PATH_PATTERNS = list(_TRACKER_PATH_PATTERNS)
 
 
 class ResourceBlocker:
@@ -87,12 +149,14 @@ class ResourceBlocker:
         self.blocked_domains = BLOCKED_DOMAINS.copy()
         if custom_blocked_domains:
             self.blocked_domains.extend(custom_blocked_domains)
+        self._custom_blocked_domains = list(custom_blocked_domains or [])
 
         # Statistics
+        self._stats_lock = threading.Lock()
         self.blocked_count = 0
         self.total_count = 0
-        self.blocked_by_type = {}
-        self.blocked_by_domain = {}
+        self.blocked_by_type: dict[str, int] = {}
+        self.blocked_by_domain: dict[str, int] = {}
 
     async def setup_blocking(self, page):
         """
@@ -111,35 +175,45 @@ class ResourceBlocker:
         Args:
             route: Playwright Route object
         """
+        should_block = False
+        matched_domain: str | None = None
         try:
             request = route.request
             resource_type = request.resource_type
             url = request.url
 
-            self.total_count += 1
+            # BUG FIX: Calculate should_block BEFORE acquiring lock to avoid
+            # thread contention. URL parsing and decoding can be slow.
+            # Returns tuple of (should_block, matched_domain) to avoid race condition
+            should_block, matched_domain = self._should_block(resource_type, url)
 
-            # Check if should block
-            if self._should_block(resource_type, url):
-                self.blocked_count += 1
+            # Update stats atomically
+            with self._stats_lock:
+                self.total_count += 1
+                if should_block:
+                    self.blocked_count += 1
+                    self.blocked_by_type[resource_type] = self.blocked_by_type.get(resource_type, 0) + 1
+                    # BUG FIX: Update blocked_by_domain under lock to prevent race condition
+                    if matched_domain:
+                        self.blocked_by_domain[matched_domain] = self.blocked_by_domain.get(matched_domain, 0) + 1
 
-                # Track statistics
-                self.blocked_by_type[resource_type] = self.blocked_by_type.get(resource_type, 0) + 1
-
+            if should_block:
                 logger.debug(f"Blocked {resource_type}: {url[:100]}")
                 await route.abort()
             else:
                 await route.continue_()
 
         except Exception as e:
-            # If there's an error, allow the request to continue
-            logger.warning(f"Error in route handler: {e}")
+            # Security: On exception, default to blocking to prevent bypass attacks
+            # where attacker crafts malformed URL to trigger exception and bypass blocking
+            logger.warning(f"Error in route handler (defaulting to block): {e}")
             try:
-                await route.continue_()
+                await route.abort()
             except Exception:
                 # Route may already be handled
                 pass
 
-    def _should_block(self, resource_type: str, url: str) -> bool:
+    def _should_block(self, resource_type: str, url: str) -> tuple[bool, str | None]:
         """
         Determine if a request should be blocked based on type and URL.
 
@@ -148,31 +222,109 @@ class ResourceBlocker:
             url: Request URL
 
         Returns:
-            True if the request should be blocked, False otherwise
+            Tuple of (should_block, matched_domain) where matched_domain is the
+            domain pattern that triggered the block, or None if not blocked by domain.
         """
         # Block by resource type
         if self.block_images and resource_type == "image":
-            return True
+            return True, None
 
         if self.block_fonts and resource_type == "font":
-            return True
+            return True, None
 
         if self.block_media and resource_type == "media":
-            return True
+            return True, None
 
         if self.block_css and resource_type == "stylesheet":
-            return True
+            return True, None
 
         # Block by domain patterns (for ads and trackers)
         if self.block_ads or self.block_trackers:
-            url_lower = url.lower()
-            for pattern in self.blocked_domains:
-                if pattern in url_lower:
-                    # Track which domain pattern matched
-                    self.blocked_by_domain[pattern] = self.blocked_by_domain.get(pattern, 0) + 1
-                    return True
+            # Decode URL recursively to prevent encoding-based bypasses
+            # (e.g., /tracking%252e bypasses /tracking. by double encoding)
+            try:
+                url_decoded = _decode_url_fully(url)
+            except Exception:
+                # Malformed URL encoding - block for security
+                return True, None
 
-        return False
+            try:
+                parts = urlsplit(url_decoded)
+                domain = (parts.hostname or "").lower()
+            except Exception:
+                # Malformed URL - block for security
+                return True, None
+
+            # Security: Ensure domain was successfully extracted
+            if not domain:
+                # Empty or malformed domain - block for security
+                return True, None
+
+            path = parts.path or "/"
+
+            if self.block_trackers:
+                matched = self._match_host_patterns(domain, _TRACKER_DOMAINS + self._custom_blocked_domains)
+                if matched is not None:
+                    return True, matched
+                matched = self._match_host_path_patterns(domain, path, _TRACKER_HOST_PATH_PATTERNS)
+                if matched is not None:
+                    return True, matched
+                matched = self._match_domain_only_patterns(domain, _TRACKER_DOMAIN_ONLY_PATTERNS)
+                if matched is not None:
+                    return True, matched
+                matched = self._match_path_patterns(url_decoded, _TRACKER_PATH_PATTERNS)
+                if matched is not None:
+                    return True, matched
+
+            if self.block_ads:
+                matched = self._match_host_patterns(domain, _AD_DOMAINS + self._custom_blocked_domains)
+                if matched is not None:
+                    return True, matched
+                matched = self._match_domain_only_patterns(domain, _AD_DOMAIN_ONLY_PATTERNS)
+                if matched is not None:
+                    return True, matched
+
+        return False, None
+
+    @staticmethod
+    def _match_host_patterns(domain: str, patterns: list[str]) -> str | None:
+        """Match full-domain host patterns with subdomain boundary support."""
+        for pattern in patterns:
+            if "/" in pattern:
+                continue
+            if domain == pattern:
+                return pattern
+            if domain.endswith(f".{pattern}"):
+                return pattern
+            if domain.startswith(f"{pattern}."):
+                return pattern
+        return None
+
+    @staticmethod
+    def _match_host_path_patterns(domain: str, path: str, patterns: list[tuple[str, str]]) -> str | None:
+        """Match known tracker endpoints that depend on both host and path."""
+        for host_pattern, path_pattern in patterns:
+            if not (domain == host_pattern or domain.endswith(f".{host_pattern}")):
+                continue
+            if path == path_pattern or path.startswith(f"{path_pattern}/"):
+                return f"{host_pattern}{path_pattern}"
+        return None
+
+    @staticmethod
+    def _match_domain_only_patterns(domain: str, patterns: list[str]) -> str | None:
+        """Match boundary-aware domain fragments."""
+        for pattern in patterns:
+            if domain.startswith(pattern) or f".{pattern.lstrip('.')}" in f".{domain}":
+                return pattern
+        return None
+
+    @staticmethod
+    def _match_path_patterns(url_decoded: str, patterns: list[str]) -> str | None:
+        """Match boundary-aware tracking paths against the fully decoded URL."""
+        for pattern in patterns:
+            if pattern in url_decoded:
+                return pattern
+        return None
 
     def get_stats(self) -> dict:
         """
@@ -194,7 +346,8 @@ class ResourceBlocker:
 
     def reset_stats(self):
         """Reset blocking statistics."""
-        self.blocked_count = 0
-        self.total_count = 0
-        self.blocked_by_type = {}
-        self.blocked_by_domain = {}
+        with self._stats_lock:
+            self.blocked_count = 0
+            self.total_count = 0
+            self.blocked_by_type = {}
+            self.blocked_by_domain = {}

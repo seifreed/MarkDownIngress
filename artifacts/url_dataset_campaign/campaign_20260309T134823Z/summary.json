@@ -1,0 +1,552 @@
+{
+  "dataset_url": "https://raw.githubusercontent.com/ada-url/url-dataset/refs/heads/main/out.txt",
+  "dataset_file": "artifacts/url_dataset_campaign/out.txt",
+  "run_dir": "artifacts/url_dataset_campaign/campaign_20260309T134823Z",
+  "requested_unique_urls": 120,
+  "selected_unique_urls": 120,
+  "dropped_url_types": {
+    "unsupported_scheme:missing": 1
+  },
+  "enabled_scenarios": [
+    "fast_default",
+    "auto_default",
+    "rag_chunkable",
+    "search_profile",
+    "domain_policy_override",
+    "render_archive"
+  ],
+  "concurrency": 16,
+  "batch_size": 16,
+  "counts": {
+    "processed": 120,
+    "ok": 101,
+    "errors": 19,
+    "warnings": 92
+  },
+  "warning_types": {
+    "flags": 88,
+    "hidden_elements": 88,
+    "nonzero_injection_score": 90,
+    "policy_warn": 1,
+    "http_status_warning": 3
+  },
+  "error_types": {
+    "rate_limited": 1,
+    "forbidden": 6,
+    "dataset_non_html": 4,
+    "dataset_invalid_host": 1,
+    "not_found": 2,
+    "HTTPStatusError": 1,
+    "timeout": 4
+  },
+  "scenario_allocations": {
+    "fast_default": 58,
+    "auto_default": 24,
+    "rag_chunkable": 16,
+    "search_profile": 12,
+    "domain_policy_override": 6,
+    "render_archive": 4
+  },
+  "scenario_summaries": {
+    "fast_default": {
+      "scenario": "fast_default",
+      "description": "Fast mode, strict policy, lean metadata disabled for throughput baseline.",
+      "assigned_urls": 58,
+      "config": {
+        "mode": "fast",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 5.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": false,
+        "extract_links": false,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "default",
+        "extract_blocks": false,
+        "chunking_strategy": "none",
+        "chunk_size": 1200,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown"
+        ]
+      },
+      "counts": {
+        "processed": 58,
+        "ok": 50,
+        "errors": 8,
+        "warnings": 49
+      },
+      "warning_types": {
+        "flags": 47,
+        "hidden_elements": 47,
+        "nonzero_injection_score": 49,
+        "policy_warn": 1
+      },
+      "error_types": {
+        "rate_limited": 1,
+        "forbidden": 3,
+        "dataset_non_html": 2,
+        "dataset_invalid_host": 1,
+        "not_found": 1
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 16,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/fast_default/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/fast_default/errors.jsonl"
+    },
+    "auto_default": {
+      "scenario": "auto_default",
+      "description": "Auto mode for SPA detection with standard strict settings.",
+      "assigned_urls": 24,
+      "config": {
+        "mode": "auto",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 8.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": false,
+        "extract_links": false,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "llm_safe",
+        "extract_blocks": true,
+        "chunking_strategy": "heading",
+        "chunk_size": 1200,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown",
+          "blocks",
+          "security"
+        ]
+      },
+      "counts": {
+        "processed": 24,
+        "ok": 20,
+        "errors": 4,
+        "warnings": 18
+      },
+      "warning_types": {
+        "flags": 17,
+        "hidden_elements": 17,
+        "nonzero_injection_score": 17,
+        "http_status_warning": 1
+      },
+      "error_types": {
+        "HTTPStatusError": 1,
+        "not_found": 1,
+        "timeout": 1,
+        "dataset_non_html": 1
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 4,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/auto_default/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/auto_default/errors.jsonl"
+    },
+    "rag_chunkable": {
+      "scenario": "rag_chunkable",
+      "description": "Structured output for chunkable RAG ingestion.",
+      "assigned_urls": 16,
+      "config": {
+        "mode": "fast",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 6.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": true,
+        "extract_links": true,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "rag_chunkable",
+        "extract_blocks": true,
+        "chunking_strategy": "heading",
+        "chunk_size": 900,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown",
+          "blocks",
+          "chunks"
+        ]
+      },
+      "counts": {
+        "processed": 16,
+        "ok": 14,
+        "errors": 2,
+        "warnings": 11
+      },
+      "warning_types": {
+        "flags": 11,
+        "hidden_elements": 11,
+        "nonzero_injection_score": 11
+      },
+      "error_types": {
+        "dataset_non_html": 1,
+        "timeout": 1
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 16,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/rag_chunkable/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/rag_chunkable/errors.jsonl"
+    },
+    "search_profile": {
+      "scenario": "search_profile",
+      "description": "Search-oriented fast profile with permissive policy and size chunking.",
+      "assigned_urls": 12,
+      "config": {
+        "mode": "fast",
+        "strict": false,
+        "model": "gpt-4",
+        "timeout": 6.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": true,
+        "extract_links": true,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "for_search",
+        "extract_blocks": true,
+        "chunking_strategy": "size",
+        "chunk_size": 700,
+        "chunk_overlap": 80,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown",
+          "blocks",
+          "chunks",
+          "metadata"
+        ]
+      },
+      "counts": {
+        "processed": 12,
+        "ok": 10,
+        "errors": 2,
+        "warnings": 9
+      },
+      "warning_types": {
+        "flags": 9,
+        "hidden_elements": 9,
+        "nonzero_injection_score": 9
+      },
+      "error_types": {
+        "forbidden": 2
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 16,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/search_profile/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/search_profile/errors.jsonl"
+    },
+    "domain_policy_override": {
+      "scenario": "domain_policy_override",
+      "description": "Fast ingestion using a per-domain policy override to exercise runtime policy resolution.",
+      "assigned_urls": 6,
+      "config": {
+        "mode": "fast",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 6.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": true,
+        "extract_links": true,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "default",
+        "extract_blocks": true,
+        "chunking_strategy": "heading",
+        "chunk_size": 1200,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [
+          "dynamic_per_url"
+        ],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown"
+        ]
+      },
+      "counts": {
+        "processed": 6,
+        "ok": 3,
+        "errors": 3,
+        "warnings": 1
+      },
+      "warning_types": {
+        "flags": 1,
+        "hidden_elements": 1,
+        "nonzero_injection_score": 1
+      },
+      "error_types": {
+        "forbidden": 1,
+        "timeout": 2
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 12,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/domain_policy_override/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/domain_policy_override/errors.jsonl"
+    },
+    "render_archive": {
+      "scenario": "render_archive",
+      "description": "Render-heavy archival profile to exercise Playwright, screenshots disabled.",
+      "assigned_urls": 4,
+      "config": {
+        "mode": "render",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 12.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": true,
+        "extract_links": true,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "for_archive",
+        "extract_blocks": true,
+        "chunking_strategy": "none",
+        "chunk_size": 1200,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown",
+          "blocks",
+          "metadata",
+          "security"
+        ]
+      },
+      "counts": {
+        "processed": 4,
+        "ok": 4,
+        "errors": 0,
+        "warnings": 4
+      },
+      "warning_types": {
+        "http_status_warning": 2,
+        "flags": 3,
+        "hidden_elements": 3,
+        "nonzero_injection_score": 3
+      },
+      "error_types": {},
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 1,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/render_archive/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134823Z/render_archive/errors.jsonl"
+    }
+  },
+  "ingest_stats": {
+    "requests_total": 120,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "inflight_followers": 0,
+    "leader_executions": 120,
+    "mode_counts": {
+      "fast": 92,
+      "render": 4,
+      "auto": 24
+    },
+    "mode_timings_ms": {
+      "fast": {
+        "count": 92,
+        "total": 93876.67317292653,
+        "avg": 1020.3986214448536
+      },
+      "render": {
+        "count": 4,
+        "total": 11309.145583989448,
+        "avg": 2827.286395997362
+      },
+      "auto": {
+        "count": 24,
+        "total": 54475.12862597068,
+        "avg": 2269.7970260821116
+      }
+    },
+    "mode_results": {
+      "fast": {
+        "success": 77,
+        "error": 15
+      },
+      "render": {
+        "success": 4,
+        "error": 0
+      },
+      "auto": {
+        "success": 20,
+        "error": 4
+      }
+    },
+    "stage_timings_ms": {
+      "fetch_fast": {
+        "count": 97,
+        "total": 49145.57970705209,
+        "avg": 506.65546089744424
+      },
+      "extract": {
+        "count": 107,
+        "total": 3338.5472879599547,
+        "avg": 31.20137652299023
+      },
+      "markdown": {
+        "count": 107,
+        "total": 141.64900599280372,
+        "avg": 1.3238224859140535
+      },
+      "security": {
+        "count": 107,
+        "total": 19.568791016354226,
+        "avg": 0.1828858973491049
+      },
+      "hash_content": {
+        "count": 107,
+        "total": 1.7284580826526508,
+        "avg": 0.01615381385656683
+      },
+      "hash_structural": {
+        "count": 107,
+        "total": 2.739246003329754,
+        "avg": 0.02560042993766125
+      },
+      "tokens": {
+        "count": 107,
+        "total": 32.333758019376546,
+        "avg": 0.30218465438669667
+      },
+      "blocks": {
+        "count": 57,
+        "total": 72.79970400850289,
+        "avg": 1.2771877896228576
+      },
+      "chunking": {
+        "count": 42,
+        "total": 16.737084020860493,
+        "avg": 0.3985020004966784
+      },
+      "fetch_render": {
+        "count": 10,
+        "total": 39863.60762397817,
+        "avg": 3986.360762397817
+      },
+      "metadata": {
+        "count": 31,
+        "total": 158.44508199370466,
+        "avg": 5.11113167721628
+      },
+      "links": {
+        "count": 31,
+        "total": 29.281084003741853,
+        "avg": 0.9445510968948985
+      },
+      "domain_rules_text": {
+        "count": 2,
+        "total": 0.8995419921120629,
+        "avg": 0.44977099605603144
+      }
+    },
+    "policy_actions": {
+      "allow": 106,
+      "warn": 1,
+      "block": 0
+    },
+    "render_fallbacks": 0,
+    "circuit_breaker_rejections": 0,
+    "inflight_active": 0
+  }
+}

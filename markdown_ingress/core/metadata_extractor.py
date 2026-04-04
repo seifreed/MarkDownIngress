@@ -3,9 +3,12 @@ Metadata extraction from HTML documents
 """
 
 import json
-from typing import Any
+import logging
+from typing import Any, cast
 
 from selectolax.parser import HTMLParser
+
+logger = logging.getLogger(__name__)
 
 
 class MetadataExtractor:
@@ -15,7 +18,14 @@ class MetadataExtractor:
         """Initialize metadata extractor"""
         pass
 
-    def extract(self, html: str, url: str) -> dict[str, Any]:
+    def extract(
+        self,
+        html: str,
+        url: str,
+        *,
+        detect_language: bool = True,
+        normalize_multilingual: bool = True,
+    ) -> dict[str, Any]:
         """
         Extract comprehensive metadata from HTML.
 
@@ -28,11 +38,19 @@ class MetadataExtractor:
         """
         parser = HTMLParser(html)
 
+        language_info = self._extract_language_info(
+            parser,
+            html,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+        )
         metadata = {
             "author": self._extract_author(parser),
             "published_date": self._extract_published_date(parser),
             "modified_date": self._extract_modified_date(parser),
-            "language": self._extract_language(parser, html),
+            "language": language_info["language"],
+            "language_source": language_info["source"],
+            "language_confidence": language_info["confidence"],
             "description": self._extract_description(parser),
             "keywords": self._extract_keywords(parser),
             "canonical_url": self._extract_canonical_url(parser, url),
@@ -77,17 +95,31 @@ class MetadataExtractor:
         except (json.JSONDecodeError, AttributeError):
             return None
 
-        if not isinstance(data, dict):
-            return None
+        for item in self._iter_jsonld_items(data):
+            author = item.get("author")
+            if not author:
+                continue
 
-        author = data.get("author")
-        if not author:
-            return None
-
-        if isinstance(author, dict):
-            return author.get("name", "")
-        if isinstance(author, str):
-            return author
+            if isinstance(author, list):
+                # JSON-LD often uses arrays: [{"name": "Alice"}, {"name": "Bob"}]
+                names = []
+                for author_item in author:
+                    if isinstance(author_item, dict):
+                        name = author_item.get("name")
+                        if isinstance(name, str) and name:
+                            names.append(name)
+                    elif isinstance(author_item, str) and author_item:
+                        names.append(author_item)
+                if names:
+                    return ", ".join(names)
+                continue
+            if isinstance(author, dict):
+                name = author.get("name")
+                if isinstance(name, str) and name:
+                    return name
+                continue
+            if isinstance(author, str):
+                return author
         return None
 
     def _extract_published_date(self, parser: HTMLParser) -> str | None:
@@ -158,36 +190,66 @@ class MetadataExtractor:
         except (json.JSONDecodeError, AttributeError):
             return None
 
-        if not isinstance(data, dict):
-            return None
+        for item in self._iter_jsonld_items(data):
+            date_value = item.get(date_field)
+            if isinstance(date_value, str) and date_value:
+                return date_value
+        return None
 
-        date_value = data.get(date_field)
-        return date_value if date_value else None
+    def _iter_jsonld_items(self, data: Any):
+        """Yield JSON-LD object candidates from root lists and @graph containers."""
+        if isinstance(data, dict):
+            yield data
+            graph = data.get("@graph")
+            if isinstance(graph, list):
+                for item in graph:
+                    yield from self._iter_jsonld_items(item)
+            elif isinstance(graph, dict):
+                yield from self._iter_jsonld_items(graph)
+            return
+        if isinstance(data, list):
+            for item in data:
+                yield from self._iter_jsonld_items(item)
 
-    def _extract_language(self, parser: HTMLParser, html: str) -> str | None:
-        """Extract language from html lang attribute, then detect from content"""
+    def _extract_language_info(
+        self,
+        parser: HTMLParser,
+        html: str,
+        *,
+        detect_language: bool,
+        normalize_multilingual: bool,
+    ) -> dict[str, Any]:
+        """Extract language plus provenance and confidence when available."""
+        if not detect_language:
+            return {"language": None, "source": None, "confidence": None}
+
+        def normalize_lang(value: str) -> str:
+            raw = value.strip().lower()
+            if not raw:
+                return ""
+            return raw.split("-")[0] if normalize_multilingual else raw
+
         # Try html lang attribute
         html_tag = parser.css_first("html")
         if html_tag:
             lang = (html_tag.attributes.get("lang") or "").strip()
             if lang:
-                # Normalize language code (e.g., en-US -> en)
-                lang_code = lang.split("-")[0].lower()
+                lang_code = normalize_lang(lang)
                 if lang_code:
-                    return lang_code
+                    return {"language": lang_code, "source": "html_lang", "confidence": 1.0}
 
         # Try meta content-language
         meta_lang = parser.css_first('meta[http-equiv="content-language"]')
         if meta_lang:
             content = (meta_lang.attributes.get("content") or "").strip()
             if content:
-                lang_code = content.split("-")[0].lower()
+                lang_code = normalize_lang(content)
                 if lang_code:
-                    return lang_code
+                    return {"language": lang_code, "source": "meta_content_language", "confidence": 0.95}
 
         # Fallback: detect from content using langdetect
         try:
-            from langdetect import detect
+            from langdetect import detect  # type: ignore[import-untyped]
 
             # Get text content for detection
             body = parser.css_first("body")
@@ -195,12 +257,19 @@ class MetadataExtractor:
                 text = body.text(strip=True)
                 # Only detect if we have meaningful text
                 if text and len(text) > 50:
-                    detected_lang = detect(text)
-                    return detected_lang
-        except (ImportError, Exception):
-            pass
+                    detected_lang = normalize_lang(cast(str, detect(text)))
+                    if detected_lang:
+                        return {
+                            "language": detected_lang,
+                            "source": "langdetect",
+                            "confidence": 0.6,
+                        }
+        except ImportError:
+            pass  # langdetect not installed — graceful degradation
+        except Exception as exc:
+            logger.debug("langdetect failed: %s", exc)
 
-        return None
+        return {"language": None, "source": None, "confidence": None}
 
     def _extract_description(self, parser: HTMLParser) -> str | None:
         """Extract description from meta tags"""
@@ -248,19 +317,23 @@ class MetadataExtractor:
 
     def _extract_canonical_url(self, parser: HTMLParser, url: str) -> str | None:
         """Extract canonical URL from link tag"""
+        from urllib.parse import urljoin
+
         # Try link rel=canonical
         canonical_link = parser.css_first('link[rel="canonical"]')
         if canonical_link:
             href = (canonical_link.attributes.get("href") or "").strip()
             if href:
-                return href
+                # Resolve relative URLs to absolute using the page URL as base
+                return urljoin(url, href)
 
         # Try og:url
         og_url = parser.css_first('meta[property="og:url"]')
         if og_url:
             content = (og_url.attributes.get("content") or "").strip()
             if content:
-                return content
+                # Resolve relative URLs to absolute using the page URL as base
+                return urljoin(url, content)
 
         # Fallback to original URL
         return url

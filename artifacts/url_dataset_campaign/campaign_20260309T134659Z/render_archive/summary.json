@@ -1,0 +1,62 @@
+{
+  "scenario": "render_archive",
+  "description": "Render-heavy archival profile to exercise Playwright, screenshots disabled.",
+  "assigned_urls": 4,
+  "config": {
+    "mode": "render",
+    "strict": true,
+    "model": "gpt-4",
+    "timeout": 12.0,
+    "auto_render_threshold": 50,
+    "stealth": false,
+    "disable_http2": false,
+    "extreme_mode": false,
+    "screenshot": null,
+    "extract_metadata": true,
+    "extract_links": true,
+    "advanced_security": false,
+    "use_llm": false,
+    "cache": null,
+    "cache_ttl": null,
+    "policy_name": "normal",
+    "custom_patterns": [],
+    "plugin_dirs": [],
+    "output_profile": "for_archive",
+    "extract_blocks": true,
+    "chunking_strategy": "none",
+    "chunk_size": 1200,
+    "chunk_overlap": 120,
+    "detect_language": true,
+    "normalize_multilingual": true,
+    "include_security_explanation": true,
+    "include_observability": true,
+    "domain_policies": [],
+    "domain_request_interval": 0.0,
+    "circuit_breaker_threshold": 25,
+    "circuit_breaker_open_seconds": 5.0,
+    "render_cost_budget": null,
+    "output_formats": [
+      "markdown",
+      "blocks",
+      "metadata",
+      "security"
+    ]
+  },
+  "counts": {
+    "processed": 4,
+    "ok": 4,
+    "errors": 0,
+    "warnings": 4
+  },
+  "warning_types": {
+    "http_status_warning": 2,
+    "flags": 3,
+    "hidden_elements": 3,
+    "nonzero_injection_score": 3
+  },
+  "error_types": {},
+  "resumed_completed_indexes": 0,
+  "scenario_concurrency": 1,
+  "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134659Z/render_archive/warnings.jsonl",
+  "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134659Z/render_archive/errors.jsonl"
+}

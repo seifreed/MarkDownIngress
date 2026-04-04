@@ -10,6 +10,7 @@ This module provides:
 """
 
 import random
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,7 +21,21 @@ from typing import Any
 ULTRA_STEALTH_ARGS = [
     # Core automation hiding
     "--disable-blink-features=AutomationControlled",
-    # Isolation and security features to disable
+    # ⚠️ SECURITY WARNING: The following flags disable critical browser security features.
+    # These are required for stealth mode but should ONLY be used when:
+    # 1. Processing trusted/untrusted content in an isolated environment
+    # 2. The browser instance is not used for browsing arbitrary URLs
+    # 3. No sensitive data is accessible from the browser context
+    #
+    # DO NOT use these flags when:
+    # - Loading arbitrary URLs from untrusted sources
+    # - The browser has access to credentials or session cookies
+    # - Running in a shared/multi-user environment
+    #
+    # Disabled features and their risks:
+    # - site-per-process: Disables site isolation (reduces Spectre/Meltdown protection)
+    # - web-security: Disables same-origin policy (allows CORS bypasses)
+    # - sandbox: Disables Chrome's process sandbox (allows system access if exploited)
     "--disable-features=IsolateOrigins,site-per-process",
     "--disable-site-isolation-trials",
     "--disable-web-security",
@@ -163,6 +178,10 @@ REALISTIC_HEADERS = {
 }
 
 
+_LAST_RANDOM_SIGNATURE: tuple[str, tuple[int, int], str, float] | None = None
+_SIGNATURE_LOCK = threading.Lock()
+
+
 # ============================================================================
 # CONFIGURATION DATACLASS
 # ============================================================================
@@ -221,19 +240,61 @@ def get_advanced_stealth_config(
         >>> print(config.viewport_width, config.viewport_height)
         1920 1080
     """
+    global _LAST_RANDOM_SIGNATURE
+
     if randomize:
-        selected_ua = user_agent or random.choice(ADVANCED_USER_AGENTS)
-        selected_viewport = viewport or random.choice(ADVANCED_VIEWPORT_SIZES)
-        selected_timezone = timezone or random.choice(TIMEZONES)
+        # Perform randomization and dedup check inside the lock to prevent
+        # two threads computing the same signature concurrently.
+        with _SIGNATURE_LOCK:
+            selected_ua = user_agent or random.choice(ADVANCED_USER_AGENTS)
+            selected_viewport = viewport or random.choice(ADVANCED_VIEWPORT_SIZES)
+            selected_timezone = timezone or random.choice(TIMEZONES)
+            device_scale_factor = round(random.uniform(1.0, 2.0), 2)
+
+            signature = (
+                selected_ua,
+                selected_viewport,
+                selected_timezone,
+                device_scale_factor,
+            )
+
+            # Keep regenerating until we get a unique signature (max 10 attempts)
+            attempts = 0
+            while signature == _LAST_RANDOM_SIGNATURE and attempts < 10:
+                # Prefer changing UA first, then viewport, then timezone, then scale
+                if user_agent is None and selected_ua in ADVANCED_USER_AGENTS and len(ADVANCED_USER_AGENTS) > 1:
+                    ua_index = (ADVANCED_USER_AGENTS.index(selected_ua) + 1) % len(ADVANCED_USER_AGENTS)
+                    selected_ua = ADVANCED_USER_AGENTS[ua_index]
+                elif viewport is None and selected_viewport in ADVANCED_VIEWPORT_SIZES and len(ADVANCED_VIEWPORT_SIZES) > 1:
+                    viewport_index = (ADVANCED_VIEWPORT_SIZES.index(selected_viewport) + 1) % len(
+                        ADVANCED_VIEWPORT_SIZES
+                    )
+                    selected_viewport = ADVANCED_VIEWPORT_SIZES[viewport_index]
+                elif timezone is None and selected_timezone in TIMEZONES and len(TIMEZONES) > 1:
+                    timezone_index = (TIMEZONES.index(selected_timezone) + 1) % len(TIMEZONES)
+                    selected_timezone = TIMEZONES[timezone_index]
+                else:
+                    # Use a pool of realistic scale factors for diversity
+                    realistic_scales = [1.0, 1.25, 1.5, 1.75, 2.0]
+                    available_scales = [s for s in realistic_scales if s != device_scale_factor]
+                    device_scale_factor = random.choice(available_scales) if available_scales else 1.5
+
+                signature = (
+                    selected_ua,
+                    selected_viewport,
+                    selected_timezone,
+                    device_scale_factor,
+                )
+                attempts += 1
+
+            _LAST_RANDOM_SIGNATURE = signature
     else:
         selected_ua = user_agent or ADVANCED_USER_AGENTS[0]
         selected_viewport = viewport or ADVANCED_VIEWPORT_SIZES[0]
         selected_timezone = timezone or TIMEZONES[0]
+        device_scale_factor = 1.0
 
     viewport_width, viewport_height = selected_viewport
-
-    # Randomize device scale factor (1.0 to 2.0)
-    device_scale_factor = round(random.uniform(1.0, 2.0), 2) if randomize else 1.0
 
     return AdvancedStealthConfig(
         user_agent=selected_ua,

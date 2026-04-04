@@ -68,3 +68,14 @@ def test_determinism_same_input(simple_html):
     # Should be identical
     assert markdown1 == markdown2
     assert hash1 == hash2
+
+
+def test_extractor_sanitizes_control_characters_before_readability():
+    extractor = Extractor()
+    html = "<html><body><article><h1>Hello\x00</h1><p>Body\x01 text with control chars.</p></article></body></html>"
+
+    extraction = extractor.extract(html, "https://test.com")
+
+    assert "\x00" not in extraction.html
+    assert "\x01" not in extraction.html
+    assert "Hello" in extraction.text_content

@@ -56,7 +56,7 @@ class TokenEstimator:
         html_tokens = self.estimate(original_html)
         md_tokens = self.estimate(markdown)
 
-        saved_tokens = html_tokens - md_tokens
+        saved_tokens = max(0, html_tokens - md_tokens)
         savings_pct = (saved_tokens / html_tokens * 100) if html_tokens > 0 else 0
 
         return {

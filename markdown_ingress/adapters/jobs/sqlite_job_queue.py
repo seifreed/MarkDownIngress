@@ -1,0 +1,1122 @@
+"""SQLite-backed job queue adapter."""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import logging
+import multiprocessing
+import os
+import queue
+import sqlite3
+import threading
+import time
+import uuid
+from contextlib import closing
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import urlparse
+
+from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
+from markdown_ingress.core.ssrf import (
+    is_blocked_hostname,
+    is_blocked_ip_address,
+    normalize_hostname,
+    normalize_ip_for_ssrf,
+    validate_hostname_for_ssrf,
+)
+from markdown_ingress.core.interfaces import IWebhookNotifier
+
+_logger = logging.getLogger(__name__)
+
+_STOP_WORKER = object()
+LEGACY_UNKNOWN_TTL_SECONDS = 3600
+
+# Blocked URL schemes and networks for SSRF protection
+_BLOCKED_SCHEMES = {"file", "ftp", "data", "gopher", "dict", "ldap", "ldaps", "jar", "mailto", "news", "nntp", "irc", "mms", "rtsp", "svn", "git"}
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """Check if an IP address is in a private network range (IPv4 and IPv6)."""
+    import socket
+    try:
+        for _, _, _, _, sockaddr in socket.getaddrinfo(ip_str, None):
+            ip_obj = ipaddress.ip_address(sockaddr[0])
+            if _is_private_ip_address(ip_obj):
+                return True
+        return False
+    except (socket.gaierror, OSError, ValueError):
+        # If we can't resolve, treat as potentially dangerous
+        return True
+
+
+def _is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Check if an IP address object is in a private/reserved range."""
+    return is_blocked_ip_address(normalize_ip_for_ssrf(ip_obj))
+
+
+def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str | None:
+    """Resolve hostname and validate the IP is not private/blocked.
+
+    Returns the resolved IP address if valid, None if blocked.
+    This should be called at webhook delivery time to prevent DNS rebinding attacks.
+    """
+    import socket
+    try:
+        normalized_hostname = normalize_hostname(hostname)
+        # Get all addresses for the hostname
+        addr_info = socket.getaddrinfo(normalized_hostname, None)
+        if not addr_info:
+            return None
+        validated_ip: str | None = None
+        for family, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            try:
+                ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(ip_str))
+            except ValueError:
+                continue
+            # Check blocked hosts
+            if is_blocked_hostname(ip_str) or is_blocked_hostname(normalized_hostname):
+                if not allow_local:
+                    return None
+            # Check private ranges
+            if not allow_local and is_blocked_ip_address(ip_obj):
+                return None
+            if validated_ip is None:
+                validated_ip = ip_str
+        return validated_ip
+    except (socket.gaierror, OSError):
+        return None
+
+
+def _validate_webhook_url(url: str | None, *, allow_local: bool = False) -> None:
+    """Validate webhook URL to prevent SSRF attacks.
+
+    Args:
+        url: The webhook URL to validate
+        allow_local: If True, allow localhost/private network addresses (for testing)
+
+    Raises:
+        ValueError: If the URL is invalid or potentially dangerous
+    """
+    if url is None:
+        return
+    if not isinstance(url, str):
+        raise ValueError(f"webhook_url must be a string, got {type(url).__name__}")
+    if len(url) > 2048:
+        raise ValueError("webhook_url exceeds maximum length of 2048 characters")
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise ValueError(f"Invalid webhook_url: {exc}") from exc
+    # Check scheme
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError(f"webhook_url must use http or https scheme, got {parsed.scheme!r}")
+    try:
+        validate_hostname_for_ssrf(parsed.hostname or "", allow_local=allow_local)
+    except ValueError as exc:
+        message = str(exc)
+        if "valid host" in message:
+            raise ValueError("webhook_url must include a hostname") from exc
+        hostname = normalize_hostname(parsed.hostname or "")
+        if "hostname blocked" in message:
+            raise ValueError(f"webhook_url blocked: hostname {hostname!r} is not allowed") from exc
+        if "blocked range" in message:
+            raise ValueError(f"webhook_url blocked: hostname {hostname!r} is a private IP address") from exc
+        raise ValueError(f"webhook_url blocked: {message.removeprefix('URL ')}") from exc
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _execute_task_in_subprocess(
+    task: Callable[[], dict[str, Any]],
+    conn,
+) -> None:
+    try:
+        conn.send(("result", task()))
+    except BaseException as exc:  # pragma: no cover - child process path
+        try:
+            conn.send(("exception", exc))
+        except Exception:
+            conn.send(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
+    finally:
+        conn.close()
+
+
+@dataclass
+class JobRecord:
+    job_id: str
+    status: str
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    webhook_url: str | None = None
+    ttl_seconds: int | None = None
+    legacy_expires_at: str | None = None
+
+
+class PersistentJobQueue:
+    """SQLite-backed worker queue for long-running API jobs."""
+
+    def __init__(
+        self,
+        db_path: str,
+        worker_count: int = 2,
+        ttl_seconds: int = 3600,
+        max_queued_jobs: int = 100,
+        webhook_max_retries: int = 2,
+        webhook_retry_delay_seconds: float = 0.25,
+        notifier: IWebhookNotifier | None = None,
+        allow_local_webhooks: bool = False,
+        job_timeout_seconds: float | None = None,
+    ):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.worker_count = max(1, worker_count)
+        self.ttl_seconds = max(60, ttl_seconds)
+        self.max_queued_jobs = max(1, max_queued_jobs)
+        self.instance_id = str(uuid.uuid4())
+        self.owner_pid = os.getpid()
+        self.owner_start_time = self._get_process_start_time()
+        self.lease_timeout_seconds = 30.0
+        self.heartbeat_interval_seconds = 5.0
+        self.lease_acquire_max_retries = 5
+        self.lease_acquire_base_delay = 0.1
+        self.lease_acquire_max_delay = 5.0
+        self.notifier = notifier or HTTPWebhookNotifier(
+            max_retries=webhook_max_retries,
+            retry_delay_seconds=webhook_retry_delay_seconds,
+        )
+        self.allow_local_webhooks = allow_local_webhooks
+        self.job_timeout_seconds = job_timeout_seconds
+        self._queue: queue.Queue[tuple[str, Callable[[], dict[str, Any]]] | object] = queue.Queue()
+        self._lock = threading.RLock()
+        self._state_changed = threading.Condition(self._lock)
+        self._workers: list[threading.Thread] = []
+        self._workers_started = False
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._closed = False
+        self._closing = False
+        self._lease_lost = False
+        self._shutdown_complete = False
+        self._recovered_orphaned_jobs = False
+        self._worker_stop_requested = False
+        self._inline_jobs_running = 0
+        self._init_db()
+        self._acquire_lease()
+        self._recover_orphaned_jobs()
+        self._start_lease_heartbeat()
+
+    def _get_process_start_time(self) -> float | None:
+        """Get the current process start time for PID recycling detection."""
+        try:
+            # Try /proc filesystem (Linux)
+            proc_path = f"/proc/{os.getpid()}/stat"
+            if os.path.exists(proc_path):
+                with open(proc_path, "r") as f:
+                    stat_line = f.read()
+                parts = stat_line.split()
+                if len(parts) > 21:
+                    start_ticks = int(parts[21])
+                    clk_tck = os.sysconf("SC_CLK_TCK")
+                    if clk_tck > 0:
+                        return start_ticks / clk_tck
+        except (OSError, ValueError, IndexError) as e:
+            _logger.debug("Could not read process start time from /proc: %s", e)
+        # Fallback: use current time as approximation
+        # This is less accurate but better than nothing
+        return time.time()
+
+    @property
+    def state(self) -> str:
+        """Expose the queue lifecycle state for callers coordinating shutdown/retry."""
+        if self._lease_lost:
+            return "lease_lost"
+        if self._shutdown_complete or self._closed:
+            return "closed"
+        if self._closing:
+            return "closing"
+        return "open"
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    result_json TEXT,
+                    error TEXT,
+                    webhook_url TEXT,
+                    ttl_seconds INTEGER,
+                    legacy_expires_at TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS queue_leases (
+                    lease_name TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    heartbeat_at TEXT NOT NULL,
+                    owner_pid INTEGER NOT NULL DEFAULT 0,
+                    owner_start_time REAL
+                )
+                """
+            )
+            lease_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(queue_leases)").fetchall()
+            }
+            if "owner_pid" not in lease_columns:
+                conn.execute("ALTER TABLE queue_leases ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0")
+            if "owner_start_time" not in lease_columns:
+                conn.execute("ALTER TABLE queue_leases ADD COLUMN owner_start_time REAL")
+            job_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "ttl_seconds" not in job_columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN ttl_seconds INTEGER")
+            if "legacy_expires_at" not in job_columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN legacy_expires_at TEXT")
+            legacy_rows = conn.execute(
+                """
+                SELECT job_id, completed_at
+                FROM jobs
+                WHERE completed_at IS NOT NULL
+                  AND ttl_seconds IS NULL
+                  AND legacy_expires_at IS NULL
+                """
+            ).fetchall()
+            if legacy_rows:
+                updates = []
+                for row in legacy_rows:
+                    completed_at = row["completed_at"]
+                    legacy_expires_at = None
+                    if completed_at:
+                        try:
+                            legacy_expires_at = (
+                                datetime.fromisoformat(completed_at)
+                                + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)
+                            ).isoformat()
+                        except ValueError:
+                            legacy_expires_at = None
+                    updates.append((legacy_expires_at, row["job_id"]))
+                conn.executemany(
+                    "UPDATE jobs SET legacy_expires_at = ? WHERE job_id = ?",
+                    updates,
+                )
+            conn.commit()
+
+    def _parse_iso(self, value: str) -> datetime:
+        """Parse ISO format datetime string with error handling for malformed data."""
+        try:
+            return datetime.fromisoformat(value)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid ISO datetime format: {value!r}") from exc
+
+    def _is_stale_heartbeat(self, heartbeat_at: str) -> bool:
+        age_seconds = (datetime.now(UTC) - self._parse_iso(heartbeat_at)).total_seconds()
+        return age_seconds > self.lease_timeout_seconds
+
+    def _is_owner_process_alive(self, owner_pid: int, owner_start_time: float | None = None) -> bool:
+        """Check if a process with the given PID is alive.
+
+        To prevent PID recycling vulnerabilities, this also checks process start time
+        when available (on Unix systems with /proc filesystem).
+
+        Args:
+            owner_pid: The PID to check
+            owner_start_time: Optional start time of the owner process (epoch seconds)
+
+        Returns:
+            True if the process appears to be the same owner, False otherwise
+        """
+        if owner_pid <= 0:
+            return False
+        try:
+            os.kill(owner_pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Process exists but we can't signal it
+            # Fall through to start time check
+            pass
+
+        # Additional check: verify process start time to detect PID recycling
+        if owner_start_time is not None:
+            try:
+                # Try /proc filesystem (Linux/macOS)
+                proc_path = f"/proc/{owner_pid}/stat"
+                if os.path.exists(proc_path):
+                    with open(proc_path, "r") as f:
+                        stat_line = f.read()
+                    # The 22nd field (0-indexed: 21) is starttime in clock ticks
+                    parts = stat_line.split()
+                    if len(parts) > 21:
+                        start_ticks = int(parts[21])
+                        # Convert clock ticks to seconds
+                        clk_tck = os.sysconf("SC_CLK_TCK")
+                        if clk_tck > 0:
+                            start_seconds = start_ticks / clk_tck
+                            # Check if start time matches expected (within 1 second tolerance)
+                            if abs(start_seconds - owner_start_time) > 1.0:
+                                return False
+            except (OSError, ValueError, IndexError) as e:
+                # If we can't read /proc, fall back to just PID existence check
+                _logger.debug("Could not verify owner process start time: %s", e)
+        return True
+
+    def _assert_queue_usable(self, *, require_lease: bool = False, allow_closing: bool = False) -> None:
+        if self._lease_lost:
+            raise RuntimeError("Job queue lease was lost; this instance can no longer accept or execute jobs")
+        if self._closed:
+            raise RuntimeError("Job queue is closed")
+        if self._closing and not allow_closing:
+            raise RuntimeError("Job queue is closing")
+        if require_lease and not self._still_owns_lease():
+            self._lease_lost = True
+            raise RuntimeError("Job queue lease was lost; this instance can no longer accept or execute jobs")
+
+    def _still_owns_lease(self) -> bool:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT owner_id FROM queue_leases WHERE lease_name = ?",
+                ("default",),
+            ).fetchone()
+        return row is not None and row["owner_id"] == self.instance_id
+
+    def _acquire_lease(self) -> None:
+        """Acquire lease with exponential backoff retry for lock contention.
+
+        This prevents crashes when multiple instances start simultaneously.
+        """
+        last_error: Exception | None = None
+        for attempt in range(self.lease_acquire_max_retries):
+            try:
+                with closing(self._connect()) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    row = conn.execute(
+                        "SELECT owner_id, heartbeat_at, owner_pid, owner_start_time FROM queue_leases WHERE lease_name = ?",
+                        ("default",),
+                    ).fetchone()
+                    now_iso = _utcnow()
+                    if row is None:
+                        self._recovered_orphaned_jobs = True
+                        conn.execute(
+                            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+                            ("default", self.instance_id, now_iso, self.owner_pid, self.owner_start_time),
+                        )
+                    else:
+                        owner_id = row["owner_id"]
+                        heartbeat_at = row["heartbeat_at"]
+                        owner_pid = int(row["owner_pid"]) if row["owner_pid"] else 0
+                        owner_start_time = row["owner_start_time"]
+                        previous_owner_alive = self._is_owner_process_alive(owner_pid, owner_start_time)
+                        previous_heartbeat_stale = self._is_stale_heartbeat(heartbeat_at)
+                        if owner_id != self.instance_id and previous_owner_alive and not previous_heartbeat_stale:
+                            conn.rollback()
+                            raise RuntimeError("Job queue DB is already owned by another active instance")
+                        self._recovered_orphaned_jobs = owner_id != self.instance_id
+                        conn.execute(
+                            "UPDATE queue_leases SET owner_id = ?, heartbeat_at = ?, owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
+                            (self.instance_id, now_iso, self.owner_pid, self.owner_start_time, "default"),
+                        )
+                    conn.commit()
+                return  # Success
+            except sqlite3.OperationalError as e:
+                # Database is locked - retry with exponential backoff
+                last_error = e
+                if attempt < self.lease_acquire_max_retries - 1:
+                    delay = min(
+                        self.lease_acquire_base_delay * (2 ** attempt),
+                        self.lease_acquire_max_delay,
+                    )
+                    time.sleep(delay)
+                    continue
+        # All retries exhausted
+        raise RuntimeError(
+            f"Failed to acquire lease after {self.lease_acquire_max_retries} attempts: {last_error}"
+        ) from last_error
+
+    def _refresh_lease(self) -> None:
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue_leases
+                SET heartbeat_at = ?, owner_pid = ?, owner_start_time = ?
+                WHERE lease_name = ? AND owner_id = ?
+                """,
+                (_utcnow(), self.owner_pid, self.owner_start_time, "default", self.instance_id),
+            )
+            conn.commit()
+            # Read rowcount BEFORE closing the connection to avoid
+            # use-after-close of the cursor.
+            updated = cursor.rowcount
+        if updated != 1:
+            raise RuntimeError("Job queue lease was lost")
+
+    def _start_lease_heartbeat(self) -> None:
+        # Heartbeat retry configuration
+        max_heartbeat_retries = 3
+        heartbeat_base_delay = 1.0  # Base delay for exponential backoff
+        heartbeat_max_delay = 10.0  # Maximum delay between retries
+
+        def heartbeat_loop() -> None:
+            consecutive_failures = 0
+            while not self._heartbeat_stop.wait(self.heartbeat_interval_seconds):
+                try:
+                    self._refresh_lease()
+                    consecutive_failures = 0  # Reset on success
+                except sqlite3.OperationalError:
+                    # Transient database errors (locks, timeouts) - retry with backoff
+                    consecutive_failures += 1
+                    if consecutive_failures > max_heartbeat_retries:
+                        # Max retries exceeded - initiate graceful shutdown
+                        with self._lock:
+                            self._lease_lost = True
+                            self._closed = True
+                            self._closing = True
+                            if not self._worker_stop_requested:
+                                worker_count = len(self._workers)
+                                for _ in range(worker_count):
+                                    self._queue.put(_STOP_WORKER)
+                                self._worker_stop_requested = True
+                        return
+                    # Exponential backoff: 1s, 2s, 4s, etc. (capped at max_delay)
+                    delay = min(heartbeat_base_delay * (2 ** (consecutive_failures - 1)), heartbeat_max_delay)
+                    # Wait for either the backoff delay or stop signal
+                    self._heartbeat_stop.wait(timeout=delay)
+                except Exception:  # pragma: no cover
+                    # Non-transient errors - immediate shutdown
+                    with self._lock:
+                        self._lease_lost = True
+                        self._closed = True
+                        self._closing = True
+                        if not self._worker_stop_requested:
+                            worker_count = len(self._workers)
+                            for _ in range(worker_count):
+                                self._queue.put(_STOP_WORKER)
+                            self._worker_stop_requested = True
+                    return
+
+        self._heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def close(
+        self,
+        *,
+        inline_wait_timeout: float | None = None,
+        preserve_state_on_inline_timeout: bool = False,
+    ) -> None:
+        if self._shutdown_complete:
+            return
+        with self._lock:
+            if self._shutdown_complete:
+                return
+            if preserve_state_on_inline_timeout and self._inline_jobs_running > 0:
+                raise RuntimeError("Job queue inline jobs did not stop before lease release")
+            if preserve_state_on_inline_timeout and any(worker.is_alive() for worker in self._workers):
+                raise RuntimeError("Job queue workers did not stop before lease release")
+            self._closing = True
+            if not self._worker_stop_requested:
+                worker_count = len(self._workers)
+                for _ in range(worker_count):
+                    self._queue.put(_STOP_WORKER)
+                self._worker_stop_requested = True
+            deadline = None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
+            while self._inline_jobs_running > 0:
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RuntimeError("Job queue inline jobs did not stop before lease release")
+                    self._state_changed.wait(timeout=min(0.1, remaining))
+                else:
+                    self._state_changed.wait(timeout=0.1)
+        for worker in list(self._workers):
+            worker.join(timeout=2.0)
+        still_alive = [worker for worker in self._workers if worker.is_alive()]
+        if still_alive:
+            raise RuntimeError("Job queue workers did not stop before lease release")
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+        with closing(self._connect()) as conn:
+            if not self._lease_lost:
+                conn.execute(
+                    "DELETE FROM queue_leases WHERE lease_name = ? AND owner_id = ?",
+                    ("default", self.instance_id),
+                )
+            conn.commit()
+        self._closed = True
+        self._shutdown_complete = True
+
+    def _recover_orphaned_jobs(self) -> None:
+        """Fail queued/running jobs from a previous process instance.
+
+        The queue persists job state in SQLite, but executable callables only live in the
+        current process. After a restart there is no safe way to replay queued/running jobs,
+        so they must be marked failed instead of remaining pending forever.
+        """
+        if not self._recovered_orphaned_jobs:
+            return
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'failed',
+                    completed_at = ?,
+                    result_json = NULL,
+                    ttl_seconds = COALESCE(ttl_seconds, ?),
+                    error = CASE
+                        WHEN status = 'running'
+                            THEN 'Job interrupted by process restart; persisted task payload is not recoverable'
+                        ELSE 'Job abandoned after process restart; persisted task payload is not recoverable'
+                    END
+                WHERE status IN ('queued', 'running')
+                """,
+                (_utcnow(), self.ttl_seconds),
+            )
+            conn.commit()
+
+    def _ensure_workers(self) -> None:
+        with self._lock:
+            if self._workers_started:
+                return
+            for _ in range(self.worker_count):
+                worker = threading.Thread(target=self._worker_loop, daemon=True)
+                worker.start()
+                self._workers.append(worker)
+            self._workers_started = True
+
+    def submit(
+        self,
+        task: Callable[[], dict[str, Any]],
+        webhook_url: str | None = None,
+        start_immediately: bool = False,
+    ) -> JobRecord:
+        self._assert_queue_usable(require_lease=True)
+        # Validate webhook_url for SSRF protection
+        _validate_webhook_url(webhook_url, allow_local=self.allow_local_webhooks)
+        job_id = str(uuid.uuid4())
+        record = JobRecord(
+            job_id=job_id,
+            status="queued",
+            created_at=_utcnow(),
+            webhook_url=webhook_url,
+            ttl_seconds=self.ttl_seconds,
+        )
+        run_inline = False
+        with self._lock:
+            self._assert_queue_usable(require_lease=True)
+            self.cleanup_expired()
+            with closing(self._connect()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                lease_row = conn.execute(
+                    "SELECT owner_id FROM queue_leases WHERE lease_name = ?",
+                    ("default",),
+                ).fetchone()
+                if lease_row is None or lease_row["owner_id"] != self.instance_id:
+                    conn.rollback()
+                    self._lease_lost = True
+                    raise RuntimeError(
+                        "Job queue lease was lost; this instance can no longer accept or execute jobs"
+                    )
+                row = conn.execute(
+                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
+                ).fetchone()
+                pending = int(row["count"]) if row else 0
+                if pending >= self.max_queued_jobs:
+                    conn.rollback()
+                    raise RuntimeError("Job queue is full")
+                conn.execute(
+                    """
+                    INSERT INTO jobs (job_id, status, created_at, webhook_url, ttl_seconds)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.job_id,
+                        record.status,
+                        record.created_at,
+                        record.webhook_url,
+                        record.ttl_seconds,
+                    ),
+                )
+                conn.commit()
+            self._assert_queue_usable(require_lease=True)
+            if start_immediately:
+                self._inline_jobs_running += 1
+                run_inline = True
+            else:
+                self._ensure_workers()
+                self._queue.put((job_id, task))
+        if run_inline:
+            try:
+                self._execute_job(job_id, task)
+            finally:
+                with self._lock:
+                    self._inline_jobs_running -= 1
+                    self._state_changed.notify_all()
+        return record
+
+    def pending_count(self, *, cleanup_expired: bool = True) -> int:
+        if cleanup_expired:
+            self.cleanup_expired()
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
+        if cleanup_expired:
+            self.cleanup_expired()
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            return None
+        return JobRecord(
+            job_id=row["job_id"],
+            status=row["status"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            result=json.loads(row["result_json"]) if row["result_json"] else None,
+            error=row["error"],
+            webhook_url=row["webhook_url"],
+            ttl_seconds=row["ttl_seconds"],
+            legacy_expires_at=row["legacy_expires_at"],
+        )
+
+    def cleanup_expired(self) -> None:
+        now_iso = _utcnow()
+        with closing(self._connect()) as conn:
+            # Delete TTL-based expired jobs directly in SQL
+            conn.execute(
+                """
+                DELETE FROM jobs
+                WHERE completed_at IS NOT NULL
+                  AND ttl_seconds IS NOT NULL
+                  AND (
+                      julianday(completed_at) IS NULL
+                      OR (julianday(?) - julianday(completed_at)) * 86400.0 > ttl_seconds
+                  )
+                """,
+                (now_iso,),
+            )
+            # Delete legacy jobs whose explicit expiry has passed or is unparseable
+            conn.execute(
+                """
+                DELETE FROM jobs
+                WHERE completed_at IS NOT NULL
+                  AND ttl_seconds IS NULL
+                  AND legacy_expires_at IS NOT NULL
+                  AND (
+                      julianday(legacy_expires_at) IS NULL
+                      OR julianday(?) > julianday(legacy_expires_at)
+                  )
+                """,
+                (now_iso,),
+            )
+            # BUG FIX: Instead of deleting legacy jobs with no expiry info,
+            # set a default TTL (LEGACY_UNKNOWN_TTL_SECONDS) to preserve their data
+            # This prevents data loss for jobs created before TTL tracking was added
+            conn.execute(
+                """
+                UPDATE jobs
+                SET ttl_seconds = ?,
+                    legacy_expires_at = ?
+                WHERE completed_at IS NOT NULL
+                  AND ttl_seconds IS NULL
+                  AND legacy_expires_at IS NULL
+                """,
+                (LEGACY_UNKNOWN_TTL_SECONDS, (datetime.now(UTC) + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)).isoformat()),
+            )
+            conn.commit()
+
+    def _worker_loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            job_id = None
+            try:
+                if item is _STOP_WORKER:
+                    return
+                job_id, task = item
+                self._assert_queue_usable(require_lease=True, allow_closing=True)
+                self._execute_job(job_id, task)
+            except Exception as exc:  # pragma: no cover
+                if item is _STOP_WORKER:
+                    return
+                # BUG FIX: Log worker exceptions at WARNING level for visibility
+                _logger.warning("Worker loop exception for job %s: %s", job_id, exc)
+                if job_id is not None:
+                    job = self.get(job_id)
+                    if job is None or job.status not in {"failed", "completed"}:
+                        self._mark_failed(job_id, str(exc))
+            finally:
+                self._queue.task_done()
+
+    def _execute_job(self, job_id: str, task: Callable[[], dict[str, Any]]) -> None:
+        self._assert_queue_usable(require_lease=True, allow_closing=True)
+        self._mark_running(job_id)
+        try:
+            # Execute task with optional timeout
+            if self.job_timeout_seconds is not None:
+                result = self._execute_with_timeout(task, self.job_timeout_seconds)
+            else:
+                result = task()
+        except Exception as exc:
+            # Mark as failed only once - let exception propagate for _worker_loop to handle
+            self._mark_failed(job_id, str(exc))
+            raise
+        if not self._still_owns_lease():
+            self._lease_lost = True
+            self._closed = True
+            # Job result computed but not yet persisted.
+            # Try to preserve the result while marking as failed so callers can retrieve it.
+            # This is similar to _mark_webhook_failed but for lease loss scenarios.
+            try:
+                self._mark_completed_preserve_result(job_id, result, "Job queue lease was lost before result persistence")
+            except Exception as e:
+                # If preservation fails, fall back to marking as failed without result
+                _logger.debug("Failed to preserve job result on lease loss: %s", e)
+                self._mark_failed(job_id, "Job queue lease was lost before result persistence")
+            raise RuntimeError("Job queue lease was lost before result persistence")
+        self._mark_completed(job_id, result)
+        job = self.get(job_id)
+        if job and job.webhook_url:
+            if not self._still_owns_lease():
+                self._lease_lost = True
+                self._closed = True
+                # Job was already marked completed successfully in the database.
+                # The result is persisted, but webhook delivery cannot proceed.
+                # This is acceptable: callers polling the queue can still retrieve results.
+                # Do NOT mark as failed - the job completed successfully.
+                raise RuntimeError("Job queue lease was lost before webhook delivery")
+            # Re-validate webhook URL at delivery time to prevent DNS rebinding attacks
+            if not self.allow_local_webhooks:
+                # BUG FIX: Use proper URL parsing instead of fragile string splitting
+                # to prevent IndexError on malformed URLs
+                try:
+                    parsed = urlparse(job.webhook_url)
+                    hostname = parsed.hostname
+                    if hostname is None:
+                        _logger.warning("Webhook URL has no hostname: %s", job.webhook_url[:100])
+                        self._mark_webhook_failed(job_id, "Webhook URL has no hostname")
+                        raise RuntimeError("Webhook URL has no hostname")
+                except Exception as e:
+                    _logger.warning("Failed to parse webhook URL: %s", str(e)[:100])
+                    self._mark_webhook_failed(job_id, f"Invalid webhook URL: {e}")
+                    raise RuntimeError(f"Invalid webhook URL: {e}") from e
+                validated_ip = _resolve_and_validate_ip(hostname)
+                if validated_ip is None:
+                    # DNS rebinding detected or private IP resolution at request time
+                    self._mark_webhook_failed(job_id, "Webhook URL resolved to blocked/private IP at delivery time")
+                    raise RuntimeError("Webhook URL resolved to blocked/private IP at delivery time")
+            try:
+                self.notifier.notify(
+                    job.webhook_url,
+                    {
+                        "job_id": job.job_id,
+                        "status": job.status,
+                        "completed_at": job.completed_at,
+                        "result": job.result,
+                        "error": job.error,
+                    },
+                )
+            except Exception as exc:
+                # Webhook failure: preserve result but mark as failed
+                # The job result is preserved so callers can still retrieve it
+                self._mark_webhook_failed(job_id, f"Webhook delivery failed: {exc}")
+                raise
+
+    def _execute_with_timeout(self, task: Callable[[], dict[str, Any]], timeout_seconds: float) -> dict[str, Any]:
+        """Execute a task with a hard timeout when the platform supports it.
+
+        Args:
+            task: Callable that returns a result dict
+            timeout_seconds: Maximum time to wait for completion
+
+        Returns:
+            The result from task()
+
+        Raises:
+            RuntimeError: If task times out or returns None
+            Exception: Any exception raised by the task
+        """
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be > 0")
+        if os.name != "posix" or "fork" not in multiprocessing.get_all_start_methods():
+            return self._execute_with_timeout_thread_fallback(task, timeout_seconds)
+        return self._execute_with_timeout_process(task, timeout_seconds)
+
+    def _execute_with_timeout_process(
+        self,
+        task: Callable[[], dict[str, Any]],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        ctx = multiprocessing.get_context("fork")
+        parent_conn, child_conn = ctx.Pipe(duplex=False)
+        process = ctx.Process(target=_execute_task_in_subprocess, args=(task, child_conn), daemon=True)
+        try:
+            process.start()
+            child_conn.close()
+            if parent_conn.poll(timeout_seconds):
+                kind, payload = parent_conn.recv()
+                process.join(timeout=1.0)
+                if kind == "result":
+                    if payload is None:
+                        raise RuntimeError("Task returned None result")
+                    return payload
+                if kind == "exception":
+                    raise payload
+                if kind == "exception_payload":
+                    raise RuntimeError(f"{payload['type']}: {payload['message']}")
+                raise RuntimeError("Task subprocess returned an unknown payload")
+
+            _logger.warning("Job execution timed out after %s seconds - terminating subprocess", timeout_seconds)
+            process.terminate()
+            process.join(timeout=1.0)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=1.0)
+            raise RuntimeError(f"Job execution timed out after {timeout_seconds} seconds")
+        finally:
+            parent_conn.close()
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=1.0)
+
+    def _execute_with_timeout_thread_fallback(
+        self,
+        task: Callable[[], dict[str, Any]],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        """Fallback for platforms without POSIX fork support.
+
+        Python cannot hard-cancel worker threads on these platforms, so we keep
+        the old behaviour but log that the timeout is cooperative only.
+        """
+        result_container: list[dict[str, Any] | None] = [None]
+        exception_container: list[Exception | None] = [None]
+
+        def run_task() -> None:
+            try:
+                result_container[0] = task()
+            except Exception as e:
+                exception_container[0] = e
+
+        thread = threading.Thread(target=run_task, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout_seconds)
+
+        if thread.is_alive():
+            _logger.warning(
+                "Job execution timed out after %s seconds on a platform without fork support; "
+                "background thread may continue running until the task returns",
+                timeout_seconds,
+            )
+            raise RuntimeError(f"Job execution timed out after {timeout_seconds} seconds")
+
+        if exception_container[0] is not None:
+            raise exception_container[0]
+
+        if result_container[0] is None:
+            raise RuntimeError("Task returned None result")
+
+        return result_container[0]
+
+    # =========================================================================
+    # Job State Machine
+    # =========================================================================
+    # Valid state transitions:
+    #   queued -> running   : Job picked up by worker
+    #   queued -> failed    : Orphaned job recovery on startup
+    #   running -> completed: Job finished successfully
+    #   running -> failed   : Job finished with error
+    #   completed -> failed : Webhook delivery failed (result preserved)
+    #
+    # State validation ensures:
+    #   - Jobs cannot transition from 'completed' to 'failed' (except for webhook failure)
+    #   - Jobs cannot transition from 'failed' to 'completed'
+    #   - Jobs cannot be marked 'running' if already terminal (completed/failed)
+    #
+    # All state transitions use atomic UPDATE with WHERE clause to prevent TOCTOU races.
+    # =========================================================================
+
+    def _mark_running(self, job_id: str) -> None:
+        """Transition job from 'queued' to 'running'.
+
+        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
+        This is idempotent: if job is already 'running', this is a no-op.
+
+        Raises:
+            RuntimeError: If job is in a terminal state (completed/failed) or not found.
+        """
+        with closing(self._connect()) as conn:
+            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
+            cursor = conn.execute(
+                "UPDATE jobs SET status = ?, started_at = ? WHERE job_id = ? AND status = ?",
+                ("running", _utcnow(), job_id, "queued"),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                # Job wasn't in 'queued' state - find current state for error message
+                row = conn.execute(
+                    "SELECT status FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError(f"Job {job_id} not found")
+                # If already running, this is likely a duplicate call - idempotent no-op
+                if row["status"] == "running":
+                    return
+                raise RuntimeError(
+                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'queued'"
+                )
+
+    def _mark_completed(self, job_id: str, result: dict[str, Any]) -> None:
+        """Transition job from 'running' to 'completed'.
+
+        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
+        This is idempotent: if job is already 'completed', this is a no-op.
+
+        Raises:
+            RuntimeError: If job is in a terminal state (failed) or not found.
+        """
+        with closing(self._connect()) as conn:
+            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, completed_at = ?, result_json = ?, error = NULL
+                WHERE job_id = ? AND status = ?
+                """,
+                ("completed", _utcnow(), json.dumps(result), job_id, "running"),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                row = conn.execute(
+                    "SELECT status FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError(f"Job {job_id} not found")
+                # If already completed, this is likely a duplicate call - idempotent no-op
+                if row["status"] == "completed":
+                    return
+                raise RuntimeError(
+                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'running'"
+                )
+
+    def _mark_failed(self, job_id: str, error: str) -> None:
+        """Transition job from 'queued', 'running', or 'completed' to 'failed'.
+
+        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
+        This is idempotent: if job is already 'failed', this is a no-op.
+
+        Note: Transition from 'completed' to 'failed' is allowed for webhook failures
+        where the job result was computed but notification could not be delivered.
+        This ensures callers are aware the job did not complete its full lifecycle.
+        The result_json is cleared to maintain consistency with the failed state.
+        """
+        with closing(self._connect()) as conn:
+            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
+            # Allow transition from queued, running, or completed to failed
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, completed_at = ?, result_json = NULL, error = ?
+                WHERE job_id = ? AND status IN ('queued', 'running', 'completed')
+                """,
+                ("failed", _utcnow(), error, job_id),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                # Check if job exists and is already failed (idempotent)
+                row = conn.execute(
+                    "SELECT status FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if row is None:
+                    return  # Job doesn't exist, nothing to fail
+                if row["status"] == "failed":
+                    return  # Already failed - idempotent no-op
+                # Job is in an unexpected state
+                raise RuntimeError(
+                    f"Invalid state transition: job {job_id} is '{row['status']}', cannot transition to 'failed'"
+                )
+
+    def _mark_webhook_failed(self, job_id: str, error: str) -> None:
+        """Transition job from 'completed' to 'failed' while preserving the result.
+
+        This is specifically for webhook failures where the job computation succeeded
+        but the notification failed. The result is preserved so callers can still
+        retrieve it via the API.
+
+        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
+        This is idempotent: if job is already 'failed', this is a no-op.
+        """
+        with closing(self._connect()) as conn:
+            # First, update the job status to failed while preserving result_json
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, error = ?
+                WHERE job_id = ? AND status = 'completed'
+                """,
+                ("failed", error, job_id),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                # Check if job exists and is already failed (idempotent)
+                row = conn.execute(
+                    "SELECT status FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                if row is None:
+                    return  # Job doesn't exist, nothing to fail
+                if row["status"] == "failed":
+                    return  # Already failed - idempotent no-op
+                # Job is in an unexpected state (e.g., still running)
+                raise RuntimeError(
+                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'completed'"
+                )
+
+    def _mark_completed_preserve_result(self, job_id: str, result: dict[str, Any], error: str) -> None:
+        """Try to preserve job result while marking as failed due to lease loss.
+
+        This is called when a job completes but the lease was lost before persistence.
+        We attempt to save the result while marking status as 'failed' so callers
+        can still retrieve the computed result.
+
+        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
+        """
+        result_json = json.dumps(result) if result else None
+        with closing(self._connect()) as conn:
+            # Try to mark as failed while preserving result
+            # Only update if still in 'running' state (lease might have been taken by another process)
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, completed_at = ?, result_json = ?, error = ?
+                WHERE job_id = ? AND status = 'running'
+                """,
+                ("failed", _utcnow(), result_json, error, job_id),
+            )
+            conn.commit()
+            if cursor.rowcount == 0:
+                # Job was already transitioned by another process - nothing to do
+                return

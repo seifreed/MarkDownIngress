@@ -1,0 +1,25 @@
+{
+  "dataset_url": "https://raw.githubusercontent.com/ada-url/url-dataset/refs/heads/main/out.txt",
+  "dataset_file": "artifacts/url_dataset_baseline/out.txt",
+  "run_dir": "artifacts/url_dataset_baseline/run_20260308T080156Z",
+  "requested_limit": 1000,
+  "processed": 1000,
+  "ok": 701,
+  "warnings": 669,
+  "errors": 299,
+  "error_types": {
+    "HTTPStatusError": 291,
+    "ValueError": 4,
+    "UnicodeDecodeError": 1,
+    "ConnectTimeout": 1,
+    "ReadTimeout": 2
+  },
+  "warning_types": {
+    "flags": 657,
+    "hidden_elements": 657,
+    "nonzero_injection_score": 669,
+    "policy_warn": 1
+  },
+  "warnings_file": "artifacts/url_dataset_baseline/run_20260308T080156Z/warnings.jsonl",
+  "errors_file": "artifacts/url_dataset_baseline/run_20260308T080156Z/errors.jsonl"
+}

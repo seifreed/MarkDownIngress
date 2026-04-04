@@ -201,6 +201,23 @@ def test_case_insensitive_domain():
     assert len(result["internal"]) == 1
 
 
+def test_internal_link_classification_ignores_port_and_userinfo():
+    html = """
+    <html>
+    <body>
+        <a href="https://example.com:443/page">Port Variant</a>
+        <a href="https://user:pass@example.com/secret">Userinfo Variant</a>
+    </body>
+    </html>
+    """
+    analyzer = LinkAnalyzer()
+    result = analyzer.analyze(html, "https://example.com")
+
+    assert "https://example.com:443/page" in result["internal"]
+    assert "https://user:pass@example.com/secret" in result["internal"]
+    assert result["external"] == []
+
+
 def test_mixed_links():
     """Test comprehensive mixed link scenario"""
     html = """

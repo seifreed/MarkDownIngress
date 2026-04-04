@@ -1,38 +1,48 @@
-"""
-Ingestion orchestration for MarkDownIngress pipeline.
+"""Ingestion orchestration entrypoint for the MarkDownIngress pipeline."""
 
-This module contains the IngestOrchestrator class that coordinates
-the web-to-markdown ingestion pipeline, separating concerns from the API layer.
-"""
+import time
+from typing import Any, Literal
 
-import copy
-from typing import Literal
-
-from markdown_ingress.config_models import IngestConfig, RenderConfig
-from markdown_ingress.core.cache import Cache
-from markdown_ingress.core.extractor import Extractor
-from markdown_ingress.core.fetcher import Fetcher
+from markdown_ingress.adapters.rendering.playwright_renderer import (
+    PLAYWRIGHT_AVAILABLE,
+    PlaywrightRenderer as Renderer,
+)
+from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.core.document_builder import build_policy_engine, process_fetched_content
 from markdown_ingress.core.hashing import Hasher
+from markdown_ingress.core.ingest_stats import (
+    record_stage_timing,
+    reset_ingest_stats as _reset_ingest_stats,
+    snapshot_ingest_stats,
+)
+from markdown_ingress.core.inflight import (
+    InFlightRegistry,
+    acquire_inflight,
+    await_inflight,
+    clone_cached_document,
+    inflight_active_count,
+    make_request_key,
+    release_inflight,
+)
 from markdown_ingress.core.interfaces import IExtractor, INormalizer
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 from markdown_ingress.core.markdown import MarkdownConverter
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
-from markdown_ingress.core.plugin import PluginLoader
-from markdown_ingress.core.policy import PolicyEngine
 from markdown_ingress.core.scoring import Scorer
-from markdown_ingress.core.security import InjectionPattern, SecurityAnalyzer
-from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.tokens import TokenEstimator
-from markdown_ingress.models import SafeDocument
+from markdown_ingress.models import FetchResult, SafeDocument
 
-# Import renderer only if needed (optional dependency)
-try:
-    from markdown_ingress.core.renderer import Renderer
 
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    PLAYWRIGHT_AVAILABLE = False  # pragma: no cover
-    Renderer = None  # pragma: no cover
+def get_ingest_stats() -> dict[str, Any]:
+    """Return aggregate in-process ingestion stats for observability."""
+    stats = snapshot_ingest_stats()
+    stats["inflight_active"] = inflight_active_count()
+    return stats
+
+
+def reset_ingest_stats() -> None:
+    """Reset aggregate in-process ingestion stats."""
+    _reset_ingest_stats()
 
 
 class IngestOrchestrator:
@@ -53,6 +63,7 @@ class IngestOrchestrator:
         scorer: Scorer | None = None,
         metadata_extractor: MetadataExtractor | None = None,
         link_analyzer: LinkAnalyzer | None = None,
+        inflight_registry: InFlightRegistry | None = None,
     ):
         """
         Initialize orchestrator with optional dependency injection.
@@ -75,13 +86,18 @@ class IngestOrchestrator:
         self.scorer = scorer
         self.metadata_extractor = metadata_extractor
         self.link_analyzer = link_analyzer
+        self._inflight_registry_was_injected = inflight_registry is not None
+        self.inflight_registry = inflight_registry or InFlightRegistry()
+        self._default_inflight_registry = (
+            self.inflight_registry if not self._inflight_registry_was_injected else None
+        )
 
     def execute(
         self,
         url: str,
         config: IngestConfig | None = None,
         # Backward compatibility: accept individual parameters
-        mode: Literal["fast", "render"] | None = None,
+        mode: Literal["fast", "render", "auto"] | None = None,
         strict: bool | None = None,
         model: str | None = None,
         timeout: float | None = None,
@@ -133,6 +149,7 @@ class IngestOrchestrator:
                 use_llm=use_llm if use_llm is not None else False,
             )
         else:
+            config = config.clone()
             # Config provided - override with any explicit parameters
             if mode is not None:
                 config.mode = mode
@@ -158,188 +175,63 @@ class IngestOrchestrator:
                 config.advanced_security = advanced_security
             if use_llm is not None:
                 config.use_llm = use_llm
+            config.validate()
 
-        # Initialize components with defaults if not injected
-        extractor = self.extractor or Extractor(strict=config.strict)
-        md_converter = self.md_converter or MarkdownConverter()
-        hasher = self.hasher or Hasher()
-        token_estimator = self.token_estimator or TokenEstimator(model=config.model)
-        scorer = self.scorer or Scorer()
+        from markdown_ingress.application.use_cases import IngestUseCase
 
-        # Step 0: Cache lookup (if enabled)
-        cache_backend = config.cache
-        cache_key = None
-        if cache_backend is not None:
-            cache_key = Cache.make_key(url=url, mode=config.mode, strict=config.strict)
-            cached = cache_backend.get(cache_key)
-            if cached is not None:
-                cached_copy = copy.deepcopy(cached)
-                cached_copy.metadata["cache_hit"] = True
-                return cached_copy
-
-        # Step 1: Fetch HTML (mode-dependent)
-        if config.mode == "render":
-            if not PLAYWRIGHT_AVAILABLE:
-                raise ImportError(
-                    "Render mode requires Playwright. Install with: "
-                    "pip install 'markdown-ingress[render]' && playwright install"
-                )
-            render_config = RenderConfig(
-                timeout=config.timeout,
-                stealth=config.stealth,
-                disable_http2=config.disable_http2,
-                extreme_mode=config.extreme_mode,
-                screenshot=config.screenshot,
-            )
-            renderer = Renderer(config=render_config)
-            fetch_result = renderer.render_sync(url)
-        else:  # fast or auto mode
-            fetcher = Fetcher(timeout=config.timeout)
-            try:
-                fetch_result = fetcher.fetch_sync(url)
-            except Exception as fast_exc:
-                # Auto-fallback: if fast mode fails and Playwright is available, try render mode
-                if PLAYWRIGHT_AVAILABLE and config.mode == "auto":
-                    import logging
-                    logging.getLogger(__name__).info(
-                        "Fast fetch failed for %s (%s), retrying with Playwright render mode",
-                        url, type(fast_exc).__name__,
-                    )
-                    render_config = RenderConfig(
-                        timeout=config.timeout,
-                        stealth=config.stealth,
-                        disable_http2=config.disable_http2,
-                        extreme_mode=True,  # use all fallback wait strategies on auto-retry
-                        screenshot=config.screenshot,
-                    )
-                    renderer = Renderer(config=render_config)
-                    fetch_result = renderer.render_sync(url)
-                else:
-                    raise
-
-        # Step 2: Extract main content and clean
-        extraction_result = extractor.extract(fetch_result.html, fetch_result.url)
-
-        # Step 3: Extract enriched metadata if requested
-        enriched_metadata = None
-        if config.extract_metadata:
-            metadata_extractor = self.metadata_extractor or MetadataExtractor()
-            enriched_metadata = metadata_extractor.extract(fetch_result.html, fetch_result.url)
-
-        # Step 4: Extract and analyze links if requested
-        links = None
-        if config.extract_links:
-            link_analyzer = self.link_analyzer or LinkAnalyzer()
-            links = link_analyzer.analyze(extraction_result.html, fetch_result.url)
-
-        # Step 5: Convert to Markdown
-        markdown = md_converter.convert(extraction_result.html)
-
-        # Step 6: Analyze security with SecurityEngine
-        security_metadata = {
-            "hidden_elements_count": extraction_result.removed_hidden,
-        }
-
-        security_engine = SecurityEngine(
-            strict=config.strict, advanced_security=config.advanced_security, use_llm=config.use_llm
-        )
-        security_result = security_engine.analyze(extraction_result.text_content, security_metadata)
-
-        # Optional extension: custom/plugin patterns integrated into scoring path.
-        extra_patterns = list(config.custom_patterns)
-        plugins_loaded = 0
-        if config.plugin_dirs:
-            plugin_loader = PluginLoader()
-            for plugin_dir in config.plugin_dirs:
-                plugins_loaded += plugin_loader.load_from_directory(plugin_dir)
-            extra_patterns.extend(plugin_loader.get_all_patterns())
-
-        if extra_patterns:
-            custom_defs = [
-                InjectionPattern(
-                    pattern=pattern,
-                    weight=0.5,
-                    description=f"custom_pattern_{idx + 1}",
-                )
-                for idx, pattern in enumerate(extra_patterns)
-            ]
-
-            class ExtendedSecurityAnalyzer(SecurityAnalyzer):
-                INJECTION_PATTERNS = SecurityAnalyzer.INJECTION_PATTERNS + custom_defs
-
-            extended_analyzer = ExtendedSecurityAnalyzer(strict=config.strict)
-            extended_analysis = extended_analyzer.analyze(
-                extraction_result.text_content,
-                hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
-            )
-            security_result["injection_score"] = max(
-                security_result["injection_score"], extended_analysis.score
-            )
-            security_result["flags"] = list(set(security_result["flags"] + extended_analysis.flags))
-
-        # Step 7: Generate hashes
-        content_hash = hasher.hash_content(markdown)
-        structural_hash = hasher.hash_structural(markdown)
-
-        # Step 8: Estimate tokens
-        token_count = token_estimator.estimate(markdown)
-        token_savings = token_estimator.estimate_savings(fetch_result.html, markdown)
-
-        # Build metadata
-        metadata = {
-            "url": fetch_result.url,
-            "final_url": fetch_result.final_url,
-            "title": extraction_result.title,
-            "fetch_time_ms": fetch_result.timing_ms,
-            "status_code": fetch_result.status_code,
-            "model": config.model,
-            "mode": config.mode,
-            "strict": config.strict,
-            "token_savings": token_savings,
-            "risk_level": scorer.get_risk_level(security_result["injection_score"]),
-            "structural_hash": structural_hash,
-            "advanced_security": config.advanced_security,
-            "security_scan_method": security_result["scan_method"],
-            "custom_patterns_count": len(extra_patterns),
-            "plugins_loaded": plugins_loaded,
-        }
-
-        # Apply policy decision on final score.
-        policy_engine = PolicyEngine.from_name(config.policy_name)
-        policy_action = policy_engine.get_action(security_result["injection_score"])
-        metadata["policy"] = config.policy_name
-        metadata["policy_action"] = policy_action
-        if policy_action == "block":
-            security_result["flags"] = list(set(security_result["flags"] + ["policy_block"]))
-
-        # Add screenshot path if captured
-        screenshot_path = fetch_result.metadata.get("screenshot_path")
-
-        # Build removed elements summary
-        removed_elements = {
-            "tags": extraction_result.removed_tags,
-            "hidden_elements": extraction_result.removed_hidden,
-        }
-
-        # Create SafeDocument
-        document = SafeDocument(
-            markdown=markdown,
-            metadata=metadata,
-            token_estimate=token_count,
-            content_hash=content_hash,
-            injection_score=security_result["injection_score"],
-            flags=security_result["flags"],
-            removed_elements=removed_elements,
-            screenshot_path=screenshot_path,
-            enriched_metadata=enriched_metadata,
-            links=links,
-            nova_score=security_result.get("nova_score"),
-            nova_details=security_result.get("nova_details"),
+        return IngestUseCase(
+            orchestrator=self,
+            playwright_available=PLAYWRIGHT_AVAILABLE,
+            renderer_factory=lambda render_config: Renderer(config=render_config),
+        ).execute(
+            url=url,
+            config=config,
         )
 
-        # Step 9: Cache write-through (if enabled)
-        if cache_backend is not None and cache_key is not None:
-            cache_backend.set(cache_key, document, ttl=config.cache_ttl)
-            document.metadata["cache_hit"] = False
+    @staticmethod
+    def make_request_key(
+        url: str,
+        config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None = None,
+    ) -> str:
+        return make_request_key(url, config, matched_domain_policy)
 
-        return document
+    def acquire_inflight(self, request_key: str):
+        return acquire_inflight(request_key, registry=self.inflight_registry)
+
+    def await_inflight(self, entry, request_key: str):
+        return await_inflight(entry, request_key, registry=self.inflight_registry)
+
+    def release_inflight(self, request_key: str, *, document=None, error=None) -> int:
+        return release_inflight(
+            request_key,
+            document=document,
+            error=error,
+            registry=self.inflight_registry,
+        )
+
+    clone_cached_document = staticmethod(clone_cached_document)
+
+    def timed_stage(self, stage: str, fn):
+        """Execute a stage and record aggregate timing."""
+        started = time.perf_counter()
+        result = fn()
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        record_stage_timing(stage, duration_ms)
+        return result
+
+    def process_fetched_content(
+        self,
+        fetch_result: FetchResult,
+        config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None = None,
+        operational_flags: list[str] | None = None,
+    ) -> SafeDocument:
+        """Transform already-fetched HTML into the final SafeDocument."""
+        return process_fetched_content(
+            self,
+            fetch_result,
+            config,
+            matched_domain_policy=matched_domain_policy,
+            operational_flags=operational_flags,
+        )

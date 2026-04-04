@@ -8,9 +8,12 @@ These interfaces define contracts for core components, making it easier to:
 - Get better IDE support
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 from markdown_ingress.models import ExtractionResult, FetchResult, SafeDocument
+
+if TYPE_CHECKING:
+    from markdown_ingress.adapters.jobs.sqlite_job_queue import JobRecord
 
 
 class IFetcher(Protocol):
@@ -197,4 +200,53 @@ class ICacheBackend(Protocol):
         Returns:
             True if key exists and is not expired
         """
+        ...  # pragma: no cover
+
+
+class IWebhookNotifier(Protocol):
+    """Protocol for webhook delivery adapters."""
+
+    def notify(self, webhook_url: str, payload: dict[str, Any]) -> None:
+        """Deliver a webhook payload."""
+        ...  # pragma: no cover
+
+
+class IJobQueue(Protocol):
+    """Protocol for persistent or in-memory job queue implementations."""
+
+    def submit(
+        self,
+        task: Callable[[], dict[str, Any]],
+        webhook_url: str | None = None,
+        start_immediately: bool = False,
+    ) -> "JobRecord":
+        """Submit a job for background execution.
+
+        Args:
+            task: Callable that returns a result dictionary.
+            webhook_url: Optional URL to notify on completion.
+            start_immediately: If True, start the job immediately.
+
+        Returns:
+            JobRecord with job_id and status.
+        """
+        ...  # pragma: no cover
+
+    def get(self, job_id: str) -> "JobRecord | None":
+        """Retrieve a job record by id.
+
+        Args:
+            job_id: The unique job identifier.
+
+        Returns:
+            JobRecord if found, None otherwise.
+        """
+        ...  # pragma: no cover
+
+    def cleanup_expired(self) -> None:
+        """Remove expired jobs."""
+        ...  # pragma: no cover
+
+    def pending_count(self) -> int:
+        """Return count of queued/running jobs."""
         ...  # pragma: no cover

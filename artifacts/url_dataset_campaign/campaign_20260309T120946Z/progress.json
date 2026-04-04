@@ -1,0 +1,20 @@
+{
+  "run_dir": "artifacts/url_dataset_campaign/campaign_20260309T120946Z",
+  "timestamp": "2026-03-09T12:09:48.659531+00:00",
+  "current_scenario": "fast_default",
+  "completed_in_scenario": 12,
+  "total_in_scenario": 12,
+  "campaign_counts": {
+    "processed": 12,
+    "ok": 12,
+    "errors": 0,
+    "warnings": 12
+  },
+  "campaign_error_types": {},
+  "campaign_warning_types": {
+    "flags": 12,
+    "hidden_elements": 12,
+    "nonzero_injection_score": 12
+  },
+  "dropped_url_types": {}
+}

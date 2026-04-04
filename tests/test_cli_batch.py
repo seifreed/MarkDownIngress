@@ -6,7 +6,11 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import pytest
 
 
 def _cli_cmd(*args: str) -> list[str]:
@@ -14,18 +18,44 @@ def _cli_cmd(*args: str) -> list[str]:
     return [sys.executable, "-m", "markdown_ingress.cli", *args]
 
 
+@pytest.fixture(scope="module")
+def local_servers():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            html = b"<html><body><h1>CLI Test</h1><p>Local content.</p></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def log_message(self, format, *args):
+            return
+
+    servers = []
+    urls = []
+    for _ in range(3):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        servers.append(server)
+        urls.append(f"http://127.0.0.1:{server.server_address[1]}")
+
+    yield urls
+
+    for server in servers:
+        server.shutdown()
+
+
 class TestCLIBatch:
     """Test CLI batch processing"""
 
-    def test_batch_command_basic(self):
+    def test_batch_command_basic(self, local_servers):
         """Batch command processes multiple URLs"""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create URLs file
             urls_file = Path(tmpdir) / "urls.txt"
-            urls_file.write_text("""
-http://example.com
-http://example.org
-""")
+            urls_file.write_text(f"{local_servers[0]}\n{local_servers[1]}\n")
 
             output_dir = Path(tmpdir) / "output"
 
@@ -43,11 +73,11 @@ http://example.org
             md_files = list(output_dir.glob("*.md"))
             assert len(md_files) == 2
 
-    def test_batch_command_json_output(self):
+    def test_batch_command_json_output(self, local_servers):
         """Batch command can output JSON summary"""
         with tempfile.TemporaryDirectory() as tmpdir:
             urls_file = Path(tmpdir) / "urls.txt"
-            urls_file.write_text("http://example.com\n")
+            urls_file.write_text(f"{local_servers[0]}\n")
 
             output_file = Path(tmpdir) / "results.json"
 
@@ -66,16 +96,16 @@ http://example.org
             assert "results" in data
             assert data["summary"]["total"] == 1
 
-    def test_batch_with_comments_and_empty_lines(self):
+    def test_batch_with_comments_and_empty_lines(self, local_servers):
         """Batch command ignores comments and empty lines"""
         with tempfile.TemporaryDirectory() as tmpdir:
             urls_file = Path(tmpdir) / "urls.txt"
-            urls_file.write_text("""
+            urls_file.write_text(f"""
 # This is a comment
-http://example.com
+{local_servers[0]}
 
 # Another comment
-http://example.org
+{local_servers[1]}
 
 """)
 
@@ -91,15 +121,11 @@ http://example.org
             md_files = list(output_dir.glob("*.md"))
             assert len(md_files) == 2
 
-    def test_batch_concurrent_limit(self):
+    def test_batch_concurrent_limit(self, local_servers):
         """Batch command respects concurrent limit"""
         with tempfile.TemporaryDirectory() as tmpdir:
             urls_file = Path(tmpdir) / "urls.txt"
-            urls_file.write_text("""
-http://example.com
-http://example.org
-http://example.net
-""")
+            urls_file.write_text(f"{local_servers[0]}\n{local_servers[1]}\n{local_servers[2]}\n")
 
             output_file = Path(tmpdir) / "results.json"
 
@@ -125,10 +151,10 @@ http://example.net
 class TestCLIIngest:
     """Test CLI ingest command"""
 
-    def test_ingest_subcommand(self):
+    def test_ingest_subcommand(self, local_servers):
         """Ingest subcommand works"""
         result = subprocess.run(
-            _cli_cmd("ingest", "http://example.com", "--no-content"),
+            _cli_cmd("ingest", local_servers[0], "--no-content"),
             capture_output=True,
             text=True,
         )
@@ -137,10 +163,10 @@ class TestCLIIngest:
         assert "MarkDownIngress" in result.stdout
         assert "Tokens:" in result.stdout
 
-    def test_ingest_json_output(self):
+    def test_ingest_json_output(self, local_servers):
         """Ingest can output JSON"""
         result = subprocess.run(
-            _cli_cmd("ingest", "http://example.com", "--json"),
+            _cli_cmd("ingest", local_servers[0], "--json"),
             capture_output=True,
             text=True,
         )
@@ -151,7 +177,7 @@ class TestCLIIngest:
         assert "token_estimate" in data
         assert "injection_score" in data
 
-    def test_ingest_save_file(self):
+    def test_ingest_save_file(self, local_servers):
         """Ingest can save to file"""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_file = Path(tmpdir) / "output.md"
@@ -159,7 +185,7 @@ class TestCLIIngest:
             result = subprocess.run(
                 _cli_cmd(
                     "ingest",
-                    "http://example.com",
+                    local_servers[0],
                     "--save",
                     str(output_file),
                     "--no-content",
@@ -173,10 +199,10 @@ class TestCLIIngest:
             content = output_file.read_text()
             assert len(content) > 0
 
-    def test_legacy_url_mode(self):
+    def test_legacy_url_mode(self, local_servers):
         """Legacy mode works via ingest subcommand"""
         result = subprocess.run(
-            _cli_cmd("ingest", "http://example.com", "--no-content"),
+            _cli_cmd("ingest", local_servers[0], "--no-content"),
             capture_output=True,
             text=True,
         )

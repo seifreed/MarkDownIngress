@@ -3,10 +3,12 @@ Plugin system for extending MarkDownIngress with custom patterns and extractors
 """
 
 import importlib
+import importlib.util
 import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 
@@ -119,7 +121,9 @@ class PluginLoader:
                 # Import module
                 module_name = py_file.stem
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
-                module = importlib.util.module_from_spec(spec)
+                if spec is None or spec.loader is None:
+                    continue
+                module: ModuleType = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
 
                 # Find Plugin subclasses
@@ -130,9 +134,11 @@ class PluginLoader:
                         self.load_plugin(plugin_instance)
                         loaded_count += 1
 
-            except Exception:
-                # Skip files that fail to import
-                pass
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Failed to load plugin from %s: %s", py_file, exc
+                )
 
         return loaded_count
 

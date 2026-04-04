@@ -1,0 +1,73 @@
+{
+  "scenario": "fast_default",
+  "description": "Fast mode, strict policy, lean metadata disabled for throughput baseline.",
+  "assigned_urls": 19620,
+  "config": {
+    "mode": "fast",
+    "strict": true,
+    "model": "gpt-4",
+    "timeout": 5.0,
+    "auto_render_threshold": 50,
+    "stealth": false,
+    "disable_http2": false,
+    "extreme_mode": false,
+    "screenshot": null,
+    "extract_metadata": false,
+    "extract_links": false,
+    "advanced_security": false,
+    "use_llm": false,
+    "cache": null,
+    "cache_ttl": null,
+    "policy_name": "normal",
+    "custom_patterns": [],
+    "plugin_dirs": [],
+    "output_profile": "default",
+    "extract_blocks": false,
+    "chunking_strategy": "none",
+    "chunk_size": 1200,
+    "chunk_overlap": 120,
+    "detect_language": true,
+    "normalize_multilingual": true,
+    "include_security_explanation": true,
+    "include_observability": true,
+    "domain_policies": [],
+    "domain_request_interval": 0.0,
+    "circuit_breaker_threshold": 25,
+    "circuit_breaker_open_seconds": 5.0,
+    "render_cost_budget": null,
+    "output_formats": [
+      "markdown"
+    ]
+  },
+  "counts": {
+    "processed": 19620,
+    "ok": 19097,
+    "errors": 523,
+    "warnings": 15906
+  },
+  "warning_types": {
+    "flags": 15470,
+    "hidden_elements": 15445,
+    "nonzero_injection_score": 15906,
+    "policy_warn": 49,
+    "policy_block": 1
+  },
+  "error_types": {
+    "HTTPStatusError": 106,
+    "forbidden": 111,
+    "ValueError": 3,
+    "timeout": 10,
+    "rate_limited": 265,
+    "ssl": 1,
+    "unauthorized": 4,
+    "ParserError": 1,
+    "RemoteProtocolError": 1,
+    "local_guardrail_circuit_breaker": 2,
+    "not_found": 18,
+    "server_error": 1
+  },
+  "resumed_completed_indexes": 0,
+  "scenario_concurrency": 32,
+  "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T155925Z/fast_default/warnings.jsonl",
+  "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T155925Z/fast_default/errors.jsonl"
+}

@@ -92,6 +92,16 @@ def test_custom_patterns():
     assert any(p.description == "Custom attack pattern" for p in patterns)
 
 
+def test_policy_allows_safe_repeated_custom_group():
+    custom_pattern = InjectionPattern(
+        pattern=r"(abc)+", weight=0.4, description="Safe repeated group"
+    )
+
+    policy = Policy(custom_patterns=[custom_pattern])
+
+    assert policy.custom_patterns[0].pattern == r"(abc)+"
+
+
 def test_policy_to_dict():
     """Test exporting policy as dictionary"""
     engine = PolicyEngine.from_name("strict")

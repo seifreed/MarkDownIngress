@@ -1,0 +1,65 @@
+{
+  "scenario": "fast_default",
+  "description": "Fast mode, strict policy, lean metadata disabled for throughput baseline.",
+  "assigned_urls": 58,
+  "config": {
+    "mode": "fast",
+    "strict": true,
+    "model": "gpt-4",
+    "timeout": 5.0,
+    "auto_render_threshold": 50,
+    "stealth": false,
+    "disable_http2": false,
+    "extreme_mode": false,
+    "screenshot": null,
+    "extract_metadata": false,
+    "extract_links": false,
+    "advanced_security": false,
+    "use_llm": false,
+    "cache": null,
+    "cache_ttl": null,
+    "policy_name": "normal",
+    "custom_patterns": [],
+    "plugin_dirs": [],
+    "output_profile": "default",
+    "extract_blocks": false,
+    "chunking_strategy": "none",
+    "chunk_size": 1200,
+    "chunk_overlap": 120,
+    "detect_language": true,
+    "normalize_multilingual": true,
+    "include_security_explanation": true,
+    "include_observability": true,
+    "domain_policies": [],
+    "domain_request_interval": 0.0,
+    "circuit_breaker_threshold": 25,
+    "circuit_breaker_open_seconds": 5.0,
+    "render_cost_budget": null,
+    "output_formats": [
+      "markdown"
+    ]
+  },
+  "counts": {
+    "processed": 58,
+    "ok": 50,
+    "errors": 8,
+    "warnings": 49
+  },
+  "warning_types": {
+    "flags": 47,
+    "hidden_elements": 47,
+    "nonzero_injection_score": 49,
+    "policy_warn": 1
+  },
+  "error_types": {
+    "rate_limited": 1,
+    "forbidden": 3,
+    "dataset_non_html": 2,
+    "dataset_invalid_host": 1,
+    "not_found": 1
+  },
+  "resumed_completed_indexes": 0,
+  "scenario_concurrency": 16,
+  "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T134659Z/fast_default/warnings.jsonl",
+  "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T134659Z/fast_default/errors.jsonl"
+}

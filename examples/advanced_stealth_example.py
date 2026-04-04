@@ -280,13 +280,9 @@ def show_config_info():
     print(f"  Lines: {STEALTH_JS_INJECTION.count(chr(10))} lines")
 
     print("\nDefault Configuration:")
-    print(
-        f"  User Agents Available: {len(ADVANCED_USER_AGENTS) if 'ADVANCED_USER_AGENTS' in dir() else 'N/A'}"
-    )
-    print(
-        f"  Viewport Options: {len(ADVANCED_VIEWPORT_SIZES) if 'ADVANCED_VIEWPORT_SIZES' in dir() else 'N/A'}"
-    )
-    print(f"  Timezone Options: {len(TIMEZONES) if 'TIMEZONES' in dir() else 'N/A'}")
+    print(f"  Default User Agent: {config.user_agent}")
+    print(f"  Default Viewport: {config.viewport_width}x{config.viewport_height}")
+    print(f"  Default Timezone: {config.timezone}")
 
 
 async def main():

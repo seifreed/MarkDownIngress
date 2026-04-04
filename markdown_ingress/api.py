@@ -1,18 +1,32 @@
-"""
-Main API for MarkDownIngress
-"""
+"""Main public API for MarkDownIngress."""
 
-import time
+from collections.abc import Callable, Sequence
 from typing import Literal
 
-from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.core.orchestrator import PLAYWRIGHT_AVAILABLE, IngestOrchestrator
+from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
+from markdown_ingress.adapters.extractors.comparison import compare_extractors
+from markdown_ingress.api_facade import (
+    UNSET,
+    build_runtime_kwargs,
+    generate_security_report_impl,
+    ingest_async_impl,
+    ingest_impl,
+    ingest_many_async_impl,
+    ingest_many_sync_impl,
+    ingest_resolved,
+    retry_ingest_impl,
+)
+from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
+from markdown_ingress.shared_results import BatchResult
+
+_ingest_resolved = ingest_resolved
 
 
 def ingest(
     url: str,
-    config: IngestConfig | None = None,
+    config: IngestConfig | FileConfig | None = None,
     # Backward compatibility: accept individual parameters
     mode: Literal["fast", "render", "auto"] | None = None,
     strict: bool | None = None,
@@ -22,16 +36,27 @@ def ingest(
     stealth: bool | None = None,
     disable_http2: bool | None = None,
     extreme_mode: bool | None = None,
-    screenshot: bool | str | None = None,
+    screenshot=UNSET,
     extract_metadata: bool | None = None,
     extract_links: bool | None = None,
     advanced_security: bool | None = None,
     use_llm: bool | None = None,
-    cache: object | None = None,
-    cache_ttl: int | None = None,
+    cache=UNSET,
+    cache_ttl=UNSET,
     policy_name: str | None = None,
     custom_patterns: list[str] | None = None,
     plugin_dirs: list[str] | None = None,
+    output_profile: str | None = None,
+    extract_blocks: bool | None = None,
+    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    detect_language: bool | None = None,
+    normalize_multilingual: bool | None = None,
+    include_security_explanation: bool | None = None,
+    include_observability: bool | None = None,
+    render_cost_budget: int | None = None,
+    domain_policies: list[dict] | list[DomainPolicy] | None = None,
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -88,110 +113,280 @@ def ingest(
         >>> config = IngestConfig(mode="auto", stealth=True, timeout=60.0)
         >>> doc = ingest("https://example.com", config=config)
     """
-    # If no config provided, create from individual parameters or defaults
-    if config is None:
-        config = IngestConfig(
-            mode=mode if mode is not None else "auto",
-            strict=strict if strict is not None else True,
-            model=model if model is not None else "gpt-4",
-            timeout=timeout if timeout is not None else 30.0,
-            auto_render_threshold=auto_render_threshold if auto_render_threshold is not None else 50,
-            stealth=stealth if stealth is not None else False,
-            disable_http2=disable_http2 if disable_http2 is not None else False,
-            extreme_mode=extreme_mode if extreme_mode is not None else False,
+    return ingest_impl(
+        url,
+        playwright_available=PLAYWRIGHT_AVAILABLE,
+        **build_runtime_kwargs(
+            config=config,
+            mode=mode,
+            strict=strict,
+            model=model,
+            timeout=timeout,
+            auto_render_threshold=auto_render_threshold,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
             screenshot=screenshot,
-            extract_metadata=extract_metadata if extract_metadata is not None else True,
-            extract_links=extract_links if extract_links is not None else True,
-            advanced_security=advanced_security if advanced_security is not None else False,
-            use_llm=use_llm if use_llm is not None else False,
+            extract_metadata=extract_metadata,
+            extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
             cache=cache,
             cache_ttl=cache_ttl,
-            policy_name=policy_name if policy_name is not None else "normal",
-            custom_patterns=custom_patterns or [],
-            plugin_dirs=plugin_dirs or [],
-        )
-    else:
-        # Config provided - override with any explicit parameters
-        if mode is not None:
-            config.mode = mode
-        if strict is not None:
-            config.strict = strict
-        if model is not None:
-            config.model = model
-        if timeout is not None:
-            config.timeout = timeout
-        if auto_render_threshold is not None:
-            config.auto_render_threshold = auto_render_threshold
-        if stealth is not None:
-            config.stealth = stealth
-        if disable_http2 is not None:
-            config.disable_http2 = disable_http2
-        if extreme_mode is not None:
-            config.extreme_mode = extreme_mode
-        if screenshot is not None:
-            config.screenshot = screenshot
-        if extract_metadata is not None:
-            config.extract_metadata = extract_metadata
-        if extract_links is not None:
-            config.extract_links = extract_links
-        if advanced_security is not None:
-            config.advanced_security = advanced_security
-        if use_llm is not None:
-            config.use_llm = use_llm
-        if cache is not None:
-            config.cache = cache
-        if cache_ttl is not None:
-            config.cache_ttl = cache_ttl
-        if policy_name is not None:
-            config.policy_name = policy_name
-        if custom_patterns is not None:
-            config.custom_patterns = custom_patterns
-        if plugin_dirs is not None:
-            config.plugin_dirs = plugin_dirs
+            policy_name=policy_name,
+            custom_patterns=custom_patterns,
+            plugin_dirs=plugin_dirs,
+            output_profile=output_profile,
+            extract_blocks=extract_blocks,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+            include_security_explanation=include_security_explanation,
+            include_observability=include_observability,
+            render_cost_budget=render_cost_budget,
+            domain_policies=domain_policies,
+        ),
+    )
 
-    # Auto mode: try fast first, fallback to render if needed
-    if config.mode == "auto":
-        try:
-            # Try fast mode first
-            doc = _ingest_with_config(url, IngestConfig(**{**config.__dict__, "mode": "fast"}))
 
-            # Check if we got meaningful content
-            if doc.token_estimate < config.auto_render_threshold:
-                # Content is minimal, likely a SPA - try render mode
-                if PLAYWRIGHT_AVAILABLE:
-                    doc_render = _ingest_with_config(url, IngestConfig(**{**config.__dict__, "mode": "render"}))
-                    # Use render result if it has more content
-                    if doc_render.token_estimate > doc.token_estimate:
-                        doc_render.metadata["auto_mode_used"] = "render"
-                        doc_render.metadata["fast_mode_tokens"] = doc.token_estimate
-                        return doc_render
+async def ingest_async(
+    url: str,
+    config: IngestConfig | FileConfig | None = None,
+    mode: Literal["fast", "render", "auto"] | None = None,
+    strict: bool | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    auto_render_threshold: int | None = None,
+    stealth: bool | None = None,
+    disable_http2: bool | None = None,
+    extreme_mode: bool | None = None,
+    screenshot=UNSET,
+    extract_metadata: bool | None = None,
+    extract_links: bool | None = None,
+    advanced_security: bool | None = None,
+    use_llm: bool | None = None,
+    cache=UNSET,
+    cache_ttl=UNSET,
+    policy_name: str | None = None,
+    custom_patterns: list[str] | None = None,
+    plugin_dirs: list[str] | None = None,
+    output_profile: str | None = None,
+    extract_blocks: bool | None = None,
+    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    detect_language: bool | None = None,
+    normalize_multilingual: bool | None = None,
+    include_security_explanation: bool | None = None,
+    include_observability: bool | None = None,
+    render_cost_budget: int | None = None,
+    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+) -> SafeDocument:
+    """Async wrapper around ingest() for use inside asyncio applications.
 
-            # Fast mode result is good enough
-            doc.metadata["auto_mode_used"] = "fast"
-            return doc
+    Cancelling the returned task interrupts the await, but does not guarantee
+    abortion of sync ingestion work already dispatched in a background thread.
+    """
+    return await ingest_async_impl(
+        url,
+        playwright_available=PLAYWRIGHT_AVAILABLE,
+        **build_runtime_kwargs(
+            config=config,
+            mode=mode,
+            strict=strict,
+            model=model,
+            timeout=timeout,
+            auto_render_threshold=auto_render_threshold,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
+            screenshot=screenshot,
+            extract_metadata=extract_metadata,
+            extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
+            cache=cache,
+            cache_ttl=cache_ttl,
+            policy_name=policy_name,
+            custom_patterns=custom_patterns,
+            plugin_dirs=plugin_dirs,
+            output_profile=output_profile,
+            extract_blocks=extract_blocks,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+            include_security_explanation=include_security_explanation,
+            include_observability=include_observability,
+            render_cost_budget=render_cost_budget,
+            domain_policies=domain_policies,
+        ),
+    )
 
-        except Exception as e:
-            # If fast fails, try render as fallback
-            if PLAYWRIGHT_AVAILABLE:
-                doc = _ingest_with_config(url, IngestConfig(**{**config.__dict__, "mode": "render"}))
-                doc.metadata["auto_mode_used"] = "render"
-                doc.metadata["auto_mode_reason"] = "fast_failed"
-                return doc
-            else:
-                raise e
 
-    # Regular mode (fast or render explicitly specified)
-    return _ingest_with_config(url, config)
+async def ingest_many_async(
+    urls: Sequence[str],
+    config: IngestConfig | FileConfig | None = None,
+    mode: Literal["fast", "render", "auto"] | None = None,
+    strict: bool | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    auto_render_threshold: int | None = None,
+    stealth: bool | None = None,
+    disable_http2: bool | None = None,
+    extreme_mode: bool | None = None,
+    screenshot=UNSET,
+    extract_metadata: bool | None = None,
+    extract_links: bool | None = None,
+    advanced_security: bool | None = None,
+    use_llm: bool | None = None,
+    cache=UNSET,
+    cache_ttl=UNSET,
+    policy_name: str | None = None,
+    custom_patterns: list[str] | None = None,
+    plugin_dirs: list[str] | None = None,
+    output_profile: str | None = None,
+    extract_blocks: bool | None = None,
+    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    detect_language: bool | None = None,
+    normalize_multilingual: bool | None = None,
+    include_security_explanation: bool | None = None,
+    include_observability: bool | None = None,
+    render_cost_budget: int | None = None,
+    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    max_concurrent: int = 5,
+    on_progress: Callable[[int, int, str], None] | None = None,
+) -> BatchResult:
+    """
+    Ingest multiple URLs concurrently using the same public contract as ingest().
+
+    Returns a BatchResult that preserves the input order in `documents`.
+    Failed URLs leave `None` in the matching position and populate `errors`.
+    """
+    return await ingest_many_async_impl(
+        urls,
+        playwright_available=PLAYWRIGHT_AVAILABLE,
+        max_concurrent=max_concurrent,
+        on_progress=on_progress,
+        **build_runtime_kwargs(
+            config=config,
+            mode=mode,
+            strict=strict,
+            model=model,
+            timeout=timeout,
+            auto_render_threshold=auto_render_threshold,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
+            screenshot=screenshot,
+            extract_metadata=extract_metadata,
+            extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
+            cache=cache,
+            cache_ttl=cache_ttl,
+            policy_name=policy_name,
+            custom_patterns=custom_patterns,
+            plugin_dirs=plugin_dirs,
+            output_profile=output_profile,
+            extract_blocks=extract_blocks,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+            include_security_explanation=include_security_explanation,
+            include_observability=include_observability,
+            render_cost_budget=render_cost_budget,
+            domain_policies=domain_policies,
+        ),
+    )
+
+
+def ingest_many(
+    urls: Sequence[str],
+    config: IngestConfig | FileConfig | None = None,
+    mode: Literal["fast", "render", "auto"] | None = None,
+    strict: bool | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    auto_render_threshold: int | None = None,
+    stealth: bool | None = None,
+    disable_http2: bool | None = None,
+    extreme_mode: bool | None = None,
+    screenshot=UNSET,
+    extract_metadata: bool | None = None,
+    extract_links: bool | None = None,
+    advanced_security: bool | None = None,
+    use_llm: bool | None = None,
+    cache=UNSET,
+    cache_ttl=UNSET,
+    policy_name: str | None = None,
+    custom_patterns: list[str] | None = None,
+    plugin_dirs: list[str] | None = None,
+    output_profile: str | None = None,
+    extract_blocks: bool | None = None,
+    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    detect_language: bool | None = None,
+    normalize_multilingual: bool | None = None,
+    include_security_explanation: bool | None = None,
+    include_observability: bool | None = None,
+    render_cost_budget: int | None = None,
+    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    max_concurrent: int = 5,
+    on_progress: Callable[[int, int, str], None] | None = None,
+) -> BatchResult:
+    """Synchronous wrapper for concurrent batch ingestion from normal Python code."""
+    return ingest_many_sync_impl(
+        urls,
+        playwright_available=PLAYWRIGHT_AVAILABLE,
+        max_concurrent=max_concurrent,
+        on_progress=on_progress,
+        **build_runtime_kwargs(
+            config=config,
+            mode=mode,
+            strict=strict,
+            model=model,
+            timeout=timeout,
+            auto_render_threshold=auto_render_threshold,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
+            screenshot=screenshot,
+            extract_metadata=extract_metadata,
+            extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
+            cache=cache,
+            cache_ttl=cache_ttl,
+            policy_name=policy_name,
+            custom_patterns=custom_patterns,
+            plugin_dirs=plugin_dirs,
+            output_profile=output_profile,
+            extract_blocks=extract_blocks,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+            include_security_explanation=include_security_explanation,
+            include_observability=include_observability,
+            render_cost_budget=render_cost_budget,
+            domain_policies=domain_policies,
+        ),
+    )
 
 
 def _ingest_with_config(url: str, config: IngestConfig) -> SafeDocument:
-    """
-    Internal function to perform ingestion with a config object.
-    """
-    # Create orchestrator and execute pipeline
-    orchestrator = IngestOrchestrator()
-
-    return orchestrator.execute(url=url, config=config)
+    """Internal function to perform ingestion with a config object."""
+    return ingest_resolved(url, config, playwright_available=PLAYWRIGHT_AVAILABLE)
 
 
 def retry_ingest(
@@ -202,6 +397,7 @@ def retry_ingest(
     max_retries: int = 3,
     enable_stealth: bool = True,
     initial_timeout: float = 60.0,
+    max_timeout: float | None = None,
 ) -> SafeDocument:
     """
     Ingest with automatic retry logic and timeout escalation.
@@ -218,6 +414,7 @@ def retry_ingest(
         max_retries: Maximum retry attempts (default: 3)
         enable_stealth: Enable stealth mode on retries (default: True)
         initial_timeout: Initial timeout in seconds (default: 60.0)
+        max_timeout: Optional ceiling applied to escalated retry timeouts
 
     Returns:
         SafeDocument with markdown content, metadata, and security analysis
@@ -245,95 +442,50 @@ def retry_ingest(
         >>> print(f"Attempts: {doc.metadata['retry_attempts']}")
         >>> print(f"Final timeout: {doc.metadata['final_timeout']}s")
     """
-    # Validate parameters
-    if max_retries < 1:
-        raise ValueError("max_retries must be >= 1")
-
-    last_exception: Exception | None = None
-
-    for attempt in range(max_retries):
-        try:
-            # Calculate escalating timeout: 60s, 90s, 120s, 150s...
-            timeout = initial_timeout + (attempt * 30.0)
-
-            # Enable stealth mode on retry attempts (attempt >= 1)
-            use_stealth = enable_stealth and (attempt >= 1)
-
-            # Enable extreme mode on last attempt for ultimate patience
-            use_extreme = attempt == max_retries - 1
-
-            # Log retry attempt
-            if attempt > 0:
-                print(f"[MarkDownIngress] Retry attempt {attempt + 1}/{max_retries} for {url}")
-                print(
-                    f"[MarkDownIngress] Timeout: {timeout}s, Stealth: {use_stealth}, Extreme: {use_extreme}"
-                )
-
-            # For stealth mode, configure renderer with stealth settings
-            doc = ingest(
-                url=url,
-                mode=mode,
-                strict=strict,
-                model=model,
-                timeout=timeout,
-                stealth=use_stealth,
-                extreme_mode=use_extreme,
-            )
-
-            # Success! Add retry metadata
-            doc.metadata["retry_attempts"] = attempt + 1
-            doc.metadata["retry_enabled"] = use_stealth
-            doc.metadata["extreme_mode_enabled"] = use_extreme
-            doc.metadata["final_timeout"] = timeout
-
-            if attempt > 0:
-                print(f"[MarkDownIngress] Success on attempt {attempt + 1}")
-
-            return doc
-
-        except Exception as e:
-            last_exception = e
-            error_type = type(e).__name__
-
-            # Check if this is a retryable error
-            retryable_errors = (
-                "TimeoutError",
-                "Timeout",
-                "ConnectTimeout",
-                "ReadTimeout",
-                "HTTPError",
-                "ConnectionError",
-                "ConnectError",  # SSL/connection errors
-                "TargetClosedError",  # Playwright error
-            )
-
-            is_retryable = any(err in error_type for err in retryable_errors)
-
-            if attempt < max_retries - 1:
-                if is_retryable:
-                    wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
-                    print(f"[MarkDownIngress] {error_type} on attempt {attempt + 1}: {str(e)}")
-                    print(f"[MarkDownIngress] Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                else:
-                    # Non-retryable error, fail fast
-                    print(f"[MarkDownIngress] Non-retryable error {error_type}: {str(e)}")
-                    raise e
-            else:
-                # Last attempt failed
-                print(f"[MarkDownIngress] All {max_retries} attempts failed for {url}")
-                print(f"[MarkDownIngress] Final error: {error_type}: {str(e)}")
-
-    # If we get here, all retries failed
-    raise last_exception
+    return retry_ingest_impl(
+        url=url,
+        mode=mode,
+        strict=strict,
+        model=model,
+        max_retries=max_retries,
+        enable_stealth=enable_stealth,
+        initial_timeout=initial_timeout,
+        max_timeout=max_timeout,
+    )
 
 
 def generate_security_report(
     url: str,
-    mode: Literal["fast", "render", "auto"] = "auto",
-    strict: bool = True,
-    model: str = "gpt-4",
-    timeout: float = 30.0,
+    config: IngestConfig | FileConfig | None = None,
+    mode: Literal["fast", "render", "auto"] | None = None,
+    strict: bool | None = None,
+    model: str | None = None,
+    timeout: float | None = None,
+    auto_render_threshold: int | None = None,
+    stealth: bool | None = None,
+    disable_http2: bool | None = None,
+    extreme_mode: bool | None = None,
+    screenshot=UNSET,
+    extract_metadata: bool | None = None,
+    extract_links: bool | None = None,
+    advanced_security: bool | None = None,
+    use_llm: bool | None = None,
+    cache=UNSET,
+    cache_ttl=UNSET,
+    policy_name: str | None = None,
+    custom_patterns: list[str] | None = None,
+    plugin_dirs: list[str] | None = None,
+    output_profile: str | None = None,
+    extract_blocks: bool | None = None,
+    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    detect_language: bool | None = None,
+    normalize_multilingual: bool | None = None,
+    include_security_explanation: bool | None = None,
+    include_observability: bool | None = None,
+    render_cost_budget: int | None = None,
+    domain_policies: list[dict] | list[DomainPolicy] | None = None,
 ) -> SecurityReport:
     """
     Generate comprehensive security report for a URL.
@@ -351,29 +503,38 @@ def generate_security_report(
     Returns:
         SecurityReport with detailed security analysis
     """
-    # Get safe document first
-    doc = ingest(url=url, mode=mode, strict=strict, model=model, timeout=timeout)
-
-    # Calculate additional metrics
-    original_size = len(doc.metadata.get("url", "").encode("utf-8"))
-    cleaned_size = len(doc.markdown.encode("utf-8"))
-
-    # Build comprehensive report
-    report = SecurityReport(
-        injection_score=doc.injection_score,
-        risk_level=doc.metadata.get("risk_level", "UNKNOWN"),
-        flags=doc.flags,
-        hidden_content_detected="hidden_content" in doc.flags,
-        hidden_elements_count=doc.removed_elements.get("hidden_elements", 0),
-        url=doc.metadata.get("url", ""),
-        title=doc.metadata.get("title", ""),
-        token_estimate=doc.token_estimate,
-        token_reduction_percent=doc.metadata.get("token_savings", {}).get("percentage_saved", 0.0),
-        original_size_bytes=original_size,
-        cleaned_size_bytes=cleaned_size,
-        content_hash=doc.content_hash,
-        structural_hash=doc.metadata.get("structural_hash", ""),
-        removed_elements=doc.removed_elements,
+    return generate_security_report_impl(
+        url=url,
+        **build_runtime_kwargs(
+            config=config,
+            mode=mode,
+            strict=strict,
+            model=model,
+            timeout=timeout,
+            auto_render_threshold=auto_render_threshold,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
+            screenshot=screenshot,
+            extract_metadata=extract_metadata,
+            extract_links=extract_links,
+            advanced_security=advanced_security,
+            use_llm=use_llm,
+            cache=cache,
+            cache_ttl=cache_ttl,
+            policy_name=policy_name,
+            custom_patterns=custom_patterns,
+            plugin_dirs=plugin_dirs,
+            output_profile=output_profile,
+            extract_blocks=extract_blocks,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            detect_language=detect_language,
+            normalize_multilingual=normalize_multilingual,
+            include_security_explanation=include_security_explanation,
+            include_observability=include_observability,
+            render_cost_budget=render_cost_budget,
+            domain_policies=domain_policies,
+        ),
     )
-
-    return report

@@ -248,6 +248,56 @@ def test_extract_schema_org_author():
     assert metadata["author"] == "Schema Author"
 
 
+def test_extract_jsonld_author_and_date_from_root_array():
+    html = """
+    <html>
+    <head>
+        <script type="application/ld+json">
+        [
+            {
+                "@context": "https://schema.org",
+                "@type": "Article",
+                "author": {"name": "Array Author"},
+                "datePublished": "2024-01-15"
+            }
+        ]
+        </script>
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com")
+    assert metadata["author"] == "Array Author"
+    assert metadata["published_date"] == "2024-01-15"
+
+
+def test_extract_jsonld_author_and_modified_date_from_graph():
+    html = """
+    <html>
+    <head>
+        <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "Article",
+                    "author": {"name": "Graph Author"},
+                    "dateModified": "2024-01-20"
+                }
+            ]
+        }
+        </script>
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com")
+    assert metadata["author"] == "Graph Author"
+    assert metadata["modified_date"] == "2024-01-20"
+
+
 def test_missing_metadata_returns_none():
     """Test that missing metadata returns None"""
     html = """

@@ -2,19 +2,23 @@
 Scoring module - Calculate final injection risk score
 """
 
+import logging
+
 from markdown_ingress.models import InjectionAnalysis
+
+_logger = logging.getLogger(__name__)
 
 
 class Scorer:
     """Calculate and interpret injection risk scores"""
 
-    # Risk level thresholds
+    # Risk level thresholds (upper bound is exclusive except for "critical")
     RISK_LEVELS = {
         "safe": (0.0, 0.2),
         "low": (0.2, 0.4),
         "medium": (0.4, 0.6),
         "high": (0.6, 0.8),
-        "critical": (0.8, 1.0),
+        "critical": (0.8, float("inf")),
     }
 
     def __init__(self):
@@ -25,20 +29,37 @@ class Scorer:
         Get risk level name from score.
 
         Args:
-            score: Injection score (0.0 - 1.0)
+            score: Injection score (expected 0.0 - 1.0, but values outside are handled)
 
         Returns:
             Risk level string
+
+        Risk level boundaries (inclusive lower, exclusive upper):
+            - safe: [0.0, 0.2)
+            - low: [0.2, 0.4)
+            - medium: [0.4, 0.6)
+            - high: [0.6, 0.8)
+            - critical: [0.8, 1.0]
         """
-        for level, (min_score, max_score) in self.RISK_LEVELS.items():
-            if min_score <= score < max_score:
-                return level
+        # Validate and clamp score to valid range
+        original_score = score
+        if score < 0.0:
+            score = 0.0
+        elif score > 1.0:
+            score = 1.0
+        if score != original_score:
+            _logger.warning("Clamped out-of-range injection score from %s to %s", original_score, score)
 
-        # Edge case: exactly 1.0
-        if score == 1.0:
+        # Handle exact boundary cases explicitly for clarity
+        if score >= 0.8:
             return "critical"
-
-        return "unknown"
+        if score >= 0.6:
+            return "high"
+        if score >= 0.4:
+            return "medium"
+        if score >= 0.2:
+            return "low"
+        return "safe"
 
     def should_block(self, analysis: InjectionAnalysis, threshold: float = 0.7) -> bool:
         """
@@ -46,11 +67,16 @@ class Scorer:
 
         Args:
             analysis: Injection analysis result
-            threshold: Score threshold for blocking (default: 0.7)
+            threshold: Score threshold for blocking (default: 0.7, must be 0.0-1.0)
 
         Returns:
             True if content should be blocked
+
+        Raises:
+            ValueError: If threshold is not between 0.0 and 1.0
         """
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError(f"threshold must be between 0.0 and 1.0, got {threshold}")
         return analysis.score >= threshold
 
     def get_recommendation(self, analysis: InjectionAnalysis) -> str:

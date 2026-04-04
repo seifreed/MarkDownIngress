@@ -37,18 +37,18 @@ class LinkAnalyzer:
 
         # Parse base URL
         base_parsed = urlparse(base_url)
-        base_domain = base_parsed.netloc.lower()
+        base_domain = (base_parsed.hostname or "").lower()
 
-        internal_links = []
-        external_links = []
-        anchor_links = []
-        domain_counts = {}
+        internal_links: list[str] = []
+        external_links: list[str] = []
+        anchor_links: list[str] = []
 
         # Find all <a> tags with href attribute
         links = parser.css("a[href]")
 
         for link in links:
-            href = link.attributes.get("href", "").strip()
+            href_attr = link.attributes.get("href") or ""
+            href = href_attr.strip()
             if not href:
                 continue
 
@@ -56,35 +56,46 @@ class LinkAnalyzer:
             if href.startswith("#"):
                 # Pure anchor link
                 anchor_links.append(href)
-            elif (
-                href.startswith("mailto:")
-                or href.startswith("tel:")
-                or href.startswith("javascript:")
-            ):
-                # Skip non-HTTP links
                 continue
+
+            # Security: Check for dangerous URI schemes
+            # Strip leading whitespace and normalize for scheme check
+            # to handle obfuscation like "  javascript:" or "\tjavascript:"
+            stripped_href = href.lstrip()
+            scheme_lower = stripped_href.lower()
+
+            # Blocked schemes (including data: for XSS prevention)
+            blocked_schemes = ("javascript:", "mailto:", "tel:", "data:")
+            if any(scheme_lower.startswith(scheme) for scheme in blocked_schemes):
+                # Skip non-HTTP/dangerous links
+                continue
+
+            # Resolve relative URLs
+            absolute_url = urljoin(base_url, href)
+            parsed_url = urlparse(absolute_url)
+            link_domain = (parsed_url.hostname or "").lower()
+
+            # Skip invalid URLs
+            if not link_domain or not parsed_url.scheme.startswith("http"):
+                continue
+
+            # Classify as internal or external
+            if link_domain == base_domain:
+                internal_links.append(absolute_url)
             else:
-                # Resolve relative URLs
-                absolute_url = urljoin(base_url, href)
-                parsed_url = urlparse(absolute_url)
-                link_domain = parsed_url.netloc.lower()
+                external_links.append(absolute_url)
 
-                # Skip invalid URLs
-                if not link_domain or not parsed_url.scheme.startswith("http"):
-                    continue
+        # Deduplicate links while preserving insertion order
+        internal_links = list(dict.fromkeys(internal_links))
+        external_links = list(dict.fromkeys(external_links))
+        anchor_links = list(dict.fromkeys(anchor_links))
 
-                # Classify as internal or external
-                if link_domain == base_domain:
-                    internal_links.append(absolute_url)
-                else:
-                    external_links.append(absolute_url)
-                    # Count by domain
-                    domain_counts[link_domain] = domain_counts.get(link_domain, 0) + 1
-
-        # Deduplicate links
-        internal_links = list(set(internal_links))
-        external_links = list(set(external_links))
-        anchor_links = list(set(anchor_links))
+        # Recompute domain counts from deduplicated external links so they
+        # are consistent with the external_links list.
+        domain_counts = {}
+        for url in external_links:
+            domain = (urlparse(url).hostname or "").lower()
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
         total = len(internal_links) + len(external_links) + len(anchor_links)
 

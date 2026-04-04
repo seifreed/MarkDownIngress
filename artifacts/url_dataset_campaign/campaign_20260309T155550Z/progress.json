@@ -1,0 +1,34 @@
+{
+  "run_dir": "artifacts/url_dataset_campaign/campaign_20260309T155550Z",
+  "timestamp": "2026-03-09T15:55:53.528393+00:00",
+  "current_scenario": "fast_default",
+  "completed_in_scenario": 24,
+  "total_in_scenario": 24,
+  "campaign_counts": {
+    "processed": 24,
+    "ok": 23,
+    "errors": 1,
+    "warnings": 23
+  },
+  "campaign_error_types": {
+    "HTTPStatusError": 1
+  },
+  "campaign_warning_types": {
+    "flags": 23,
+    "hidden_elements": 23,
+    "nonzero_injection_score": 23
+  },
+  "dropped_url_types": {
+    "unsupported_scheme:missing": 8,
+    "missing_host": 1
+  },
+  "availability_error_types": {
+    "forbidden": 1,
+    "available": 60,
+    "timeout": 1,
+    "not_found": 3,
+    "rate_limited": 4,
+    "HTTPStatusError": 1
+  },
+  "availability_checked": 38
+}

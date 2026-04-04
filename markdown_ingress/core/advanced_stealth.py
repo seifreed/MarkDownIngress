@@ -21,6 +21,7 @@ All public APIs are re-exported here for backward compatibility.
 
 import asyncio
 import time
+from typing import Any, Literal, cast
 
 # Import all public APIs from stealth submodules
 from markdown_ingress.core import stealth as _stealth
@@ -38,6 +39,7 @@ ADVANCED_VIEWPORT_SIZES = _stealth.ADVANCED_VIEWPORT_SIZES
 REALISTIC_HEADERS = _stealth.REALISTIC_HEADERS
 STEALTH_JS_INJECTION = _stealth.STEALTH_JS_INJECTION
 STEALTH_JS_POST_LOAD = _stealth.STEALTH_JS_POST_LOAD
+WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 TIMEZONES = _stealth.TIMEZONES
 ULTRA_STEALTH_ARGS = _stealth.ULTRA_STEALTH_ARGS
 
@@ -169,13 +171,13 @@ class AdvancedStealthRenderer:
                 browser_args.append("--disable-http2")
 
             # Launch browser with ultra stealth args
-            launch_options = {
+            launch_options: dict[str, object] = {
                 "headless": self.headless,
                 "args": browser_args,
                 "ignore_default_args": ["--enable-automation"],
             }
 
-            browser = await p.chromium.launch(**launch_options)
+            browser = await p.chromium.launch(**cast(dict[str, Any], launch_options))
 
             try:
                 # Create context with advanced stealth options
@@ -191,7 +193,7 @@ class AdvancedStealthRenderer:
 
                     # Navigate to URL
                     response = await page.goto(
-                        url, timeout=self.timeout, wait_until=self.wait_until
+                        url, timeout=self.timeout, wait_until=cast(WaitUntil, self.wait_until)
                     )
 
                     # Additional wait for dynamic content
@@ -207,7 +209,7 @@ class AdvancedStealthRenderer:
                     html = await page.content()
 
                     # Get headers
-                    headers = dict(response.headers) if response else {}
+                    headers = response.headers if response else {}
 
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -248,7 +250,14 @@ class AdvancedStealthRenderer:
         Returns:
             FetchResult with rendered HTML
         """
-        return asyncio.run(self.render(url))
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.render(url))
+
+        raise RuntimeError(
+            "render_sync() cannot run inside an active event loop; await render() instead"
+        )
 
 
 # ============================================================================
@@ -304,4 +313,12 @@ def render_with_advanced_stealth_sync(
         >>> result = render_with_advanced_stealth_sync("https://example.com")
         >>> print(result.html[:100])
     """
-    return asyncio.run(render_with_advanced_stealth(url, timeout, headless))
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(render_with_advanced_stealth(url, timeout, headless))
+
+    raise RuntimeError(
+        "render_with_advanced_stealth_sync() cannot run inside an active event loop; "
+        "await render_with_advanced_stealth() instead"
+    )

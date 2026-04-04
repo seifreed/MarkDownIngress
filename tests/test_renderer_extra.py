@@ -1,7 +1,7 @@
 """Extra tests to maximize coverage for renderer.py and advanced_stealth.py."""
 
+import asyncio
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -39,6 +39,8 @@ def local_test_server():
     t.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    server.server_close()
+    t.join(timeout=2)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +81,11 @@ def test_renderer_init_with_params():
     assert renderer.timeout == 5_000
     assert renderer.wait_until == "domcontentloaded"
     assert renderer.disable_http2 is True
+
+
+def test_renderer_init_defaults_to_domcontentloaded():
+    renderer = Renderer()
+    assert renderer.wait_until == "domcontentloaded"
 
 
 def test_renderer_init_config_override_with_params():
@@ -188,6 +195,82 @@ async def test_render_with_smart_wait(local_test_server):
     assert result.metadata.get("smart_wait_used") is True
 
 
+async def test_render_retries_retryable_navigation_errors(monkeypatch):
+    renderer = Renderer(timeout=5.0)
+    calls = {"count": 0}
+
+    async def fake_render_with_browser(url: str):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("Page.goto: net::ERR_NETWORK_IO_SUSPENDED at https://retry.example/")
+        from markdown_ingress.models import FetchResult
+
+        return FetchResult(
+            html="<html><body>ok</body></html>",
+            url=url,
+            status_code=200,
+            final_url=url,
+            headers={},
+            timing_ms=1.0,
+            metadata={},
+        )
+
+    monkeypatch.setattr(renderer, "_render_with_browser", fake_render_with_browser)
+
+    result = await renderer.render("https://retry.example/")
+    assert result.status_code == 200
+    assert result.metadata["navigation_retry"] is True
+    assert calls["count"] == 2
+
+
+def test_extract_page_content_retries_navigation_errors():
+    renderer = Renderer()
+
+    class FakePage:
+        def __init__(self):
+            self.calls = 0
+
+        async def content(self):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError(
+                    "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                )
+            return "<html><body>ok</body></html>"
+
+    html = asyncio.run(renderer._extract_page_content(FakePage()))
+    assert html == "<html><body>ok</body></html>"
+
+
+def test_extract_page_content_falls_back_to_outer_html():
+    renderer = Renderer()
+
+    class FakePage:
+        async def content(self):
+            raise RuntimeError(
+                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+            )
+
+        async def evaluate(self, script):
+            return "<html><body>fallback</body></html>"
+
+    html = asyncio.run(renderer._extract_page_content(FakePage()))
+    assert html == "<html><body>fallback</body></html>"
+
+
+def test_renderer_identifies_retryable_navigation_errors():
+    renderer = Renderer()
+    assert renderer._is_retryable_navigation_error(
+        RuntimeError("Page.goto: net::ERR_NETWORK_IO_SUSPENDED at https://example.test/")
+    )
+    assert renderer._is_retryable_navigation_error(
+        RuntimeError("Page.goto: net::ERR_INTERNET_DISCONNECTED at https://example.test/")
+    )
+    assert not renderer._is_retryable_navigation_error(
+        RuntimeError("Page.goto: net::ERR_FAILED at https://example.test/")
+    )
+
+
 # ---------------------------------------------------------------------------
 # _wait_for_content  (lines 503-550)
 # ---------------------------------------------------------------------------
@@ -258,7 +341,6 @@ def test_advanced_stealth_init_no_config():
 def test_advanced_stealth_init_with_config():
     """AdvancedStealthRenderer init with explicit stealth_config (lines 101-102)."""
     from markdown_ingress.core.advanced_stealth import (
-        AdvancedStealthConfig,
         AdvancedStealthRenderer,
         get_advanced_stealth_config,
     )

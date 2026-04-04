@@ -1,0 +1,30 @@
+{
+  "run_dir": "artifacts/url_dataset_campaign/campaign_20260309T155826Z",
+  "timestamp": "2026-03-09T15:58:49.060068+00:00",
+  "current_scenario": "availability_pool",
+  "completed_in_scenario": 134,
+  "total_in_scenario": 50000,
+  "campaign_counts": {
+    "processed": 0,
+    "ok": 0,
+    "errors": 0,
+    "warnings": 0
+  },
+  "campaign_error_types": {},
+  "campaign_warning_types": {},
+  "dropped_url_types": {
+    "unsupported_scheme:missing": 8,
+    "missing_host": 1
+  },
+  "availability_error_types": {
+    "forbidden": 10,
+    "available": 165,
+    "timeout": 4,
+    "not_found": 7,
+    "rate_limited": 4,
+    "HTTPStatusError": 1,
+    "dataset_non_html": 5,
+    "dataset_invalid_host": 2
+  },
+  "availability_checked": 166
+}

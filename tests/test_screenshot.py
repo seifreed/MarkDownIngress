@@ -4,6 +4,8 @@ Tests for screenshot capture
 
 import os
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -13,10 +15,31 @@ from markdown_ingress import ingest
 pytest.importorskip("playwright")
 
 
-def test_screenshot_true_creates_temp_file():
+@pytest.fixture(scope="module")
+def local_server():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            html = b"<html><body><h1>Screenshot Test</h1><p>Local content.</p></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+def test_screenshot_true_creates_temp_file(local_server):
     """Test that screenshot=True creates a temporary file"""
     doc = ingest(
-        url="https://example.com",
+        url=local_server,
         mode="render",
         screenshot=True,
         extract_metadata=False,
@@ -37,13 +60,13 @@ def test_screenshot_true_creates_temp_file():
         os.unlink(doc.screenshot_path)
 
 
-def test_screenshot_custom_path():
+def test_screenshot_custom_path(local_server):
     """Test that screenshot=path saves to specified path"""
     with tempfile.TemporaryDirectory() as tmpdir:
         screenshot_path = os.path.join(tmpdir, "test_screenshot.png")
 
         doc = ingest(
-            url="https://example.com",
+            url=local_server,
             mode="render",
             screenshot=screenshot_path,
             extract_metadata=False,
@@ -60,10 +83,10 @@ def test_screenshot_custom_path():
         assert os.path.getsize(screenshot_path) > 0
 
 
-def test_screenshot_none_no_file():
+def test_screenshot_none_no_file(local_server):
     """Test that screenshot=None doesn't create a file"""
     doc = ingest(
-        url="https://example.com",
+        url=local_server,
         mode="render",
         screenshot=None,
         extract_metadata=False,
@@ -74,28 +97,26 @@ def test_screenshot_none_no_file():
     assert doc.screenshot_path is None
 
 
-def test_screenshot_not_available_in_fast_mode():
+def test_screenshot_not_available_in_fast_mode(local_server):
     """Test that screenshot is not available in fast mode"""
-    # In fast mode, screenshot parameter is ignored since no renderer is used
-    # We can just check that the API accepts the parameter without error
-    # and that screenshot_path is None in the result
-
-    # For fast mode, screenshot would only work if we had a fetcher result
-    # Since we can't easily test this without a real URL, we'll just verify
-    # that the parameter is accepted and handled correctly in the function signature
-
-    # This test is more of a documentation test - screenshot only works in render mode
-    # The screenshot parameter is ignored in fast mode
-    assert True  # Screenshot is a render-only feature
+    doc = ingest(
+        url=local_server,
+        mode="fast",
+        screenshot=True,
+        extract_metadata=False,
+        extract_links=False,
+    )
+    assert doc.metadata["mode"] == "fast"
+    assert doc.screenshot_path is None
 
 
-def test_screenshot_metadata_included():
+def test_screenshot_metadata_included(local_server):
     """Test that screenshot path is included in metadata when captured"""
     with tempfile.TemporaryDirectory() as tmpdir:
         screenshot_path = os.path.join(tmpdir, "test_meta.png")
 
         doc = ingest(
-            url="https://example.com",
+            url=local_server,
             mode="render",
             screenshot=screenshot_path,
             extract_metadata=False,
@@ -109,7 +130,7 @@ def test_screenshot_metadata_included():
         assert os.path.exists(screenshot_path)
 
 
-def test_screenshot_json_serialization():
+def test_screenshot_json_serialization(local_server):
     """Test that screenshot path is properly serialized in JSON output"""
     import json
 
@@ -117,7 +138,7 @@ def test_screenshot_json_serialization():
         screenshot_path = os.path.join(tmpdir, "test_json.png")
 
         doc = ingest(
-            url="https://example.com",
+            url=local_server,
             mode="render",
             screenshot=screenshot_path,
             extract_metadata=False,

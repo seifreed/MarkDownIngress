@@ -1,0 +1,192 @@
+{
+  "dataset_url": "https://raw.githubusercontent.com/ada-url/url-dataset/refs/heads/main/out.txt",
+  "dataset_file": "artifacts/url_dataset_campaign/out.txt",
+  "run_dir": "artifacts/url_dataset_campaign/campaign_20260309T155550Z",
+  "requested_unique_urls": 24,
+  "selected_unique_urls": 24,
+  "availability_checked_urls": 38,
+  "dropped_url_types": {
+    "unsupported_scheme:missing": 8,
+    "missing_host": 1
+  },
+  "availability_error_types": {
+    "forbidden": 1,
+    "available": 60,
+    "timeout": 1,
+    "not_found": 3,
+    "rate_limited": 4,
+    "HTTPStatusError": 1
+  },
+  "enabled_scenarios": [
+    "fast_default"
+  ],
+  "concurrency": 8,
+  "batch_size": 8,
+  "counts": {
+    "processed": 24,
+    "ok": 23,
+    "errors": 1,
+    "warnings": 23
+  },
+  "warning_types": {
+    "flags": 23,
+    "hidden_elements": 23,
+    "nonzero_injection_score": 23
+  },
+  "error_types": {
+    "HTTPStatusError": 1
+  },
+  "scenario_allocations": {
+    "fast_default": 24
+  },
+  "scenario_summaries": {
+    "fast_default": {
+      "scenario": "fast_default",
+      "description": "Fast mode, strict policy, lean metadata disabled for throughput baseline.",
+      "assigned_urls": 24,
+      "config": {
+        "mode": "fast",
+        "strict": true,
+        "model": "gpt-4",
+        "timeout": 5.0,
+        "auto_render_threshold": 50,
+        "stealth": false,
+        "disable_http2": false,
+        "extreme_mode": false,
+        "screenshot": null,
+        "extract_metadata": false,
+        "extract_links": false,
+        "advanced_security": false,
+        "use_llm": false,
+        "cache": null,
+        "cache_ttl": null,
+        "policy_name": "normal",
+        "custom_patterns": [],
+        "plugin_dirs": [],
+        "output_profile": "default",
+        "extract_blocks": false,
+        "chunking_strategy": "none",
+        "chunk_size": 1200,
+        "chunk_overlap": 120,
+        "detect_language": true,
+        "normalize_multilingual": true,
+        "include_security_explanation": true,
+        "include_observability": true,
+        "domain_policies": [],
+        "domain_request_interval": 0.0,
+        "circuit_breaker_threshold": 25,
+        "circuit_breaker_open_seconds": 5.0,
+        "render_cost_budget": null,
+        "output_formats": [
+          "markdown"
+        ]
+      },
+      "counts": {
+        "processed": 24,
+        "ok": 23,
+        "errors": 1,
+        "warnings": 23
+      },
+      "warning_types": {
+        "flags": 23,
+        "hidden_elements": 23,
+        "nonzero_injection_score": 23
+      },
+      "error_types": {
+        "HTTPStatusError": 1
+      },
+      "resumed_completed_indexes": 0,
+      "scenario_concurrency": 8,
+      "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T155550Z/fast_default/warnings.jsonl",
+      "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T155550Z/fast_default/errors.jsonl"
+    }
+  },
+  "ingest_stats": {
+    "requests_total": 24,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "inflight_followers": 0,
+    "leader_executions": 24,
+    "mode_counts": {
+      "fast": 24,
+      "render": 0,
+      "auto": 0
+    },
+    "mode_timings_ms": {
+      "fast": {
+        "count": 24,
+        "total": 12568.68262597709,
+        "avg": 523.6951094157121
+      },
+      "render": {
+        "count": 0,
+        "total": 0.0,
+        "avg": 0.0
+      },
+      "auto": {
+        "count": 0,
+        "total": 0.0,
+        "avg": 0.0
+      }
+    },
+    "mode_results": {
+      "fast": {
+        "success": 23,
+        "error": 1
+      },
+      "render": {
+        "success": 0,
+        "error": 0
+      },
+      "auto": {
+        "success": 0,
+        "error": 0
+      }
+    },
+    "stage_timings_ms": {
+      "fetch_fast": {
+        "count": 23,
+        "total": 10291.420916997595,
+        "avg": 447.45308334772153
+      },
+      "extract": {
+        "count": 23,
+        "total": 710.8088789827889,
+        "avg": 30.90473386881691
+      },
+      "markdown": {
+        "count": 23,
+        "total": 25.312583005870692,
+        "avg": 1.1005470872117693
+      },
+      "security": {
+        "count": 23,
+        "total": 2.3447509738616645,
+        "avg": 0.10194569451572455
+      },
+      "hash_content": {
+        "count": 23,
+        "total": 0.23258502187673002,
+        "avg": 0.010112392255510002
+      },
+      "hash_structural": {
+        "count": 23,
+        "total": 0.47620697296224535,
+        "avg": 0.020704650998358495
+      },
+      "tokens": {
+        "count": 23,
+        "total": 3.1391229713335633,
+        "avg": 0.13648360744928537
+      }
+    },
+    "policy_actions": {
+      "allow": 23,
+      "warn": 0,
+      "block": 0
+    },
+    "render_fallbacks": 0,
+    "circuit_breaker_rejections": 0,
+    "inflight_active": 0
+  }
+}

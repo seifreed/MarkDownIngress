@@ -10,7 +10,6 @@ import sys
 import threading
 from argparse import Namespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import pytest
 
@@ -46,9 +45,10 @@ from markdown_ingress.cli import (
     cmd_ingest,
     main,
 )
-from markdown_ingress.core.batch import BatchProcessor, BatchResult
+from markdown_ingress.application.batch import BatchProcessor
+from markdown_ingress.api_runtime import UNSET
 from markdown_ingress.models import SafeDocument
-
+from markdown_ingress.shared_results import BatchResult
 
 # ── Local HTTP test server ─────────────────────────────────────────────────────
 
@@ -136,12 +136,12 @@ class TestDetermineMode:
     def test_render_flag(self):
         assert _determine_mode(IngestArgs(url="http://x.com", render=True)) == "render"
 
-    def test_default_auto(self):
-        assert _determine_mode(IngestArgs(url="http://x.com")) == "auto"
+    def test_default_none(self):
+        assert _determine_mode(IngestArgs(url="http://x.com")) is None
 
     def test_namespace_without_attributes(self):
-        # Namespace with no fast/render attrs → auto
-        assert _determine_mode(Namespace(url="http://x.com")) == "auto"
+        # Namespace with no fast/render attrs → no explicit override
+        assert _determine_mode(Namespace(url="http://x.com")) is None
 
 
 # ── _prepare_ingest_params ─────────────────────────────────────────────────────
@@ -150,9 +150,10 @@ class TestPrepareIngestParams:
     def test_basic(self):
         params = _prepare_ingest_params(IngestArgs(url="http://x.com"))
         assert params["url"] == "http://x.com"
-        assert params["mode"] == "auto"
-        assert params["strict"] is True
-        assert params["screenshot"] is None
+        assert params["mode"] is None
+        assert params["strict"] is None
+        # screenshot uses UNSET sentinel when not provided (Bug fix #1)
+        assert params["screenshot"] is UNSET
 
     def test_permissive_disables_strict(self):
         params = _prepare_ingest_params(IngestArgs(url="http://x.com", permissive=True))
@@ -162,8 +163,9 @@ class TestPrepareIngestParams:
         params = _prepare_ingest_params(IngestArgs(url="http://x.com", screenshot="/tmp/s.png"))
         assert params["screenshot"] == "/tmp/s.png"
 
-    def test_screenshot_string_true_becomes_bool(self):
-        params = _prepare_ingest_params(IngestArgs(url="http://x.com", screenshot="True"))
+    def test_screenshot_bool_true_passes_through(self):
+        # When --screenshot is used without a path, argparse now sets const=True (boolean)
+        params = _prepare_ingest_params(IngestArgs(url="http://x.com", screenshot=True))
         assert params["screenshot"] is True
 
     def test_no_metadata_no_links(self):
@@ -179,6 +181,15 @@ class TestPrepareIngestParams:
         )
         assert params["advanced_security"] is True
         assert params["use_llm"] is True
+
+    def test_config_file_is_loaded(self, tmp_path):
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text("mode: render\ntimeout: 45\nstrict: false\n")
+        params = _prepare_ingest_params(IngestArgs(url="http://x.com", config=str(config_path)))
+        assert params["config"] is not None
+        assert params["config"].mode == "render"
+        assert params["config"].timeout == 45.0
+        assert params["config"].strict is False
 
 
 # ── _build_json_output ─────────────────────────────────────────────────────────
@@ -319,6 +330,23 @@ class TestCmdIngest:
         assert exc.value.code == 0
         assert save.exists()
 
+    def test_success_config_output_format_json(self, local_server, tmp_path, capsys):
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text("output_format: json\n")
+        with pytest.raises(SystemExit) as exc:
+            cmd_ingest(IngestArgs(url=local_server, config=str(config_path)))
+        assert exc.value.code == 0
+        data = json.loads(capsys.readouterr().out)
+        assert "markdown" in data
+
+    def test_success_config_output_format_markdown(self, local_server, tmp_path, capsys):
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text("output_format: markdown\n")
+        with pytest.raises(SystemExit) as exc:
+            cmd_ingest(IngestArgs(url=local_server, config=str(config_path)))
+        assert exc.value.code == 0
+        assert "# Hello" in capsys.readouterr().out
+
     def test_failure_unreachable_url(self):
         # Port 1 should be unreachable; triggers the except branch → exit(1)
         with pytest.raises(SystemExit) as exc:
@@ -352,14 +380,36 @@ class TestLoadUrlsFromFile:
 class TestCreateBatchProcessor:
     def test_returns_processor(self):
         args = Namespace(fast=False, render=False, strict=True, permissive=False,
-                         concurrent=3, timeout=10.0)
+                         concurrent=3, timeout=10.0, model=None, config=None)
         processor = _create_batch_processor(args)
         assert isinstance(processor, BatchProcessor)
 
     def test_fast_mode_propagated(self):
         args = Namespace(fast=True, render=False, strict=True, permissive=False,
-                         concurrent=1, timeout=5.0)
+                         concurrent=1, timeout=5.0, model=None, config=None)
         assert _create_batch_processor(args).mode == "fast"
+
+    def test_config_defaults_propagated(self, tmp_path):
+        config_path = tmp_path / "batch.yaml"
+        config_path.write_text(
+            "mode: render\nstrict: false\nmodel: claude\nbatch_timeout: 22\nbatch_max_concurrent: 7\n"
+        )
+        args = Namespace(
+            fast=False,
+            render=False,
+            strict=None,
+            permissive=False,
+            concurrent=None,
+            timeout=None,
+            model=None,
+            config=str(config_path),
+        )
+        processor = _create_batch_processor(args)
+        assert processor.mode == "render"
+        assert processor.strict is False
+        assert processor.model == "claude"
+        assert processor.timeout == 22
+        assert processor.max_concurrent == 7
 
 
 # ── _process_batch_with_progress ──────────────────────────────────────────────
@@ -399,6 +449,14 @@ class TestCreateBatchResultsTable:
         table = _create_batch_results_table([long_url], br)
         assert isinstance(table, Table)
 
+    def test_missing_document_slot_still_renders_row(self, safe_doc):
+        from rich.table import Table
+
+        br = BatchResult(total=2, successful=1, failed=1, documents=[safe_doc], errors={})
+        table = _create_batch_results_table(["http://ok.com", "http://missing.com"], br)
+        assert isinstance(table, Table)
+        assert len(table.rows) == 2
+
 
 # ── _save_batch_json / _save_batch_markdown ────────────────────────────────────
 
@@ -416,7 +474,22 @@ class TestSaveBatchJson:
                          errors={"http://a.com": "err"})
         out = tmp_path / "r.json"
         _save_batch_json(out, ["http://a.com"], br)
-        assert json.loads(out.read_text())["results"] == []
+        data = json.loads(out.read_text())
+        assert len(data["results"]) == 1
+        assert data["results"][0]["success"] is False
+        assert data["results"][0]["error"] == "err"
+
+    def test_missing_document_slot_is_serialized_as_failure(self, tmp_path, safe_doc):
+        br = BatchResult(total=2, successful=1, failed=1, documents=[safe_doc], errors={})
+        out = tmp_path / "r.json"
+        _save_batch_json(out, ["http://ok.com", "http://missing.com"], br)
+        data = json.loads(out.read_text())
+        assert len(data["results"]) == 2
+        assert data["summary"]["successful"] == 1
+        assert data["summary"]["failed"] == 1
+        assert data["results"][0]["success"] is True
+        assert data["results"][1]["success"] is False
+        assert data["results"][1]["error"] == "Missing batch result for input index 1"
 
 
 class TestSaveBatchMarkdown:
@@ -470,6 +543,19 @@ class TestSaveBatchResults:
                             self._br(safe_doc))
         assert (out / "doc_001.md").exists()
 
+    def test_markdown_ignores_extra_documents_without_matching_url(self, tmp_path, safe_doc):
+        out = tmp_path / "mdout"
+        br = BatchResult(
+            total=2,
+            successful=2,
+            failed=0,
+            documents=[safe_doc, safe_doc],
+            errors={},
+        )
+        _save_batch_results(Namespace(output=str(out), json=False), ["http://x.com"], br)
+        saved = sorted(path.name for path in out.glob("*.md"))
+        assert saved == ["doc_001.md"]
+
 
 # ── cmd_batch ──────────────────────────────────────────────────────────────────
 
@@ -482,7 +568,7 @@ class TestCmdBatch:
             file=str(urls_file),
             fast=True, render=False,
             strict=True, permissive=False,
-            concurrent=1, timeout=10.0,
+            concurrent=1, timeout=10.0, model=None, config=None,
             output=str(out_dir), json=False,
         )
         cmd_batch(args)
@@ -495,10 +581,28 @@ class TestCmdBatch:
             file=str(urls_file),
             fast=True, render=False,
             strict=True, permissive=False,
-            concurrent=1, timeout=10.0,
+            concurrent=1, timeout=10.0, model=None, config=None,
             output=None, json=False,
         )
         cmd_batch(args)  # should return normally
+
+    def test_batch_config_output_format_json_saves_json(self, local_server, tmp_path):
+        urls_file = tmp_path / "urls.txt"
+        urls_file.write_text(f"{local_server}\n")
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text("output_format: json\n")
+        out_file = tmp_path / "results.json"
+        args = Namespace(
+            file=str(urls_file),
+            fast=True, render=False,
+            strict=True, permissive=False,
+            concurrent=1, timeout=10.0, model=None, config=str(config_path),
+            output=str(out_file), json=False,
+        )
+        cmd_batch(args)
+        assert out_file.exists()
+        data = json.loads(out_file.read_text())
+        assert data["summary"]["successful"] == 1
 
 
 # ── parser helpers ─────────────────────────────────────────────────────────────
@@ -513,7 +617,8 @@ class TestParsers:
                               "--screenshot"])
         assert args.fast is True
         assert args.json is True
-        assert args.screenshot == "True"
+        assert args.screenshot is True  # const=True (boolean)
+        assert args.timeout is None
 
     def test_add_common_ingest_args_screenshot_path(self):
         p = argparse.ArgumentParser()
@@ -535,7 +640,7 @@ class TestParsers:
         _create_batch_parser(sp)
         args = p.parse_args(["batch", "urls.txt"])
         assert args.file == "urls.txt"
-        assert args.concurrent == 5
+        assert args.concurrent is None
 
     def test_create_legacy_parser(self):
         p = _create_legacy_parser()
@@ -565,6 +670,14 @@ class TestIsLegacyMode:
 
     def test_no_args_not_legacy(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["cli"])
+        assert _is_legacy_mode() is False
+
+    def test_malformed_url_without_hostname_not_legacy(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["cli", "https://user:pass@"])
+        assert _is_legacy_mode() is False
+
+    def test_port_only_url_without_hostname_not_legacy(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["cli", "https://:443"])
         assert _is_legacy_mode() is False
 
 

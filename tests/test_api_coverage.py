@@ -11,9 +11,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from markdown_ingress.api import ingest, retry_ingest
+from markdown_ingress.api_runtime import build_runtime_config
 from markdown_ingress.api_server import app, main
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.orchestrator import IngestOrchestrator
+from markdown_ingress.models import FetchResult
+from markdown_ingress.shared_results import BatchErrorItem
 
 client = TestClient(app)
 
@@ -39,6 +42,8 @@ def local_server():
     t.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    server.server_close()
+    t.join(timeout=2)
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +62,8 @@ def error_server():
     t.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    server.server_close()
+    t.join(timeout=2)
 
 
 # ── api.py: config override branch (lines 115-150) ───────────────────────────
@@ -139,9 +146,9 @@ def test_retry_ingest_max_retries_zero(local_server):
 # ── api_server.py: error paths ────────────────────────────────────────────────
 
 
-@patch("markdown_ingress.api_server.ingest", side_effect=ImportError("Playwright not installed"))
+@patch("markdown_ingress.api_server.ingest", side_effect=ImportError("Render mode requires Playwright: not installed"))
 def test_ingest_endpoint_import_error(_mock):
-    """Lines 128-129: ImportError in /ingest → HTTP 400."""
+    """ImportError with Playwright message in /ingest → HTTP 400."""
     response = client.post("/ingest", json={"url": "http://example.com", "mode": "render"})
     assert response.status_code == 400
     assert "Playwright" in response.json()["detail"]
@@ -152,7 +159,7 @@ def test_ingest_endpoint_generic_error(_mock):
     """Lines 130-131: generic Exception in /ingest → HTTP 500."""
     response = client.post("/ingest", json={"url": "http://example.com", "mode": "fast"})
     assert response.status_code == 500
-    assert "connection failed" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
 
 
 @patch("markdown_ingress.api_server.retry_ingest", side_effect=Exception("retry failed"))
@@ -160,12 +167,20 @@ def test_retry_ingest_endpoint_error(_mock):
     """Lines 169-170: Exception in /ingest/retry → HTTP 500."""
     response = client.post("/ingest/retry", json={"url": "http://example.com"})
     assert response.status_code == 500
-    assert "retry failed" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
 
 
-@patch("markdown_ingress.api_server.ingest", side_effect=Exception("batch item failed"))
+@patch("markdown_ingress.api_server.ingest_many")
 def test_batch_ingest_failure_path(_mock):
-    """Lines 219-221: failed item in batch increments failure_count."""
+    """Legacy and versioned batch endpoints both surface shared batch failures."""
+    class FakeBatchResult:
+        successful = 0
+        failed = 1
+        documents = [None]
+        errors = {"http://example.com/": "batch item failed"}
+
+    _mock.return_value = FakeBatchResult()
+
     response = client.post(
         "/ingest/batch",
         json={"urls": ["http://example.com"], "mode": "fast"},
@@ -175,7 +190,7 @@ def test_batch_ingest_failure_path(_mock):
     assert data["failure_count"] == 1
     assert data["success_count"] == 0
     assert data["results"][0]["success"] is False
-    assert "error" in data["results"][0]
+    assert data["results"][0]["error"] == "batch item failed"
 
 
 @patch(
@@ -188,7 +203,7 @@ def test_security_report_endpoint_error(_mock):
         "/security/report", json={"url": "http://example.com", "mode": "fast"}
     )
     assert response.status_code == 500
-    assert "report error" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
 
 
 @patch("uvicorn.run")
@@ -212,6 +227,8 @@ def test_orchestrator_config_override_mode_timeout(local_server):
         strict=False,
     )
     assert result.markdown
+    assert config.mode == "fast"
+    assert config.timeout == 5.0
 
 
 def test_orchestrator_config_override_all_params(local_server):
@@ -232,6 +249,46 @@ def test_orchestrator_config_override_all_params(local_server):
         use_llm=False,
     )
     assert result.markdown
+    assert config.mode == "fast"
+    assert config.timeout == 5.0
+
+
+def test_orchestrator_config_override_revalidates_invalid_mode():
+    with pytest.raises(ValueError, match="Invalid mode 'broken'"):
+        IngestOrchestrator().execute(
+            "https://unit.test/invalid-mode",
+            config=IngestConfig(mode="fast"),
+            mode="broken",
+        )
+
+
+def test_build_runtime_config_none_can_clear_nullable_overrides():
+    config = IngestConfig(mode="fast", screenshot=True, cache="cache", cache_ttl=60)
+
+    resolved = build_runtime_config(
+        config=config,
+        screenshot=None,
+        cache=None,
+        cache_ttl=None,
+    )
+
+    assert resolved.screenshot is None
+    assert resolved.cache is None
+    assert resolved.cache_ttl is None
+
+
+def test_build_runtime_config_revalidates_invalid_mode_override():
+    config = IngestConfig(mode="fast")
+
+    with pytest.raises(ValueError, match="Invalid mode 'broken'"):
+        build_runtime_config(config=config, mode="broken")
+
+
+def test_build_runtime_config_revalidates_invalid_chunk_overlap_override():
+    config = IngestConfig(mode="fast", chunk_size=1000, chunk_overlap=100)
+
+    with pytest.raises(ValueError, match=r"chunk_overlap \(5000\) cannot exceed chunk_size \(1000\)"):
+        build_runtime_config(config=config, chunk_overlap=5000)
 
 
 # ── orchestrator.py: PLAYWRIGHT_AVAILABLE=False auto-fallback (lines 217-218) ─
@@ -266,7 +323,10 @@ def test_ingest_config_override_remaining_fields(local_server):
         cache=None,                      # line 142 – need non-None
         cache_ttl=None,                  # line 144 – need non-None
     )
-    assert doc is not None
+    assert doc.metadata["model"] == "gpt-3.5-turbo"
+    assert doc.metadata["advanced_security"] is False
+    assert doc.metadata["mode"] == "fast"
+    assert doc.screenshot_path is None
 
 
 def test_ingest_config_override_screenshot_non_none(local_server):
@@ -278,13 +338,16 @@ def test_ingest_config_override_screenshot_non_none(local_server):
         mode="fast",
         screenshot=True,    # non-None → line 132 executed
     )
-    assert doc is not None
+    assert doc.metadata["mode"] == "fast"
+    assert doc.screenshot_path is None
 
 
 def test_ingest_config_override_cache_non_none(local_server):
     """Lines 142,144: cache and cache_ttl override with non-None values."""
+    import os
+    import tempfile
+
     from markdown_ingress.core.cache import SQLiteCache
-    import tempfile, os
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -297,7 +360,15 @@ def test_ingest_config_override_cache_non_none(local_server):
             cache=cache,      # line 142
             cache_ttl=60,     # line 144
         )
-        assert doc is not None
+        assert doc.metadata["cache_hit"] is False
+        cached = ingest(
+            url=local_server,
+            config=config,
+            mode="fast",
+            cache=cache,
+            cache_ttl=60,
+        )
+        assert cached.metadata["cache_hit"] is True
     finally:
         os.unlink(db_path)
 
@@ -339,11 +410,13 @@ def test_ingest_auto_mode_render_better_than_fast():
     try:
         config = IngestConfig(mode="auto", auto_render_threshold=99999, timeout=20.0)
         doc = ingest(url=url, config=config)
-        # Either render was better (165-167) or fast was used (169-171)
-        assert doc is not None
-        assert "auto_mode_used" in doc.metadata
+        assert doc.metadata["auto_mode_used"] in {"fast", "render"}
+        if doc.metadata["auto_mode_used"] == "render":
+            assert doc.metadata["mode"] == "render"
     finally:
         server.shutdown()
+        server.server_close()
+        t.join(timeout=2)
 
 
 # ── api.py: auto mode – fast fails, render fallback (lines 177-179) ──────────
@@ -351,12 +424,32 @@ def test_ingest_auto_mode_render_better_than_fast():
 
 def test_ingest_auto_mode_fast_fails_playwright_fallback(error_server):
     """Lines 177-179: fast mode fails, Playwright renders the page instead."""
-    # error_server returns 403 → fast Fetcher raises → render fallback
-    config = IngestConfig(mode="auto", timeout=20.0)
-    doc = ingest(url=error_server, config=config)
-    assert doc is not None
-    assert doc.metadata.get("auto_mode_used") == "render"
-    assert doc.metadata.get("auto_mode_reason") == "fast_failed"
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url):
+            html = "<html><body><article><h1>Fallback</h1><p>Rendered content.</p></article></body></html>"
+            return FetchResult(
+                html=html,
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={},
+                timing_ms=1.0,
+                metadata={},
+            )
+
+    with patch("markdown_ingress.core.orchestrator.Renderer", FakeRenderer), patch(
+        "markdown_ingress.api.PLAYWRIGHT_AVAILABLE", True
+    ):
+        # error_server returns 403 → fast Fetcher raises → render fallback
+        config = IngestConfig(mode="auto", timeout=20.0)
+        doc = ingest(url=error_server, config=config)
+
+        assert doc is not None
+        assert doc.metadata.get("auto_mode_used") == "render"
+        assert doc.metadata.get("auto_mode_reason") == "fast_failed"
 
 
 # ── api.py: auto mode – fast fails, no playwright (line 181) ────────────────
@@ -419,6 +512,26 @@ def test_orchestrator_render_mode_no_playwright(local_server):
 
 def test_orchestrator_auto_playwright_fallback(error_server):
     """Lines 203-216: fast fetch fails → Playwright auto-fallback renders the page."""
-    # error_server returns 403 → fetcher.fetch_sync raises → Playwright fallback
-    result = IngestOrchestrator().execute(error_server, mode="auto", timeout=20.0)
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url):
+            html = "<html><body><article><h1>Fallback</h1><p>Rendered content.</p></article></body></html>"
+            return FetchResult(
+                html=html,
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={},
+                timing_ms=1.0,
+                metadata={},
+            )
+
+    with patch("markdown_ingress.core.orchestrator.Renderer", FakeRenderer), patch(
+        "markdown_ingress.core.orchestrator.PLAYWRIGHT_AVAILABLE", True
+    ):
+        # error_server returns 403 → fetcher.fetch_sync raises → render fallback
+        result = IngestOrchestrator().execute(error_server, mode="auto", timeout=20.0)
+
     assert result is not None

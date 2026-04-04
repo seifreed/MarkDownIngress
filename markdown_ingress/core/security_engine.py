@@ -15,6 +15,11 @@ from markdown_ingress.core.security import SecurityAnalyzer
 logger = logging.getLogger(__name__)
 
 
+def _dedupe_preserving_order(values: list[str]) -> list[str]:
+    """Return unique values while preserving first-seen order."""
+    return list(dict.fromkeys(values))
+
+
 class SecurityEngine:
     """
     Advanced security engine combining basic heuristics with Nova Framework.
@@ -25,29 +30,80 @@ class SecurityEngine:
     - llm: Patterns + Nova semantics + LLM (~2s)
     """
 
+    # Default fallback score when Nova scan fails or returns None.
+    # Conservative value: higher score = more suspicious.
+    DEFAULT_EXCEPTION_FALLBACK_SCORE = 0.75
+    DEFAULT_NONE_SCORE = 0.5
+
     def __init__(
-        self, strict: bool = False, advanced_security: bool = False, use_llm: bool = False
+        self,
+        strict: bool = False,
+        advanced_security: bool = False,
+        use_llm: bool = False,
+        exception_fallback_score: float | None = None,
     ):
         self.strict = strict
         self.advanced_security = advanced_security
         self.use_llm = use_llm
+        # Score to use when Nova scan throws an exception (malicious payloads shouldn't bypass)
+        # Validate score is within valid range [0.0, 1.0]
+        # BUG FIX: Enforce minimum of 0.5 to prevent complete security bypass
+        MIN_FALLBACK_SCORE = 0.5
+        if exception_fallback_score is not None:
+            if not (0.0 <= exception_fallback_score <= 1.0):
+                logger.warning(
+                    "Invalid exception_fallback_score '%s', must be 0.0-1.0. Using default 0.75.",
+                    exception_fallback_score,
+                )
+                self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
+            elif exception_fallback_score < MIN_FALLBACK_SCORE:
+                logger.warning(
+                    "exception_fallback_score '%s' is below safe minimum %.1f. "
+                    "Setting to %.1f to prevent security bypass.",
+                    exception_fallback_score,
+                    MIN_FALLBACK_SCORE,
+                    MIN_FALLBACK_SCORE,
+                )
+                self.exception_fallback_score = MIN_FALLBACK_SCORE
+            else:
+                self.exception_fallback_score = exception_fallback_score
+        else:
+            self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
 
         # Initialize basic security analyzer
         self.basic_analyzer = SecurityAnalyzer(strict=strict)
 
         # Initialize Nova if available and requested
         self.nova = None
-        if self.advanced_security and NOVA_AVAILABLE:
-            try:
-                self.nova = NovaGuard(
-                    enable_keywords=True, enable_semantics=True, enable_llm=self.use_llm
+        self._nova_init_failed = False
+        if self.advanced_security:
+            if not NOVA_AVAILABLE:
+                self._nova_init_failed = True
+                logger.warning(
+                    "advanced_security=True but nova-hunting is not installed. "
+                    "Falling back to basic pattern detection only."
                 )
-                logger.info("Nova-tracer initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Nova-tracer: {e}")
-                self.nova = None
+            else:
+                try:
+                    self.nova = NovaGuard(
+                        enable_keywords=True, enable_semantics=True, enable_llm=self.use_llm
+                    )
+                    logger.info("Nova-tracer initialized successfully")
+                except Exception as e:
+                    self._nova_init_failed = True
+                    logger.warning(
+                        f"advanced_security=True but Nova-tracer failed to initialize: {e}. "
+                        "Falling back to basic pattern detection only."
+                    )
 
-    def analyze(self, markdown: str, metadata: dict) -> dict:
+    def analyze(
+        self,
+        markdown: str,
+        metadata: dict,
+        *,
+        block_threshold: float = 0.7,
+        warn_threshold: float = 0.4,
+    ) -> dict:
         """
         Analyze text for prompt injection.
 
@@ -61,36 +117,88 @@ class SecurityEngine:
         """
 
         # Tier 1: Basic pattern detection (ALWAYS)
-        hidden_detected = metadata.get("hidden_elements_count", 0) > 0
+        # Validate metadata before trusting it
+        hidden_detected = False
+        if isinstance(metadata, dict):
+            hidden_count = metadata.get("hidden_elements_count")
+            if isinstance(hidden_count, (int, float)) and hidden_count > 0:
+                hidden_detected = True
         basic_analysis = self.basic_analyzer.analyze(markdown, hidden_content_detected=hidden_detected)
         basic_score = basic_analysis.score
 
         # Tier 2+3: Nova Framework (CONDITIONAL)
+        # Run Nova when available and basic score is non-zero (indicating potential risk).
+        # Lowered threshold from 0.1 to 0.05 to prevent sophisticated attacks that
+        # score just below the old threshold from bypassing semantic detection.
+        # When advanced_security or strict is enabled, always run Nova.
         nova_score = 0.0
         nova_details = {}
         scan_method = "basic"
 
-        if self.nova and (basic_score > 0.3 or self.advanced_security or self.strict):
+        if self.nova and (basic_score > 0.05 or self.advanced_security or self.strict):
             try:
                 nova_result = self.nova.scan(markdown)
-                nova_score = nova_result["score"]
-                nova_details = nova_result
-                scan_method = "nova_llm" if self.use_llm else "nova_semantic"
-                logger.info(
-                    f"Nova scan: score={nova_score:.3f}, time={nova_details['scan_time_ms']:.0f}ms"
-                )
+                # Handle None return from Nova (malformed response)
+                if nova_result is None:
+                    nova_score = self.exception_fallback_score
+                    nova_details = {"error": "Nova returned None", "scan_incomplete": True}
+                    logger.warning("Nova returned None, using fallback score: %s", nova_score)
+                else:
+                    # Handle None score from Nova (e.g., when no rules configured)
+                    nova_score_raw = nova_result.get("score")
+                    if nova_score_raw is None:
+                        nova_score = self.DEFAULT_NONE_SCORE
+                        logger.debug("Nova returned None score, using default: %s", nova_score)
+                    else:
+                        nova_score = max(0.0, min(1.0, nova_score_raw))
+                    nova_details = nova_result
+                    scan_method = "nova_llm" if self.use_llm else "nova_semantic"
+                    scan_time = nova_details.get('scan_time_ms')
+                    if scan_time is not None:
+                        logger.info(
+                            f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms"
+                        )
+                    else:
+                        logger.info(f"Nova scan: score={nova_score:.3f} (scan incomplete)")
             except Exception as e:
                 logger.error(f"Nova scan failed: {e}")
-                nova_score = 0.0
-                nova_details = {"error": str(e)}
+                # Use conservative score on exception - malicious payloads
+                # that trigger Nova crash should not bypass scanning.
+                # Use configurable fallback (default 0.75) for security.
+                nova_score = self.exception_fallback_score
+                nova_details = {"error": str(e), "scan_incomplete": True}
 
-        # Combine scores (max of basic and weighted nova)
-        # Nova is generally more accurate, so weight it higher
-        final_score = max(basic_score, nova_score * 1.2)
-        final_score = min(final_score, 1.0)  # Cap at 1.0
+        # Combine scores: weighted combination that accounts for both signals.
+        # If one score is very high (>= 0.7), use max to prioritize the strong signal.
+        # Otherwise, blend both scores (40% basic + 60% nova) to capture combined risk.
+        # This prevents attacks that partially evade both detectors from getting low scores.
+        # BUG FIX: Add score floor to prevent bypass when basic detects content but nova scores 0.
+        # Attackers can craft content that triggers basic patterns (score ~0.5) but evades
+        # nova semantic detection (score 0.0), resulting in combined score 0.2 that bypasses.
+        if max(basic_score, nova_score) >= 0.7:
+            final_score = max(basic_score, nova_score)
+        else:
+            # Weighted combination: nova is more sophisticated, so weight it higher
+            combined = 0.4 * basic_score + 0.6 * nova_score
+            # Score floor: if basic detected something, ensure minimum score
+            # This prevents attackers from evading detection by crafting content
+            # that scores just below thresholds on both detectors
+            score_floor = basic_score * 0.5 if basic_score > 0.05 else 0.0
+            final_score = min(1.0, max(combined, score_floor))
+
+        # Adjust thresholds in strict mode for more aggressive blocking
+        if self.strict:
+            block_threshold = min(block_threshold, 0.5)
+            warn_threshold = min(warn_threshold, 0.3)
+            # BUG FIX: Ensure warn_threshold <= block_threshold after adjustment
+            if warn_threshold > block_threshold:
+                warn_threshold = max(0.0, block_threshold - 0.1)
 
         # Generate flags
         flags = self._generate_flags(basic_analysis, nova_details)
+
+        if self._nova_init_failed:
+            flags.append("warning:advanced_security_requested_but_unavailable")
 
         return {
             "injection_score": final_score,
@@ -101,8 +209,17 @@ class SecurityEngine:
             "scan_method": scan_method,
             "nova_available": NOVA_AVAILABLE,
             "nova_used": self.nova is not None,
+            "advanced_security_available": not self._nova_init_failed,
             "pattern_matches": basic_analysis.pattern_matches,
             "imperative_density": basic_analysis.imperative_density,
+            "explanation": self._build_explanation(
+                final_score=final_score,
+                basic_analysis=basic_analysis,
+                nova_details=nova_details,
+                scan_method=scan_method,
+                block_threshold=block_threshold,
+                warn_threshold=warn_threshold,
+            ),
         }
 
     def _generate_flags(self, basic_analysis, nova_details: dict) -> list:
@@ -125,4 +242,53 @@ class SecurityEngine:
         if nova_details.get("severity"):
             flags.append(f"severity:{nova_details['severity']}")
 
-        return list(set(flags))  # Unique flags
+        return _dedupe_preserving_order(flags)
+
+    def _build_explanation(
+        self,
+        *,
+        final_score: float,
+        basic_analysis,
+        nova_details: dict,
+        scan_method: str,
+        block_threshold: float = 0.7,
+        warn_threshold: float = 0.4,
+    ) -> dict:
+        """Produce actionable explainability data for downstream consumers."""
+        triggers = []
+        for match in basic_analysis.pattern_matches:
+            samples = []
+            for sample in match.get("samples", []):
+                if isinstance(sample, tuple):
+                    samples.append(" ".join(str(part) for part in sample if part))
+                else:
+                    samples.append(str(sample))
+            triggers.append(
+                {
+                    "source": "pattern",
+                    "name": match.get("pattern"),
+                    "weight": match.get("weight"),
+                    "occurrences": match.get("occurrences"),
+                    "samples": samples,
+                }
+            )
+
+        for rule in nova_details.get("matched_rules", []):
+            triggers.append({"source": "nova", "name": rule})
+
+        recommendation = "allow"
+        if final_score >= block_threshold:
+            recommendation = "block"
+        elif final_score >= warn_threshold:
+            recommendation = "warn"
+
+        return {
+            "scan_method": scan_method,
+            "recommendation": recommendation,
+            "summary": (
+                f"Detected {len(basic_analysis.pattern_matches)} heuristic pattern groups"
+                f" with imperative density {basic_analysis.imperative_density:.3f}."
+            ),
+            "triggers": triggers,
+            "hidden_content_detected": basic_analysis.hidden_content_detected,
+        }

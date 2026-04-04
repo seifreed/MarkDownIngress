@@ -18,12 +18,13 @@ class TestConfig:
         """Config has sensible defaults"""
         config = Config()
 
-        assert config.mode == "fast"
+        assert config.mode == "auto"
         assert config.timeout == 30.0
         assert config.strict is True
         assert config.model == "gpt-4"
         assert config.cache_enabled is False
         assert config.batch_max_concurrent == 5
+        assert config.policy == "normal"
 
     def test_config_to_dict(self):
         """Convert Config to dictionary"""
@@ -50,6 +51,40 @@ class TestConfig:
 
         assert "mode: fast" in yaml_str
         assert "timeout:" in yaml_str
+
+    def test_config_serialization_remains_safe_after_cache_initialization(self):
+        config = Config(cache_enabled=True, cache_type="memory")
+
+        config.create_cache()
+        ingest_config = config.to_ingest_config()
+        data = config.to_dict()
+
+        assert ingest_config.cache is not None
+        assert data["cache_enabled"] is True
+        assert "_cache_backend" not in data
+        assert '"cache_enabled": true' in config.to_json()
+        assert "cache_enabled: true" in config.to_yaml()
+
+    def test_config_to_ingest_config_preserves_output_format_and_explicit_defaults(self):
+        config = Config(output_profile="rag_chunkable", extract_blocks=False, output_format="json")
+
+        ingest_config = config.to_ingest_config()
+        resolved = ingest_config.apply_output_profile()
+
+        assert ingest_config.output_format == "json"
+        assert "extract_blocks" in ingest_config.explicit_keys()
+        assert "output_format" in ingest_config.explicit_keys()
+        assert resolved.extract_blocks is False
+
+    def test_config_to_ingest_config_propagates_report_settings(self):
+        config = Config(save_reports=True, reports_dir="reports-x")
+
+        ingest_config = config.to_ingest_config()
+
+        assert ingest_config.save_reports is True
+        assert ingest_config.reports_dir == "reports-x"
+        assert "save_reports" in ingest_config.explicit_keys()
+        assert "reports_dir" in ingest_config.explicit_keys()
 
     def test_config_from_dict(self):
         """Create Config from dictionary"""
@@ -194,6 +229,65 @@ batch_max_concurrent: 10
             for key in ["MDI_STRICT", "MDI_CACHE_ENABLED", "MDI_SAVE_REPORTS"]:
                 os.environ.pop(key, None)
 
+    def test_env_report_settings_propagate_to_runtime(self):
+        os.environ["MDI_SAVE_REPORTS"] = "true"
+        os.environ["MDI_REPORTS_DIR"] = "saved-reports"
+
+        try:
+            config = ConfigLoader().load()
+            ingest_config = config.to_ingest_config()
+
+            assert config.save_reports is True
+            assert config.reports_dir == "saved-reports"
+            assert ingest_config.save_reports is True
+            assert ingest_config.reports_dir == "saved-reports"
+            assert "save_reports" in ingest_config.explicit_keys()
+            assert "reports_dir" in ingest_config.explicit_keys()
+        finally:
+            for key in ["MDI_SAVE_REPORTS", "MDI_REPORTS_DIR"]:
+                os.environ.pop(key, None)
+
+    def test_env_invalid_bool_keeps_previous_value(self):
+        os.environ["MDI_STRICT"] = "definitely"
+        os.environ["MDI_CACHE_ENABLED"] = "garbage"
+
+        try:
+            config = ConfigLoader()._apply_env_overrides(
+                Config(strict=True, cache_enabled=True)
+            )
+            assert config.strict is True
+            assert config.cache_enabled is True
+        finally:
+            for key in ["MDI_STRICT", "MDI_CACHE_ENABLED"]:
+                os.environ.pop(key, None)
+
+    def test_env_invalid_numeric_values_keep_previous_value(self):
+        os.environ["MDI_CACHE_TTL"] = "0"
+        os.environ["MDI_BATCH_TIMEOUT"] = "0"
+        os.environ["MDI_BATCH_MAX_CONCURRENT"] = "0"
+
+        try:
+            config = ConfigLoader()._apply_env_overrides(
+                Config(cache_ttl=120, batch_timeout=22.0, batch_max_concurrent=7)
+            )
+            assert config.cache_ttl == 120
+            assert config.batch_timeout == 22.0
+            assert config.batch_max_concurrent == 7
+        finally:
+            for key in ["MDI_CACHE_TTL", "MDI_BATCH_TIMEOUT", "MDI_BATCH_MAX_CONCURRENT"]:
+                os.environ.pop(key, None)
+
+    def test_env_allow_local_urls_is_exposed(self):
+        os.environ["MDI_ALLOW_LOCAL_URLS"] = "true"
+
+        try:
+            config = ConfigLoader().load()
+            assert config.allow_local_urls is True
+            ingest_config = config.to_ingest_config()
+            assert ingest_config.allow_local_urls is True
+        finally:
+            os.environ.pop("MDI_ALLOW_LOCAL_URLS", None)
+
     def test_env_custom_patterns(self):
         """Custom patterns from environment variable"""
         os.environ["MDI_CUSTOM_PATTERNS"] = "pattern1, pattern2, pattern3"
@@ -205,6 +299,44 @@ batch_max_concurrent: 10
             assert config.custom_patterns == ["pattern1", "pattern2", "pattern3"]
         finally:
             os.environ.pop("MDI_CUSTOM_PATTERNS", None)
+
+    def test_env_screenshot_boolean_and_path_parsing(self):
+        os.environ["MDI_SCREENSHOT"] = "true"
+        try:
+            config = ConfigLoader().load()
+            assert config.screenshot is True
+        finally:
+            os.environ.pop("MDI_SCREENSHOT", None)
+
+        os.environ["MDI_SCREENSHOT"] = "artifacts/out.png"
+        try:
+            config = ConfigLoader().load()
+            assert config.screenshot == "artifacts/out.png"
+        finally:
+            os.environ.pop("MDI_SCREENSHOT", None)
+
+    def test_env_fetcher_overrides_are_exposed(self):
+        os.environ["MDI_DOMAIN_REQUEST_INTERVAL"] = "0.5"
+        os.environ["MDI_CIRCUIT_BREAKER_THRESHOLD"] = "7"
+        os.environ["MDI_CIRCUIT_BREAKER_OPEN_SECONDS"] = "12.5"
+
+        try:
+            config = ConfigLoader().load()
+            assert config.domain_request_interval == 0.5
+            assert config.circuit_breaker_threshold == 7
+            assert config.circuit_breaker_open_seconds == 12.5
+
+            ingest_config = config.to_ingest_config()
+            assert ingest_config.domain_request_interval == 0.5
+            assert ingest_config.circuit_breaker_threshold == 7
+            assert ingest_config.circuit_breaker_open_seconds == 12.5
+        finally:
+            for key in (
+                "MDI_DOMAIN_REQUEST_INTERVAL",
+                "MDI_CIRCUIT_BREAKER_THRESHOLD",
+                "MDI_CIRCUIT_BREAKER_OPEN_SECONDS",
+            ):
+                os.environ.pop(key, None)
 
     def test_save_json(self):
         """Save configuration to JSON file"""
@@ -251,6 +383,37 @@ batch_max_concurrent: 10
             assert isinstance(config, Config)
             assert config.mode == "render"
             assert config.timeout == 75.0
+
+    def test_to_ingest_config_maps_runtime_fields(self):
+        """Legacy file config converts into the runtime ingest config."""
+        config = Config(
+            mode="auto",
+            timeout=45.0,
+            strict=False,
+            allow_local_urls=True,
+            model="claude",
+            cache_enabled=True,
+            cache_type="memory",
+            cache_ttl=120,
+            policy="moderate",
+            custom_patterns=["secret"],
+        )
+
+        ingest_config = config.to_ingest_config()
+
+        assert ingest_config.mode == "auto"
+        assert ingest_config.timeout == 45.0
+        assert ingest_config.strict is False
+        assert ingest_config.allow_local_urls is True
+        assert ingest_config.model == "claude"
+        assert ingest_config.cache is not None
+        assert ingest_config.cache_ttl == 120
+        assert ingest_config.policy_name == "normal"
+        assert ingest_config.custom_patterns == ["secret"]
+
+    def test_removed_injection_threshold_is_rejected_in_strict_config_load(self):
+        with pytest.raises(ValueError, match="Unknown config keys"):
+            Config.from_dict({"injection_threshold": 0.95}, strict=True)
 
     def test_partial_config_uses_defaults(self):
         """Partial config file fills in missing values with defaults"""

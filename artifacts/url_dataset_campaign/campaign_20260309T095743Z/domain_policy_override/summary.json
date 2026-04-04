@@ -1,0 +1,60 @@
+{
+  "scenario": "domain_policy_override",
+  "description": "Fast ingestion using a per-domain policy override to exercise runtime policy resolution.",
+  "assigned_urls": 6,
+  "config": {
+    "mode": "fast",
+    "strict": true,
+    "model": "gpt-4",
+    "timeout": 6.0,
+    "auto_render_threshold": 50,
+    "stealth": false,
+    "disable_http2": false,
+    "extreme_mode": false,
+    "screenshot": null,
+    "extract_metadata": true,
+    "extract_links": true,
+    "advanced_security": false,
+    "use_llm": false,
+    "cache": null,
+    "cache_ttl": null,
+    "policy_name": "normal",
+    "custom_patterns": [],
+    "plugin_dirs": [],
+    "output_profile": "default",
+    "extract_blocks": true,
+    "chunking_strategy": "heading",
+    "chunk_size": 1200,
+    "chunk_overlap": 120,
+    "detect_language": true,
+    "normalize_multilingual": true,
+    "include_security_explanation": true,
+    "include_observability": true,
+    "domain_policies": [
+      "dynamic_per_url"
+    ],
+    "domain_request_interval": 0.0,
+    "circuit_breaker_threshold": 25,
+    "circuit_breaker_open_seconds": 5.0,
+    "render_cost_budget": null,
+    "output_formats": [
+      "markdown"
+    ]
+  },
+  "counts": {
+    "processed": 6,
+    "ok": 4,
+    "warnings": 4,
+    "errors": 2
+  },
+  "warning_types": {
+    "flags": 4,
+    "hidden_elements": 4,
+    "nonzero_injection_score": 4
+  },
+  "error_types": {
+    "rate_limited": 2
+  },
+  "warnings_file": "artifacts/url_dataset_campaign/campaign_20260309T095743Z/domain_policy_override/warnings.jsonl",
+  "errors_file": "artifacts/url_dataset_campaign/campaign_20260309T095743Z/domain_policy_override/errors.jsonl"
+}
