@@ -4,7 +4,6 @@
 import sys
 
 from markdown_ingress import __version__
-
 from markdown_ingress.cli_commands import (
     build_json_output,
     cmd_batch,
@@ -16,7 +15,9 @@ from markdown_ingress.cli_commands import (
     process_batch_with_progress,
 )
 from markdown_ingress.cli_parsing import (
-    IngestArgs,
+    IngestArgs as _IngestArgs,
+)
+from markdown_ingress.cli_parsing import (
     add_common_ingest_args,
     create_batch_parser,
     create_benchmark_parser,
@@ -59,6 +60,7 @@ _is_legacy_mode = is_legacy_mode
 _create_legacy_parser = create_legacy_parser
 _create_standard_parser = create_standard_parser
 
+
 def _display_header(_args=None):
     return display_header(__version__)
 
@@ -72,22 +74,33 @@ _display_content = display_content
 
 def _display_rich_output(doc, args):
     return display_rich_output(doc, args, __version__)
+
+
 _load_urls_from_file = load_urls_from_file
 _display_batch_summary = display_batch_summary
 _create_batch_results_table = create_batch_results_table
 _save_json_output = save_json_output
 _save_markdown_output = save_markdown_output
 _save_batch_results = save_batch_results
+IngestArgs = _IngestArgs
 
 
-def _save_batch_json(output_path, urls, batch_result):
-    args = type("Args", (), {"output": str(output_path), "json": True})()
+def _save_batch_json(output_path, urls, batch_result, no_content: bool = False):
+    args = type(
+        "Args",
+        (),
+        {"output": str(output_path), "json": True, "no_content": no_content},
+    )()
     save_batch_results(args, urls, batch_result)
 
 
-def _save_batch_markdown(output_path, batch_result):
-    args = type("Args", (), {"output": str(output_path), "json": False})()
-    save_batch_results(args, [], batch_result)
+def _save_batch_markdown(output_path, batch_result, urls=None, no_content: bool = False):
+    args = type(
+        "Args",
+        (),
+        {"output": str(output_path), "json": False, "no_content": no_content},
+    )()
+    save_batch_results(args, urls or [], batch_result)
 
 
 def main():

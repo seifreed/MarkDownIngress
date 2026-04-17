@@ -20,6 +20,7 @@ All public APIs are re-exported here for backward compatibility.
 """
 
 import asyncio
+import logging
 import time
 from typing import Any, Literal, cast
 
@@ -29,7 +30,8 @@ from markdown_ingress.core.stealth import (
     AdvancedStealthConfig,
     get_advanced_context_options,
     get_advanced_stealth_config,
-    inject_stealth,
+    inject_stealth_post_nav,
+    inject_stealth_pre_nav,
 )
 from markdown_ingress.models import FetchResult
 
@@ -42,6 +44,18 @@ STEALTH_JS_POST_LOAD = _stealth.STEALTH_JS_POST_LOAD
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 TIMEZONES = _stealth.TIMEZONES
 ULTRA_STEALTH_ARGS = _stealth.ULTRA_STEALTH_ARGS
+logger = logging.getLogger(__name__)
+
+
+async def _close_async_resource(resource: Any | None, label: str) -> None:
+    """Close an async Playwright resource without masking earlier failures."""
+    if resource is None:
+        return
+    try:
+        await resource.close()
+    except Exception as exc:  # pragma: no cover - defensive cleanup path
+        logger.warning("Failed to close %s cleanly: %s", label, exc)
+
 
 # ============================================================================
 # ADVANCED STEALTH RENDERER
@@ -125,7 +139,9 @@ class AdvancedStealthRenderer:
         except Exception as e:
             error_str = str(e)
             # Check for HTTP/2 protocol error
-            if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:  # pragma: no cover
+            if (
+                "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2
+            ):  # pragma: no cover
                 # Retry with HTTP/2 disabled
                 retry_renderer = AdvancedStealthRenderer(  # pragma: no cover
                     timeout=self.timeout / 1000.0,
@@ -177,7 +193,10 @@ class AdvancedStealthRenderer:
                 "ignore_default_args": ["--enable-automation"],
             }
 
+            browser = None
             browser = await p.chromium.launch(**cast(dict[str, Any], launch_options))
+            context = None
+            page = None
 
             try:
                 # Create context with advanced stealth options
@@ -188,13 +207,16 @@ class AdvancedStealthRenderer:
                     # Create page
                     page = await context.new_page()
 
-                    # Inject stealth scripts
-                    await inject_stealth(page)
+                    # Inject stealth init scripts (before navigation)
+                    await inject_stealth_pre_nav(page)
 
                     # Navigate to URL
                     response = await page.goto(
                         url, timeout=self.timeout, wait_until=cast(WaitUntil, self.wait_until)
                     )
+
+                    # Run post-navigation stealth cleanup on the loaded page
+                    await inject_stealth_post_nav(page)
 
                     # Additional wait for dynamic content
                     await page.wait_for_timeout(500)
@@ -235,10 +257,11 @@ class AdvancedStealthRenderer:
                     )
 
                 finally:
-                    await context.close()
+                    await _close_async_resource(page, "page")
+                    await _close_async_resource(context, "browser context")
 
             finally:
-                await browser.close()
+                await _close_async_resource(browser, "browser")
 
     def render_sync(self, url: str) -> FetchResult:
         """

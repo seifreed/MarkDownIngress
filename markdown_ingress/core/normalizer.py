@@ -122,9 +122,9 @@ class Normalizer:  # implements INormalizer protocol
     # their interior spacing must not be collapsed. They're handled separately.
     _MARKDOWN_PREFIX_RE = re.compile(
         r"^(?:"
-        r"(?:[ \t]*[-*+][ \t])"  # unordered list items
-        r"|(?:[ \t]*\d+\.[ \t])"  # ordered list items
-        r"|(?:[ \t]*>)"  # blockquotes
+        r"(?:[ ]{0,3}[-*+][ \t])"  # unordered list items (CommonMark: max 3 leading spaces)
+        r"|(?:[ ]{0,3}\d+\.[ \t])"  # ordered list items
+        r"|(?:[ ]{0,3}>)"  # blockquotes
         r")",
     )
 
@@ -146,15 +146,11 @@ class Normalizer:  # implements INormalizer protocol
         Returns:
             Text with normalized whitespace
         """
-        # Replace multiple newlines with double newline (paragraph separator)
-        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-
-        # Remove trailing whitespace on lines
-        text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
-
         # Track fenced code block state
         in_fenced_code = False
         fenced_code_fence = None
+        in_indented_code = False
+        previous_blank_outside = False
 
         # Normalize whitespace differently based on line type:
         # - Fenced code blocks: preserve ALL whitespace
@@ -165,41 +161,111 @@ class Normalizer:  # implements INormalizer protocol
         normalized: list[str] = []
         for line in lines:
             # Track fenced code blocks (```)
-            if line.strip().startswith("```"):
-                # Check if this is the same fence type as opening
-                current_fence = line.strip()[:3]
+            stripped = line.strip()
+            fence_char = None
+            if stripped.startswith("```"):
+                fence_char = "`"
+            elif stripped.startswith("~~~"):
+                fence_char = "~"
+
+            if fence_char is not None:
+                # Count consecutive fence characters to match fence length
+                fence_len = 0
+                for ch in stripped:
+                    if ch == fence_char:
+                        fence_len += 1
+                    else:
+                        break
+                current_fence = fence_char * fence_len
+                # BUG FIX: CommonMark requires minimum 3 fence characters
+                # Single or double characters are not valid fence delimiters
+                if len(current_fence) < 3:
+                    # Not a valid fence delimiter, treat as regular text
+                    normalized.append(line)
+                    continue
                 if not in_fenced_code:
                     # Opening fence
                     in_fenced_code = True
                     fenced_code_fence = current_fence
-                    normalized.append(line)
-                elif current_fence == fenced_code_fence:
-                    # Closing fence (same type as opening)
+                    normalized.append(line.rstrip())
+                    previous_blank_outside = False
+                elif (
+                    fenced_code_fence is not None
+                    and fence_char == fenced_code_fence[0]
+                    and len(current_fence) >= len(fenced_code_fence)
+                ):
+                    # Closing fence (CommonMark: same char, at least as many as opening)
                     in_fenced_code = False
                     fenced_code_fence = None
-                    normalized.append(line)
+                    normalized.append(line.rstrip())
+                    previous_blank_outside = False
                 else:
-                    # Different fence type inside code block - preserve
+                    # Different fence type or shorter fence inside code block - preserve
                     normalized.append(line)
                 continue
 
             if in_fenced_code:
                 # Inside fenced code block: preserve ALL whitespace
                 normalized.append(line)
-            elif self._INDENTED_CODE_RE.match(line):
-                # Indented code block: preserve ALL whitespace (no collapsing)
+                previous_blank_outside = False
+            elif in_indented_code:
+                # Continue indented code block: preserve indented/blank lines
+                if self._INDENTED_CODE_RE.match(line):
+                    normalized.append(line)
+                    previous_blank_outside = False
+                elif not line.strip():
+                    # Blank line inside indented code — preserve (may continue)
+                    normalized.append("")
+                    previous_blank_outside = True
+                else:
+                    # Non-indented, non-blank line exits indented code block
+                    in_indented_code = False
+                    cleaned = re.sub(r"[ \t]+", " ", line).strip()
+                    normalized.append(cleaned)
+                    previous_blank_outside = False
+            elif previous_blank_outside and self._INDENTED_CODE_RE.match(line):
+                # Start indented code block (per CommonMark: only after blank line)
+                in_indented_code = True
                 normalized.append(line)
+                previous_blank_outside = False
             elif self._MARKDOWN_PREFIX_RE.match(line):
                 # List items/blockquotes: preserve leading, collapse interior runs
                 stripped = line.lstrip(" \t")
                 leading = line[: len(line) - len(stripped)]
-                normalized.append(leading + re.sub(r"[ \t]+", " ", stripped))
+                normalized.append(leading + re.sub(r"[ \t]+", " ", stripped).rstrip())
+                previous_blank_outside = False
             else:
                 # Regular lines: collapse spaces and strip leading whitespace
-                normalized.append(re.sub(r"[ \t]+", " ", line).lstrip())
-        text = "\n".join(normalized)
+                cleaned = re.sub(r"[ \t]+", " ", line).strip()
+                if not cleaned:
+                    if not previous_blank_outside:
+                        normalized.append("")
+                    previous_blank_outside = True
+                else:
+                    normalized.append(cleaned)
+                    previous_blank_outside = False
 
-        return text.strip()
+        # BUG FIX: Auto-close unclosed fenced code blocks
+        # CommonMark allows unclosed blocks but auto-closing ensures consistent output
+        if in_fenced_code and fenced_code_fence:
+            import logging
+
+            _logger = logging.getLogger(__name__)
+            _logger.warning(
+                "Unclosed fenced code block detected, auto-closing (fence=%s)",
+                fenced_code_fence[:3] + "..." if len(fenced_code_fence) > 3 else fenced_code_fence,
+            )
+            normalized.append(fenced_code_fence)
+
+        start = 0
+        while start < len(normalized) and normalized[start] == "":
+            start += 1
+        if start:
+            normalized = normalized[start:]
+        while normalized and normalized[-1] == "":
+            normalized.pop()
+
+        return "\n".join(normalized)
 
     def normalize_url(self, url: str) -> str:
         """

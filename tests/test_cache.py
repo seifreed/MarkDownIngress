@@ -1,6 +1,5 @@
 """Tests for caching"""
 
-import copy
 import time
 
 import pytest
@@ -49,15 +48,345 @@ def test_cache_key_generation():
     assert key4 != key5
 
 
-def test_cache_key_generation_uses_full_user_agent_entropy():
-    base = "Mozilla/5.0 (compatible; MarkDownIngressTest/"
-    ua1 = base + "A" * 80
-    ua2 = base + "A" * 79 + "B"
+def test_cache_key_generation_uses_extra_dimensions():
+    extra1 = {"user_agent": "Mozilla/5.0 AgentA"}
+    extra2 = {"user_agent": "Mozilla/5.0 AgentB"}
 
-    key1 = Cache.make_key("http://example.com", user_agent=ua1)
-    key2 = Cache.make_key("http://example.com", user_agent=ua2)
+    key1 = Cache.make_key("http://example.com", extra=extra1)
+    key2 = Cache.make_key("http://example.com", extra=extra2)
 
     assert key1 != key2
+
+
+def test_cache_and_request_identity_normalize_trailing_dot_hosts():
+    from markdown_ingress.config_models import DomainPolicy, IngestConfig
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    config = IngestConfig(mode="fast")
+    url_a = "http://example.com/path?x=1"
+    url_b = "http://example.com./path?x=1"
+
+    identity_a = build_request_identity(url_a, config)
+    identity_b = build_request_identity(url_b, config)
+
+    assert identity_a == identity_b
+    assert identity_a["url"] == "http://example.com/path?x=1"
+    assert Cache.make_key(
+        url_a, mode=config.mode, strict=config.strict, extra=identity_a
+    ) == Cache.make_key(
+        url_b,
+        mode=config.mode,
+        strict=config.strict,
+        extra=identity_b,
+    )
+    assert make_request_key(url_a, config) == make_request_key(url_b, config)
+
+    default_port_a = "http://example.com:80/path?x=1"
+    default_port_b = "http://example.com/path?x=1"
+    assert Cache.make_key(default_port_a, mode=config.mode, strict=config.strict) == Cache.make_key(
+        default_port_b,
+        mode=config.mode,
+        strict=config.strict,
+    )
+    assert make_request_key(default_port_a, config) == make_request_key(default_port_b, config)
+
+    fragment_a = "http://example.com/path?x=1#one"
+    fragment_b = "http://example.com/path?x=1#two"
+    assert Cache.make_key(fragment_a, mode=config.mode, strict=config.strict) == Cache.make_key(
+        fragment_b,
+        mode=config.mode,
+        strict=config.strict,
+    )
+    assert make_request_key(fragment_a, config) == make_request_key(fragment_b, config)
+
+    root_a = "http://example.com"
+    root_b = "http://example.com/"
+    assert Cache.make_key(root_a, mode=config.mode, strict=config.strict) == Cache.make_key(
+        root_b,
+        mode=config.mode,
+        strict=config.strict,
+    )
+    assert make_request_key(root_a, config) == make_request_key(root_b, config)
+
+    policy_a = DomainPolicy(domain="example.com")
+    policy_b = DomainPolicy(domain="example.com.")
+    assert build_request_identity(url_a, config, policy_a) == build_request_identity(
+        url_a, config, policy_b
+    )
+
+
+def test_request_identity_distinguishes_domain_policy_notes():
+    from markdown_ingress.config_models import DomainPolicy, IngestConfig
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    config = IngestConfig(mode="fast")
+    policy_a = DomainPolicy(domain="example.com", notes="keep this output chunk-friendly")
+    policy_b = DomainPolicy(domain="example.com", notes="use a strict security summary")
+
+    identity_a = build_request_identity("http://example.com", config, policy_a)
+    identity_b = build_request_identity("http://example.com", config, policy_b)
+
+    assert (
+        identity_a["matched_domain_policy"]["notes"] != identity_b["matched_domain_policy"]["notes"]
+    )
+    assert identity_a != identity_b
+    assert make_request_key("http://example.com", config, policy_a) != make_request_key(
+        "http://example.com",
+        config,
+        policy_b,
+    )
+
+
+def test_request_identity_distinguishes_plugin_directory_contents(tmp_path):
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    plugin_file = plugin_dir / "versioned_plugin.py"
+    plugin_file.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class VersionedPlugin(Plugin):
+    def get_patterns(self):
+        return [r"alpha_marker"]
+""".strip())
+
+    config = IngestConfig(mode="fast", plugin_dirs=[str(plugin_dir)])
+    identity_a = build_request_identity("http://example.com", config)
+    key_a = make_request_key("http://example.com", config)
+
+    plugin_file.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class VersionedPlugin(Plugin):
+    def get_patterns(self):
+        return [r"alpha_marker", r"beta_marker"]
+""".strip())
+
+    identity_b = build_request_identity("http://example.com", config)
+
+    assert identity_a["plugin_dirs"] != identity_b["plugin_dirs"]
+    assert identity_a != identity_b
+    assert key_a != make_request_key("http://example.com", config)
+
+
+def test_request_identity_resolves_allow_local_urls_from_environment(monkeypatch):
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.inflight import build_request_identity
+
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "1")
+
+    implicit_config = IngestConfig(mode="fast")
+    explicit_config = IngestConfig(mode="fast", allow_local_urls=True)
+
+    implicit_identity = build_request_identity("http://example.com", implicit_config)
+    explicit_identity = build_request_identity("http://example.com", explicit_config)
+
+    assert implicit_identity["allow_local_urls"] is True
+    assert implicit_identity == explicit_identity
+
+
+def test_request_identity_ignores_cache_ttl():
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    short_ttl = IngestConfig(mode="fast", cache_ttl=10)
+    long_ttl = IngestConfig(mode="fast", cache_ttl=100)
+
+    short_identity = build_request_identity("http://example.com", short_ttl)
+    long_identity = build_request_identity("http://example.com", long_ttl)
+
+    assert "cache_ttl" not in short_identity
+    assert "cache_ttl" not in long_identity
+    assert short_identity == long_identity
+    assert make_request_key("http://example.com", short_ttl) == make_request_key(
+        "http://example.com",
+        long_ttl,
+    )
+
+
+def test_request_identity_ignores_cache_backend_presence():
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.cache import MemoryCache
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    cached = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=60))
+    uncached = IngestConfig(mode="fast", cache=None)
+
+    cached_identity = build_request_identity("http://example.com", cached)
+    uncached_identity = build_request_identity("http://example.com", uncached)
+
+    assert "cache_enabled" not in cached_identity
+    assert "cache_enabled" not in uncached_identity
+    assert "cache_backend" not in cached_identity
+    assert "cache_backend" not in uncached_identity
+    assert cached_identity == uncached_identity
+    assert make_request_key("http://example.com", cached) == make_request_key(
+        "http://example.com",
+        uncached,
+    )
+
+
+def test_request_identity_ignores_cache_backend_details(monkeypatch, tmp_path):
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.cache import MemoryCache, SQLiteCache
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    memory_a = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=60, max_entries=10))
+    memory_b = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=60, max_entries=10))
+    memory_c = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=120, max_entries=10))
+
+    memory_identity_a = build_request_identity("http://example.com", memory_a)
+    memory_identity_b = build_request_identity("http://example.com", memory_b)
+    memory_identity_c = build_request_identity("http://example.com", memory_c)
+
+    assert memory_identity_a == memory_identity_b
+    assert memory_identity_a == memory_identity_c
+    assert make_request_key("http://example.com", memory_a) == make_request_key(
+        "http://example.com",
+        memory_b,
+    )
+    assert make_request_key("http://example.com", memory_a) == make_request_key(
+        "http://example.com",
+        memory_c,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    sqlite_a = None
+    sqlite_b = None
+    try:
+        sqlite_a = IngestConfig(
+            mode="fast", cache=SQLiteCache(db_path="cache-a.db", default_ttl=60)
+        )
+        sqlite_b = IngestConfig(
+            mode="fast", cache=SQLiteCache(db_path="cache-b.db", default_ttl=60)
+        )
+
+        sqlite_identity_a = build_request_identity("http://example.com", sqlite_a)
+        sqlite_identity_b = build_request_identity("http://example.com", sqlite_b)
+
+        assert sqlite_identity_a == sqlite_identity_b
+        assert make_request_key("http://example.com", sqlite_a) == make_request_key(
+            "http://example.com",
+            sqlite_b,
+        )
+    finally:
+        if sqlite_a is not None and getattr(sqlite_a.cache, "close", None) is not None:
+            sqlite_a.cache.close()
+        if sqlite_b is not None and getattr(sqlite_b.cache, "close", None) is not None:
+            sqlite_b.cache.close()
+
+
+def test_request_identity_ignores_custom_cache_backend_state():
+    from markdown_ingress.config_models import IngestConfig
+    from markdown_ingress.core.cache import MemoryCache
+    from markdown_ingress.core.inflight import build_request_identity, make_request_key
+
+    class SlotCache:
+        __slots__ = ("name", "size")
+
+        def __init__(self, name: str, size: int):
+            self.name = name
+            self.size = size
+
+    class PrivateSlotCache:
+        __slots__ = ("_namespace",)
+
+        def __init__(self, namespace: str):
+            self._namespace = namespace
+
+    class NamespacedMemoryCache(MemoryCache):
+        def __init__(self, namespace: str, **kwargs):
+            super().__init__(**kwargs)
+            self.namespace = namespace
+
+    class PublicHandleCache:
+        def __init__(self, namespace: str):
+            self.namespace = namespace
+            self.handle = object()
+
+    slot_identity_a = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=SlotCache("alpha", 1)),
+    )
+    slot_identity_b = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=SlotCache("alpha", 2)),
+    )
+
+    assert slot_identity_a == slot_identity_b
+    assert make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=SlotCache("alpha", 1)),
+    ) == make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=SlotCache("alpha", 2)),
+    )
+
+    private_identity_a = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PrivateSlotCache("left")),
+    )
+    private_identity_b = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PrivateSlotCache("right")),
+    )
+
+    assert private_identity_a == private_identity_b
+    assert make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PrivateSlotCache("left")),
+    ) == make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PrivateSlotCache("right")),
+    )
+
+    memory_identity_a = build_request_identity(
+        "http://example.com",
+        IngestConfig(
+            mode="fast", cache=NamespacedMemoryCache("left", default_ttl=60, max_entries=10)
+        ),
+    )
+    memory_identity_b = build_request_identity(
+        "http://example.com",
+        IngestConfig(
+            mode="fast", cache=NamespacedMemoryCache("right", default_ttl=60, max_entries=10)
+        ),
+    )
+
+    assert memory_identity_a == memory_identity_b
+    assert make_request_key(
+        "http://example.com",
+        IngestConfig(
+            mode="fast", cache=NamespacedMemoryCache("left", default_ttl=60, max_entries=10)
+        ),
+    ) == make_request_key(
+        "http://example.com",
+        IngestConfig(
+            mode="fast", cache=NamespacedMemoryCache("right", default_ttl=60, max_entries=10)
+        ),
+    )
+
+    public_handle_identity_a = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PublicHandleCache("shared")),
+    )
+    public_handle_identity_b = build_request_identity(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PublicHandleCache("shared")),
+    )
+
+    assert public_handle_identity_a == public_handle_identity_b
+    assert make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PublicHandleCache("shared")),
+    ) == make_request_key(
+        "http://example.com",
+        IngestConfig(mode="fast", cache=PublicHandleCache("shared")),
+    )
 
 
 def test_memory_cache_basic(sample_document):
@@ -423,7 +752,6 @@ def test_sqlite_cache_path_traversal_blocked():
 
 def test_sqlite_cache_corrupt_entry_deleted(tmp_path, caplog):
     """Test that corrupt entries are deleted from database on deserialization failure"""
-    import json
     import logging
 
     db_path = tmp_path / "test.db"
@@ -493,3 +821,9 @@ def test_memory_cache_returns_deep_copy(sample_document):
     assert doc2 is not None
     assert doc2.metadata["nested"]["deep"] == "value"
     assert doc2.metadata["list"] == [1, 2, 3]
+
+
+def test_memory_cache_negative_max_entries_raises():
+    """Negative max_entries must raise ValueError instead of silently becoming unlimited."""
+    with pytest.raises(ValueError, match="max_entries must be >= 0"):
+        MemoryCache(max_entries=-1)

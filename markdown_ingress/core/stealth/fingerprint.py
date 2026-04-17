@@ -6,7 +6,6 @@ This module provides JavaScript injection for:
 - Canvas fingerprinting protection
 """
 
-
 # This module extends the base JavaScript injection with fingerprinting-specific patches
 # These are already included in js_injection.py but documented here for organization
 
@@ -24,16 +23,16 @@ WEBGL_FINGERPRINT_JS = """
 // WebGL Fingerprinting Patches
 // ============================================================================
 
-// Override WebGL parameters to provide consistent, realistic values
+// Override WebGL parameters to provide realistic per-session values
 const getParameter = WebGLRenderingContext.prototype.getParameter;
 WebGLRenderingContext.prototype.getParameter = function(parameter) {
     // UNMASKED_VENDOR_WEBGL
     if (parameter === 37445) {
-        return 'Intel Inc.';
+        return '__WEBGL_VENDOR__';
     }
     // UNMASKED_RENDERER_WEBGL
     if (parameter === 37446) {
-        return 'Intel Iris OpenGL Engine';
+        return '__WEBGL_RENDERER__';
     }
     return getParameter.apply(this, [parameter]);
 };
@@ -43,10 +42,10 @@ if (typeof WebGL2RenderingContext !== 'undefined') {
     const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
     WebGL2RenderingContext.prototype.getParameter = function(parameter) {
         if (parameter === 37445) {
-            return 'Intel Inc.';
+            return '__WEBGL_VENDOR__';
         }
         if (parameter === 37446) {
-            return 'Intel Iris OpenGL Engine';
+            return '__WEBGL_RENDERER__';
         }
         return getParameter2.apply(this, [parameter]);
     };

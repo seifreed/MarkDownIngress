@@ -96,6 +96,13 @@ def test_renderer_init_config_override_with_params():
     assert renderer.wait_until == "load"
 
 
+def test_renderer_init_config_override_can_clear_inherited_screenshot():
+    config = RenderConfig(timeout=30.0, wait_until="networkidle", screenshot="shot.png")
+    renderer = Renderer(config=config, screenshot=None)
+
+    assert renderer.screenshot is None
+
+
 # ---------------------------------------------------------------------------
 # render_sync  (line 562)
 # ---------------------------------------------------------------------------
@@ -376,18 +383,18 @@ def test_renderer_init_config_override_all_remaining_params():
     config = RenderConfig(timeout=30.0)
     renderer = Renderer(
         config=config,
-        headless=True,        # line 115
+        headless=True,  # line 115
         user_agent="Agent/1.0",  # line 117
-        stealth=True,         # line 119
-        disable_http2=True,   # line 121
-        extreme_mode=False,   # line 123
+        stealth=True,  # line 119
+        disable_http2=True,  # line 121
+        extreme_mode=False,  # line 123
         block_resources=True,  # line 125
-        block_images=True,    # line 127
-        block_fonts=True,     # line 129
-        block_media=True,     # line 131
-        block_ads=True,       # line 133
+        block_images=True,  # line 127
+        block_fonts=True,  # line 129
+        block_media=True,  # line 131
+        block_ads=True,  # line 133
         block_trackers=True,  # line 135
-        screenshot=True,      # line 137
+        screenshot=True,  # line 137
     )
     assert renderer.timeout == 30_000
     assert renderer.user_agent == "Agent/1.0"

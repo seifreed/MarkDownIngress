@@ -112,7 +112,9 @@ def test_retry_ingest_timeout_escalation_respects_max_timeout(mock_document):
 
 
 def test_retry_ingest_rejects_max_timeout_below_initial_timeout():
-    with pytest.raises(ValueError, match="max_timeout must be greater than or equal to initial_timeout"):
+    with pytest.raises(
+        ValueError, match="max_timeout must be greater than or equal to initial_timeout"
+    ):
         retry_ingest(
             url="https://example.com",
             max_retries=3,

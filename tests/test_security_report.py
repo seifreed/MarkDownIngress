@@ -14,6 +14,7 @@ import pytest
 from markdown_ingress import generate_security_report
 from markdown_ingress.core.config import Config
 from markdown_ingress.models import SecurityReport
+from markdown_ingress.reporting import report_filename
 
 
 @pytest.fixture(scope="module")
@@ -219,6 +220,16 @@ class TestSecurityReport:
         loaded = SecurityReport.load(str(saved_reports[0]))
         assert loaded.url == report.url
         assert loaded.content_hash == report.content_hash
+
+    def test_report_filename_normalizes_timestamp_to_utc(self):
+        report = SecurityReport(
+            injection_score=0.2,
+            risk_level="LOW",
+            url="https://example.com",
+        )
+        report.timestamp = "2026-04-09T18:34:12+02:00"
+
+        assert report_filename(report) == "20260409T163412Z-example-com.json"
 
     def test_generate_security_report_save_failure_raises(self, local_server, tmp_path):
         with patch.object(SecurityReport, "save", side_effect=OSError("disk full")):

@@ -19,14 +19,8 @@ def _blank_ingest_stats() -> dict[str, Any]:
         "inflight_followers": 0,
         "leader_executions": 0,
         "mode_counts": {mode: 0 for mode in _MODE_NAMES},
-        "mode_timings_ms": {
-            mode: {"count": 0, "total": 0.0, "avg": 0.0}
-            for mode in _MODE_NAMES
-        },
-        "mode_results": {
-            mode: {"success": 0, "error": 0}
-            for mode in _MODE_NAMES
-        },
+        "mode_timings_ms": {mode: {"count": 0, "total": 0.0, "avg": 0.0} for mode in _MODE_NAMES},
+        "mode_results": {mode: {"success": 0, "error": 0} for mode in _MODE_NAMES},
         "stage_timings_ms": {},
         "policy_actions": {"allow": 0, "warn": 0, "block": 0},
         "render_fallbacks": 0,

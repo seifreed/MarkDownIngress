@@ -18,10 +18,12 @@ from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.cli_parsing import determine_mode, load_runtime_config, prepare_ingest_params
 from markdown_ingress.cli_support import (
     _build_batch_rows,
+    batch_document_json_row,
     console,
     create_batch_results_table,
     display_batch_summary,
     display_rich_output,
+    document_json_fields,
     load_domain_policies,
     load_urls_from_file,
     save_batch_results,
@@ -37,21 +39,7 @@ def build_json_output(doc, args):
     """Build JSON output from document."""
     return {
         "markdown": doc.markdown if not args.no_content else None,
-        "metadata": doc.metadata,
-        "token_estimate": doc.token_estimate,
-        "content_hash": doc.content_hash,
-        "injection_score": doc.injection_score,
-        "flags": doc.flags,
-        "removed_elements": doc.removed_elements,
-        "screenshot_path": doc.screenshot_path,
-        "enriched_metadata": doc.enriched_metadata,
-        "links": doc.links,
-        "nova_score": doc.nova_score,
-        "nova_details": doc.nova_details,
-        "structured_blocks": doc.structured_blocks,
-        "chunks": doc.chunks,
-        "security_explanation": doc.security_explanation,
-        "observability": doc.observability,
+        **document_json_fields(doc),
     }
 
 
@@ -82,37 +70,61 @@ def cmd_ingest(args):
 def create_batch_processor(args):
     """Create and configure batch processor."""
     runtime_config = load_runtime_config(args)
+    base_config = runtime_config.to_ingest_config() if runtime_config is not None else None
+    explicit_overrides: set[str] = set()
     mode = determine_mode(args) or (runtime_config.mode if runtime_config is not None else "auto")
+    if determine_mode(args) is not None:
+        explicit_overrides.add("mode")
     # Handle strict flag: distinguish between explicit False, explicit True, and not set
     # --strict sets strict=True, --permissive sets strict=False
     # If neither is set, use runtime_config.strict or None (let config resolution handle default)
     if getattr(args, "permissive", False):
         strict = False
+        explicit_overrides.add("strict")
     elif getattr(args, "strict", False):
         strict = True
+        explicit_overrides.add("strict")
     elif runtime_config is not None:
         strict = runtime_config.strict
     else:
-        strict = None  # Let downstream API decide default
+        strict = True  # Match IngestConfig default
 
     # Validate and apply timeout with minimum
-    timeout = args.timeout if args.timeout is not None else (
-        runtime_config.batch_timeout if runtime_config is not None else 30.0
+    timeout = (
+        args.timeout
+        if args.timeout is not None
+        else (runtime_config.batch_timeout if runtime_config is not None else 30.0)
     )
+    if args.timeout is not None or (runtime_config is not None and runtime_config.batch_timeout is not None):
+        explicit_overrides.add("timeout")
     if timeout is not None and timeout <= 0:
         raise ValueError(f"timeout must be > 0, got {timeout}")
 
     # Validate and apply concurrent with minimum
-    concurrent = args.concurrent if args.concurrent is not None else (
-        runtime_config.batch_max_concurrent if runtime_config is not None else 5
+    concurrent = (
+        args.concurrent
+        if args.concurrent is not None
+        else (runtime_config.batch_max_concurrent if runtime_config is not None else 5)
     )
     if concurrent is not None and concurrent < 1:
         raise ValueError(f"concurrent must be >= 1, got {concurrent}")
 
-    model = args.model if getattr(args, "model", None) is not None else (
-        runtime_config.model if runtime_config is not None else "gpt-4"
+    model = (
+        args.model
+        if getattr(args, "model", None) is not None
+        else (runtime_config.model if runtime_config is not None else "gpt-4")
     )
-    return BatchProcessor(mode=mode, strict=strict, model=model, max_concurrent=concurrent, timeout=timeout)
+    if getattr(args, "model", None) is not None:
+        explicit_overrides.add("model")
+    return BatchProcessor(
+        mode=mode,
+        strict=strict,
+        model=model,
+        max_concurrent=concurrent,
+        timeout=timeout,
+        base_config=base_config,
+        explicit_overrides=frozenset(explicit_overrides),
+    )
 
 
 async def process_batch_with_progress(processor, urls):
@@ -151,7 +163,12 @@ def _resolve_output_format(args, config_output_format: str | None) -> str:
     return config_output_format or "text"
 
 
-def _build_batch_json_output(urls: list[str], batch_result) -> dict:
+def _build_batch_json_output(
+    urls: list[str],
+    batch_result,
+    *,
+    no_content: bool = False,
+) -> dict:
     """Serialize batch results for JSON output."""
     rows = _build_batch_rows(urls, batch_result)
     successful = sum(1 for row in rows if row["document"] is not None)
@@ -164,17 +181,15 @@ def _build_batch_json_output(urls: list[str], batch_result) -> dict:
             "success_rate": (successful / len(rows) * 100) if rows else 0.0,
         },
         "results": [
-            {
-                "url": row["url"],
-                "success": row["document"] is not None,
-                "tokens": row["document"].token_estimate if row["document"] is not None else None,
-                "injection_score": row["document"].injection_score if row["document"] is not None else None,
-                "content_hash": row["document"].content_hash if row["document"] is not None else None,
-                "metadata": row["document"].metadata if row["document"] is not None else None,
-                "chunks": row["document"].chunks if row["document"] is not None else None,
-                "structured_blocks": row["document"].structured_blocks if row["document"] is not None else None,
-                "error": row["error"],
-            }
+            (
+                batch_document_json_row(row, no_content=no_content)
+                if row["document"] is not None
+                else {
+                    "url": row["url"],
+                    "success": False,
+                    "error": row["error"],
+                }
+            )
             for row in rows
         ],
         "errors": [
@@ -183,8 +198,12 @@ def _build_batch_json_output(urls: list[str], batch_result) -> dict:
                 "url": error_item.url,
                 "error": error_item.error,
             }
-            for error_item in getattr(batch_result, "error_items", getattr(batch_result, "errors", []))
-            if hasattr(error_item, "index") and hasattr(error_item, "url") and hasattr(error_item, "error")
+            for error_item in getattr(
+                batch_result, "error_items", getattr(batch_result, "errors", [])
+            )
+            if hasattr(error_item, "index")
+            and hasattr(error_item, "url")
+            and hasattr(error_item, "error")
         ],
         "errors_by_url": getattr(batch_result, "errors_by_url", {}),
     }
@@ -193,19 +212,18 @@ def _build_batch_json_output(urls: list[str], batch_result) -> dict:
 async def ingest_many_with_progress(args, urls):
     """Run batch ingestion through the public API with progress updates."""
     runtime_config = load_runtime_config(args)
-    strict = False if getattr(args, "permissive", False) else (
-        True if getattr(args, "strict", False) else (runtime_config.strict if runtime_config is not None else None)
+    runtime_ingest_config = (
+        runtime_config.to_ingest_config() if runtime_config is not None else None
     )
-    mode = determine_mode(args) or (runtime_config.mode if runtime_config is not None else None)
-    timeout = args.timeout if args.timeout is not None else (
-        runtime_config.batch_timeout if runtime_config is not None else None
+    strict = (
+        False
+        if getattr(args, "permissive", False)
+        else (True if getattr(args, "strict", False) else None)
     )
-    concurrent = args.concurrent if getattr(args, "concurrent", None) is not None else (
-        runtime_config.batch_max_concurrent if runtime_config is not None else 5
-    )
-    model = args.model if getattr(args, "model", None) is not None else (
-        runtime_config.model if runtime_config is not None else None
-    )
+    mode = determine_mode(args)
+    timeout = args.timeout if args.timeout is not None else UNSET
+    concurrent = args.concurrent if getattr(args, "concurrent", None) is not None else UNSET
+    model = args.model if getattr(args, "model", None) is not None else None
 
     # Handle screenshot: use UNSET sentinel when not provided
     screenshot = UNSET
@@ -231,6 +249,7 @@ async def ingest_many_with_progress(args, urls):
 
         return await ingest_many_async(
             urls,
+            config=runtime_ingest_config,
             mode=mode,
             strict=strict,
             model=model,
@@ -267,7 +286,24 @@ def cmd_batch(args):
             save_args.json = True
             save_batch_results(save_args, urls, batch_result)
         else:
-            print(json.dumps(_build_batch_json_output(urls, batch_result), indent=2))
+            print(
+                json.dumps(
+                    _build_batch_json_output(
+                        urls,
+                        batch_result,
+                        no_content=getattr(args, "no_content", False),
+                    ),
+                    indent=2,
+                )
+            )
+        return
+
+    if output_format == "markdown":
+        rows = _build_batch_rows(urls, batch_result)
+        for row in rows:
+            if row["document"] is not None and not getattr(args, "no_content", False):
+                print(row["document"].markdown)
+        save_batch_results(args, urls, batch_result)
         return
 
     display_batch_summary(batch_result, urls)

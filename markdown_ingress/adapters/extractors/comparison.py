@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -49,16 +50,35 @@ class ExtractorEvaluator:
     def _evaluate_readability(self, html: str) -> ExtractorComparisonResult:
         from markdown_ingress.core.markdown import MarkdownConverter
 
-        doc = Document(html)
-        summary_html = doc.summary(html_partial=False)
-        # readability returns HTML — convert to markdown for consistent metrics
-        markdown = MarkdownConverter().convert(summary_html)
-        return self._make_result("readability", markdown=markdown, title=doc.title(), available=True)
+        try:
+            doc = Document(html)
+            summary_html = doc.summary(html_partial=False)
+            # readability returns HTML — convert to markdown for consistent metrics
+            markdown = MarkdownConverter().convert(summary_html)
+        except (ImportError, ValueError, TypeError, RuntimeError, OSError) as exc:
+            return ExtractorComparisonResult(
+                extractor="readability",
+                available=False,
+                markdown="",
+                title=None,
+                markdown_length=0,
+                token_estimate=0,
+                heading_count=0,
+                link_count=0,
+                code_block_count=0,
+                table_count=0,
+                injection_score=0.0,
+                notes=[f"readability failed: {type(exc).__name__}: {exc}"],
+            )
+
+        return self._make_result(
+            "readability", markdown=markdown, title=doc.title(), available=True
+        )
 
     def _evaluate_trafilatura(self, html: str) -> ExtractorComparisonResult:
         try:
-            import trafilatura  # type: ignore[import-untyped]
-        except Exception:
+            import trafilatura  # type: ignore[import-not-found,import-untyped]
+        except ImportError:
             return ExtractorComparisonResult(
                 extractor="trafilatura",
                 available=False,
@@ -73,7 +93,23 @@ class ExtractorEvaluator:
                 injection_score=0.0,
                 notes=["trafilatura not installed"],
             )
-        output = trafilatura.extract(html, output_format="markdown") or ""
+        try:
+            output = trafilatura.extract(html, output_format="markdown") or ""
+        except (ImportError, ValueError, TypeError, RuntimeError, OSError) as exc:
+            return ExtractorComparisonResult(
+                extractor="trafilatura",
+                available=False,
+                markdown="",
+                title=None,
+                markdown_length=0,
+                token_estimate=0,
+                heading_count=0,
+                link_count=0,
+                code_block_count=0,
+                table_count=0,
+                injection_score=0.0,
+                notes=[f"trafilatura failed: {type(exc).__name__}: {exc}"],
+            )
         return self._make_result("trafilatura", markdown=output, title=None, available=True)
 
     def _make_result(
@@ -92,9 +128,9 @@ class ExtractorEvaluator:
             title=title,
             markdown_length=len(markdown),
             token_estimate=self.token_estimator.estimate(markdown) if markdown else 0,
-            heading_count=markdown.count("\n#") + (1 if markdown.startswith("#") else 0),
+            heading_count=len(re.findall(r"(?m)^#{1,6}[ \t]", markdown)),
             link_count=markdown.count("]("),
-            code_block_count=markdown.count("```") // 2,
+            code_block_count=len(re.findall(r"(?m)^```", markdown)),
             table_count=self._count_tables(markdown),
             injection_score=analysis.score,
             notes=self._notes(markdown),

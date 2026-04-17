@@ -10,9 +10,11 @@ This module provides:
 """
 
 import random
-import threading
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+_rng = random.SystemRandom()
 
 # ============================================================================
 # ULTRA STEALTH BROWSER LAUNCH ARGUMENTS
@@ -166,9 +168,6 @@ REALISTIC_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-US,en;q=0.9",
-    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-Site": "none",
@@ -177,9 +176,47 @@ REALISTIC_HEADERS = {
     "Cache-Control": "max-age=0",
 }
 
+_CHROME_VERSION_RE = re.compile(r"Chrome/(\d+)\.\d+\.\d+\.\d+")
+_EDGE_RE = re.compile(r"Edg/(\d+)\.\d+\.\d+\.\d+")
 
-_LAST_RANDOM_SIGNATURE: tuple[str, tuple[int, int], str, float] | None = None
-_SIGNATURE_LOCK = threading.Lock()
+
+def _build_client_hints(user_agent: str) -> dict[str, str]:
+    """Build Sec-Ch-Ua headers that match the given User-Agent string.
+
+    Chrome and Edge send client hints; Firefox and Safari do not.
+    """
+    chrome_match = _CHROME_VERSION_RE.search(user_agent)
+    if not chrome_match:
+        # Firefox, Safari, or unknown — don't send client hints
+        return {}
+
+    chrome_ver = chrome_match.group(1)
+
+    # Detect platform from UA
+    if "Windows" in user_agent:
+        platform = '"Windows"'
+    elif "Macintosh" in user_agent or "Mac OS X" in user_agent:
+        platform = '"macOS"'
+    elif "Linux" in user_agent:
+        platform = '"Linux"'
+    else:
+        platform = '"Windows"'
+
+    edge_match = _EDGE_RE.search(user_agent)
+    if edge_match:
+        edge_ver = edge_match.group(1)
+        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Microsoft Edge";v="{edge_ver}"'
+    else:
+        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Google Chrome";v="{chrome_ver}"'
+
+    return {
+        "Sec-Ch-Ua": sec_ch_ua,
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": platform,
+    }
+
+
+StealthSignature = tuple[str, tuple[int, int], str, float]
 
 
 # ============================================================================
@@ -215,11 +252,62 @@ class AdvancedStealthConfig:
 # ============================================================================
 
 
+def _signature_for_config(config: "AdvancedStealthConfig") -> StealthSignature:
+    """Return a stable signature representing the fingerprint-relevant config."""
+    return (
+        config.user_agent,
+        (config.viewport_width, config.viewport_height),
+        config.timezone,
+        config.device_scale_factor,
+    )
+
+
+class StealthConfigGenerator:
+    """Generate stealth configs while tracking previous signature per request.
+
+    Instances intentionally carry state, allowing callers to avoid immediate
+    repetition without sharing state globally.
+    """
+
+    def __init__(
+        self,
+        randomize: bool = True,
+        user_agent: str | None = None,
+        viewport: tuple[int, int] | None = None,
+        timezone: str | None = None,
+    ):
+        self.randomize = randomize
+        self.user_agent = user_agent
+        self.viewport = viewport
+        self.timezone = timezone
+        self._previous_signature: StealthSignature | None = None
+
+    def next_config(self) -> AdvancedStealthConfig:
+        """Return next config and remember its signature for request-scoped dedupe."""
+        config = get_advanced_stealth_config(
+            randomize=self.randomize,
+            user_agent=self.user_agent,
+            viewport=self.viewport,
+            timezone=self.timezone,
+            previous_signature=self._previous_signature,
+        )
+        self._previous_signature = _signature_for_config(config)
+        return config
+
+
+__all__ = [
+    "StealthSignature",
+    "_signature_for_config",
+    "StealthConfigGenerator",
+]
+
+
 def get_advanced_stealth_config(
     randomize: bool = True,
     user_agent: str | None = None,
     viewport: tuple[int, int] | None = None,
     timezone: str | None = None,
+    previous_signature: StealthSignature | None = None,
 ) -> AdvancedStealthConfig:
     """
     Get an advanced stealth configuration with maximum anti-detection.
@@ -229,27 +317,62 @@ def get_advanced_stealth_config(
         user_agent: Custom user agent (overrides randomization)
         viewport: Custom viewport as (width, height) tuple
         timezone: Custom timezone (e.g., "America/New_York")
+        previous_signature: Optional signature to avoid immediate repetition
 
     Returns:
         AdvancedStealthConfig: Comprehensive stealth configuration
 
     Example:
-        >>> config = get_advanced_stealth_config()
         >>> print(config.user_agent)
         Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...
         >>> print(config.viewport_width, config.viewport_height)
         1920 1080
     """
-    global _LAST_RANDOM_SIGNATURE
-
     if randomize:
-        # Perform randomization and dedup check inside the lock to prevent
-        # two threads computing the same signature concurrently.
-        with _SIGNATURE_LOCK:
-            selected_ua = user_agent or random.choice(ADVANCED_USER_AGENTS)
-            selected_viewport = viewport or random.choice(ADVANCED_VIEWPORT_SIZES)
-            selected_timezone = timezone or random.choice(TIMEZONES)
-            device_scale_factor = round(random.uniform(1.0, 2.0), 2)
+        selected_ua = user_agent or _rng.choice(ADVANCED_USER_AGENTS)
+        selected_viewport = viewport or _rng.choice(ADVANCED_VIEWPORT_SIZES)
+        selected_timezone = timezone or _rng.choice(TIMEZONES)
+        device_scale_factor = round(_rng.uniform(1.0, 2.0), 2)
+
+        signature = (
+            selected_ua,
+            selected_viewport,
+            selected_timezone,
+            device_scale_factor,
+        )
+
+        # Keep regenerating until we get a unique signature (max 10 attempts)
+        attempts = 0
+        while signature == previous_signature and attempts < 10:
+            # Prefer changing UA first, then viewport, then timezone, then scale
+            if (
+                user_agent is None
+                and selected_ua in ADVANCED_USER_AGENTS
+                and len(ADVANCED_USER_AGENTS) > 1
+            ):
+                ua_index = (ADVANCED_USER_AGENTS.index(selected_ua) + 1) % len(ADVANCED_USER_AGENTS)
+                selected_ua = ADVANCED_USER_AGENTS[ua_index]
+            elif (
+                viewport is None
+                and selected_viewport in ADVANCED_VIEWPORT_SIZES
+                and len(ADVANCED_VIEWPORT_SIZES) > 1
+            ):
+                viewport_index = (ADVANCED_VIEWPORT_SIZES.index(selected_viewport) + 1) % len(
+                    ADVANCED_VIEWPORT_SIZES
+                )
+                selected_viewport = ADVANCED_VIEWPORT_SIZES[viewport_index]
+            elif timezone is None and selected_timezone in TIMEZONES and len(TIMEZONES) > 1:
+                timezone_index = (TIMEZONES.index(selected_timezone) + 1) % len(TIMEZONES)
+                selected_timezone = TIMEZONES[timezone_index]
+            else:
+                # Use a pool of realistic scale factors for diversity
+                realistic_scales = [1.0, 1.25, 1.5, 1.75, 2.0]
+                available_scales = [s for s in realistic_scales if s != device_scale_factor]
+                if available_scales:
+                    scale_choice = _rng.choice(available_scales)
+                else:
+                    scale_choice = 1.5
+                device_scale_factor = scale_choice
 
             signature = (
                 selected_ua,
@@ -257,37 +380,7 @@ def get_advanced_stealth_config(
                 selected_timezone,
                 device_scale_factor,
             )
-
-            # Keep regenerating until we get a unique signature (max 10 attempts)
-            attempts = 0
-            while signature == _LAST_RANDOM_SIGNATURE and attempts < 10:
-                # Prefer changing UA first, then viewport, then timezone, then scale
-                if user_agent is None and selected_ua in ADVANCED_USER_AGENTS and len(ADVANCED_USER_AGENTS) > 1:
-                    ua_index = (ADVANCED_USER_AGENTS.index(selected_ua) + 1) % len(ADVANCED_USER_AGENTS)
-                    selected_ua = ADVANCED_USER_AGENTS[ua_index]
-                elif viewport is None and selected_viewport in ADVANCED_VIEWPORT_SIZES and len(ADVANCED_VIEWPORT_SIZES) > 1:
-                    viewport_index = (ADVANCED_VIEWPORT_SIZES.index(selected_viewport) + 1) % len(
-                        ADVANCED_VIEWPORT_SIZES
-                    )
-                    selected_viewport = ADVANCED_VIEWPORT_SIZES[viewport_index]
-                elif timezone is None and selected_timezone in TIMEZONES and len(TIMEZONES) > 1:
-                    timezone_index = (TIMEZONES.index(selected_timezone) + 1) % len(TIMEZONES)
-                    selected_timezone = TIMEZONES[timezone_index]
-                else:
-                    # Use a pool of realistic scale factors for diversity
-                    realistic_scales = [1.0, 1.25, 1.5, 1.75, 2.0]
-                    available_scales = [s for s in realistic_scales if s != device_scale_factor]
-                    device_scale_factor = random.choice(available_scales) if available_scales else 1.5
-
-                signature = (
-                    selected_ua,
-                    selected_viewport,
-                    selected_timezone,
-                    device_scale_factor,
-                )
-                attempts += 1
-
-            _LAST_RANDOM_SIGNATURE = signature
+            attempts += 1
     else:
         selected_ua = user_agent or ADVANCED_USER_AGENTS[0]
         selected_viewport = viewport or ADVANCED_VIEWPORT_SIZES[0]
@@ -304,7 +397,7 @@ def get_advanced_stealth_config(
         locale="en-US",
         timezone=selected_timezone,
         permissions=["geolocation", "notifications"],
-        extra_http_headers=REALISTIC_HEADERS.copy(),
+        extra_http_headers={**REALISTIC_HEADERS, **_build_client_hints(selected_ua)},
         browser_args=ULTRA_STEALTH_ARGS.copy(),
     )
 

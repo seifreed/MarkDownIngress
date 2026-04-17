@@ -6,8 +6,11 @@ to speed up rendering and reduce bandwidth usage.
 """
 
 import logging
+import re
 import threading
 from urllib.parse import unquote, urlsplit
+
+from markdown_ingress.core.ssrf import normalize_domain_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +80,9 @@ _TRACKER_HOST_PATH_PATTERNS = [
     ("facebook.com", "/tr"),
 ]
 
-BLOCKED_DOMAINS = _TRACKER_DOMAINS + [f"{host}{path}" for host, path in _TRACKER_HOST_PATH_PATTERNS] + _AD_DOMAINS
+BLOCKED_DOMAINS = (
+    _TRACKER_DOMAINS + [f"{host}{path}" for host, path in _TRACKER_HOST_PATH_PATTERNS] + _AD_DOMAINS
+)
 
 # Patterns matched against the URL domain only (not the full path)
 # to avoid false positives like "loads" matching "ads".
@@ -145,11 +150,11 @@ class ResourceBlocker:
         self.block_ads = block_ads
         self.block_trackers = block_trackers
 
-        # Combine default and custom blocked domains
-        self.blocked_domains = BLOCKED_DOMAINS.copy()
-        if custom_blocked_domains:
-            self.blocked_domains.extend(custom_blocked_domains)
-        self._custom_blocked_domains = list(custom_blocked_domains or [])
+        self._custom_blocked_domains = [
+            normalized
+            for domain in (custom_blocked_domains or [])
+            if (normalized := normalize_domain_pattern(domain))
+        ]
 
         # Statistics
         self._stats_lock = threading.Lock()
@@ -192,10 +197,14 @@ class ResourceBlocker:
                 self.total_count += 1
                 if should_block:
                     self.blocked_count += 1
-                    self.blocked_by_type[resource_type] = self.blocked_by_type.get(resource_type, 0) + 1
+                    self.blocked_by_type[resource_type] = (
+                        self.blocked_by_type.get(resource_type, 0) + 1
+                    )
                     # BUG FIX: Update blocked_by_domain under lock to prevent race condition
                     if matched_domain:
-                        self.blocked_by_domain[matched_domain] = self.blocked_by_domain.get(matched_domain, 0) + 1
+                        self.blocked_by_domain[matched_domain] = (
+                            self.blocked_by_domain.get(matched_domain, 0) + 1
+                        )
 
             if should_block:
                 logger.debug(f"Blocked {resource_type}: {url[:100]}")
@@ -207,11 +216,16 @@ class ResourceBlocker:
             # Security: On exception, default to blocking to prevent bypass attacks
             # where attacker crafts malformed URL to trigger exception and bypass blocking
             logger.warning(f"Error in route handler (defaulting to block): {e}")
+            with self._stats_lock:
+                if not should_block:
+                    # route.continue_() threw — request was aborted despite being classified
+                    # as allowed; compensate so blocked_count stays consistent with actual actions
+                    self.blocked_count += 1
             try:
                 await route.abort()
-            except Exception:
+            except Exception as exc:
                 # Route may already be handled
-                pass
+                logger.debug("Route abort already handled: %s", exc)
 
     def _should_block(self, resource_type: str, url: str) -> tuple[bool, str | None]:
         """
@@ -238,8 +252,8 @@ class ResourceBlocker:
         if self.block_css and resource_type == "stylesheet":
             return True, None
 
-        # Block by domain patterns (for ads and trackers)
-        if self.block_ads or self.block_trackers:
+        # Block by domain patterns (for ads, trackers, and custom blocklists).
+        if self.block_ads or self.block_trackers or self._custom_blocked_domains:
             # Decode URL recursively to prevent encoding-based bypasses
             # (e.g., /tracking%252e bypasses /tracking. by double encoding)
             try:
@@ -250,7 +264,7 @@ class ResourceBlocker:
 
             try:
                 parts = urlsplit(url_decoded)
-                domain = (parts.hostname or "").lower()
+                domain = (parts.hostname or "").lower().rstrip(".")
             except Exception:
                 # Malformed URL - block for security
                 return True, None
@@ -261,9 +275,16 @@ class ResourceBlocker:
                 return True, None
 
             path = parts.path or "/"
+            path_with_query = path if not parts.query else f"{path}?{parts.query}"
+
+            # Custom domains should be enforced independently of the built-in
+            # ad/tracker toggles so callers can define their own blocklist.
+            matched = self._match_host_patterns(domain, self._custom_blocked_domains)
+            if matched is not None:
+                return True, matched
 
             if self.block_trackers:
-                matched = self._match_host_patterns(domain, _TRACKER_DOMAINS + self._custom_blocked_domains)
+                matched = self._match_host_patterns(domain, _TRACKER_DOMAINS)
                 if matched is not None:
                     return True, matched
                 matched = self._match_host_path_patterns(domain, path, _TRACKER_HOST_PATH_PATTERNS)
@@ -272,12 +293,12 @@ class ResourceBlocker:
                 matched = self._match_domain_only_patterns(domain, _TRACKER_DOMAIN_ONLY_PATTERNS)
                 if matched is not None:
                     return True, matched
-                matched = self._match_path_patterns(url_decoded, _TRACKER_PATH_PATTERNS)
+                matched = self._match_path_patterns(path_with_query, _TRACKER_PATH_PATTERNS)
                 if matched is not None:
                     return True, matched
 
             if self.block_ads:
-                matched = self._match_host_patterns(domain, _AD_DOMAINS + self._custom_blocked_domains)
+                matched = self._match_host_patterns(domain, _AD_DOMAINS)
                 if matched is not None:
                     return True, matched
                 matched = self._match_domain_only_patterns(domain, _AD_DOMAIN_ONLY_PATTERNS)
@@ -296,12 +317,12 @@ class ResourceBlocker:
                 return pattern
             if domain.endswith(f".{pattern}"):
                 return pattern
-            if domain.startswith(f"{pattern}."):
-                return pattern
         return None
 
     @staticmethod
-    def _match_host_path_patterns(domain: str, path: str, patterns: list[tuple[str, str]]) -> str | None:
+    def _match_host_path_patterns(
+        domain: str, path: str, patterns: list[tuple[str, str]]
+    ) -> str | None:
         """Match known tracker endpoints that depend on both host and path."""
         for host_pattern, path_pattern in patterns:
             if not (domain == host_pattern or domain.endswith(f".{host_pattern}")):
@@ -313,17 +334,36 @@ class ResourceBlocker:
     @staticmethod
     def _match_domain_only_patterns(domain: str, patterns: list[str]) -> str | None:
         """Match boundary-aware domain fragments."""
+        labels = [label for label in domain.split(".") if label]
         for pattern in patterns:
-            if domain.startswith(pattern) or f".{pattern.lstrip('.')}" in f".{domain}":
+            normalized = pattern.strip(".")
+            if normalized and normalized in labels:
                 return pattern
         return None
 
     @staticmethod
-    def _match_path_patterns(url_decoded: str, patterns: list[str]) -> str | None:
-        """Match boundary-aware tracking paths against the fully decoded URL."""
+    def _match_path_patterns(path_with_query: str, patterns: list[str]) -> str | None:
+        """Match tracking paths with segment boundaries instead of raw substrings."""
+        stems_to_suffixes: dict[str, set[str]] = {}
         for pattern in patterns:
-            if pattern in url_decoded:
-                return pattern
+            if not pattern.startswith("/") or len(pattern) < 3:
+                continue
+            stems_to_suffixes.setdefault(pattern[1:-1], set()).add(pattern[-1])
+
+        if not stems_to_suffixes:
+            return None
+
+        pattern_re = re.compile(
+            rf"(?:^|/)(?P<stem>{'|'.join(map(re.escape, stems_to_suffixes))})(?P<suffix>[./?])"
+        )
+        match = pattern_re.search(path_with_query)
+        if match is None:
+            return None
+
+        stem = match.group("stem")
+        suffix = match.group("suffix")
+        if suffix in stems_to_suffixes.get(stem, set()):
+            return f"/{stem}{suffix}"
         return None
 
     def get_stats(self) -> dict:
@@ -333,15 +373,21 @@ class ResourceBlocker:
         Returns:
             Dictionary with blocking statistics
         """
-        block_rate = (self.blocked_count / self.total_count * 100) if self.total_count > 0 else 0
+        with self._stats_lock:
+            blocked = self.blocked_count
+            total = self.total_count
+            by_type = dict(self.blocked_by_type)
+            by_domain = dict(self.blocked_by_domain)
+
+        block_rate = (blocked / total * 100) if total > 0 else 0
 
         return {
-            "blocked_requests": self.blocked_count,
-            "total_requests": self.total_count,
-            "allowed_requests": self.total_count - self.blocked_count,
+            "blocked_requests": blocked,
+            "total_requests": total,
+            "allowed_requests": total - blocked,
             "block_rate_pct": round(block_rate, 2),
-            "blocked_by_type": dict(self.blocked_by_type),
-            "blocked_by_domain": dict(self.blocked_by_domain),
+            "blocked_by_type": by_type,
+            "blocked_by_domain": by_domain,
         }
 
     def reset_stats(self):

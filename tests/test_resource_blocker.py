@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from markdown_ingress.core.resource_blocker import BLOCKED_DOMAINS, ResourceBlocker, _DOMAIN_ONLY_PATTERNS, _PATH_PATTERNS
+from markdown_ingress.core.resource_blocker import (
+    _DOMAIN_ONLY_PATTERNS,
+    _PATH_PATTERNS,
+    BLOCKED_DOMAINS,
+    ResourceBlocker,
+)
 
 
 class TestResourceBlocker:
@@ -48,10 +53,51 @@ class TestResourceBlocker:
         custom_domains = ["custom-tracker.com", "another-ad.net"]
         blocker = ResourceBlocker(custom_blocked_domains=custom_domains)
 
-        assert "custom-tracker.com" in blocker.blocked_domains
-        assert "another-ad.net" in blocker.blocked_domains
-        # Default domains should still be present
-        assert "google-analytics.com" in blocker.blocked_domains
+        assert "custom-tracker.com" in blocker._custom_blocked_domains
+        assert "another-ad.net" in blocker._custom_blocked_domains
+
+    def test_custom_blocked_domains_work_without_builtin_filters(self):
+        """Custom blocklist should apply even when built-in ad/tracker filters are disabled."""
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            custom_blocked_domains=["custom-blocked.example"],
+        )
+
+        assert blocker._should_block("script", "https://custom-blocked.example/app.js")[0] is True
+        assert blocker._should_block("document", "https://custom-blocked.example/")[0] is True
+
+    def test_custom_blocked_domains_are_normalized(self):
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            custom_blocked_domains=["Custom-Blocked.Example."],
+        )
+
+        assert blocker._should_block("script", "https://custom-blocked.example/app.js")[0] is True
+        assert blocker._should_block("script", "https://CUSTOM-BLOCKED.EXAMPLE./app.js")[0] is True
+
+    def test_custom_blocked_domains_accept_url_like_inputs(self):
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            custom_blocked_domains=["https://Custom-Blocked.Example./path"],
+        )
+
+        assert "custom-blocked.example" in blocker._custom_blocked_domains
+        assert blocker._should_block("script", "https://custom-blocked.example/app.js")[0] is True
 
     def test_should_block_images(self):
         """Test blocking image resources"""
@@ -95,7 +141,8 @@ class TestResourceBlocker:
         blocker = ResourceBlocker(block_trackers=True)
 
         assert (
-            blocker._should_block("script", "https://www.google-analytics.com/analytics.js")[0] is True
+            blocker._should_block("script", "https://www.google-analytics.com/analytics.js")[0]
+            is True
         )
         assert blocker._should_block("script", "https://www.googletagmanager.com/gtm.js")[0] is True
 
@@ -106,6 +153,13 @@ class TestResourceBlocker:
         assert blocker._should_block("script", "https://doubleclick.net/ads.js")[0] is True
         assert blocker._should_block("script", "https://ads.example.com/banner.js")[0] is True
 
+    def test_should_not_block_lookalike_domains(self):
+        """Test that host matching respects domain boundaries."""
+        blocker = ResourceBlocker(block_trackers=True)
+
+        assert blocker._should_block("script", "https://facebook.com.evil.com/tr")[0] is False
+        assert blocker._should_block("script", "https://facebook.com./tr")[0] is True
+
     def test_should_block_tracker_patterns(self):
         """Test blocking tracking patterns in URLs"""
         blocker = ResourceBlocker(block_trackers=True)
@@ -113,6 +167,21 @@ class TestResourceBlocker:
         assert blocker._should_block("script", "https://example.com/tracking.js")[0] is True
         assert blocker._should_block("script", "https://example.com/pixel.gif")[0] is True
         assert blocker._should_block("script", "https://analytics.example.com/track.js")[0] is True
+
+    def test_domain_only_patterns_require_label_boundaries(self):
+        blocker = ResourceBlocker(block_ads=True, block_trackers=False)
+
+        assert blocker._should_block("script", "https://ads.example.com/banner.js")[0] is True
+        assert blocker._should_block("script", "https://adservicedepot.com/banner.js")[0] is False
+
+    def test_path_patterns_require_segment_boundaries(self):
+        blocker = ResourceBlocker(block_trackers=True, block_ads=False)
+
+        assert blocker._should_block("script", "https://example.com/tracking.js")[0] is True
+        assert (
+            blocker._should_block("script", "https://example.com/tracking-guide/index.html")[0]
+            is False
+        )
 
     def test_should_not_block_regular_resources(self):
         """Test not blocking regular resources"""
@@ -132,14 +201,24 @@ class TestResourceBlocker:
         """Test that domain matching is case insensitive"""
         blocker = ResourceBlocker(block_trackers=True)
 
-        assert blocker._should_block("script", "https://GOOGLE-ANALYTICS.COM/analytics.js")[0] is True
+        assert (
+            blocker._should_block("script", "https://GOOGLE-ANALYTICS.COM/analytics.js")[0] is True
+        )
         assert blocker._should_block("script", "https://Example.com/TRACKING.js")[0] is True
 
     def test_blocked_domains_ignore_port_and_userinfo(self):
         blocker = ResourceBlocker(block_trackers=True)
 
-        assert blocker._should_block("script", "https://google-analytics.com:443/analytics.js")[0] is True
-        assert blocker._should_block("script", "https://user:pass@google-analytics.com/analytics.js")[0] is True
+        assert (
+            blocker._should_block("script", "https://google-analytics.com:443/analytics.js")[0]
+            is True
+        )
+        assert (
+            blocker._should_block("script", "https://user:pass@google-analytics.com/analytics.js")[
+                0
+            ]
+            is True
+        )
 
     @pytest.mark.asyncio
     async def test_setup_blocking(self):
@@ -335,12 +414,18 @@ class TestSecurityFixes:
         ads_only = ResourceBlocker(block_ads=True, block_trackers=False)
         trackers_only = ResourceBlocker(block_ads=False, block_trackers=True)
 
-        assert ads_only._should_block("script", "https://google-analytics.com/analytics.js")[0] is False
+        assert (
+            ads_only._should_block("script", "https://google-analytics.com/analytics.js")[0]
+            is False
+        )
         assert ads_only._should_block("script", "https://example.com/pixel.gif")[0] is False
         assert ads_only._should_block("script", "https://doubleclick.net/ad.js")[0] is True
 
         assert trackers_only._should_block("script", "https://doubleclick.net/ad.js")[0] is False
-        assert trackers_only._should_block("script", "https://google-analytics.com/analytics.js")[0] is True
+        assert (
+            trackers_only._should_block("script", "https://google-analytics.com/analytics.js")[0]
+            is True
+        )
         assert trackers_only._should_block("script", "https://example.com/pixel.gif")[0] is True
 
     def test_url_encoding_bypass_tracking_dot(self):
@@ -371,22 +456,38 @@ class TestSecurityFixes:
         blocker = ResourceBlocker(block_trackers=True)
         # "my-google-analytics-site.com" should NOT match "google-analytics.com"
         # because we use exact or subdomain boundary matching
-        assert blocker._should_block("script", "https://my-google-analytics-site.com/script.js")[0] is False
-        assert blocker._should_block("script", "https://google-analytics-site.com/script.js")[0] is False
+        assert (
+            blocker._should_block("script", "https://my-google-analytics-site.com/script.js")[0]
+            is False
+        )
+        assert (
+            blocker._should_block("script", "https://google-analytics-site.com/script.js")[0]
+            is False
+        )
 
     def test_exact_domain_match(self):
         """Test that exact domain matching works"""
         blocker = ResourceBlocker(block_trackers=True)
         # Exact match should work
-        assert blocker._should_block("script", "https://google-analytics.com/analytics.js")[0] is True
+        assert (
+            blocker._should_block("script", "https://google-analytics.com/analytics.js")[0] is True
+        )
         assert blocker._should_block("script", "https://doubleclick.net/ad.js")[0] is True
 
     def test_subdomain_match(self):
         """Test that subdomain matching works correctly"""
         blocker = ResourceBlocker(block_trackers=True)
         # Subdomain match should work
-        assert blocker._should_block("script", "https://www.google-analytics.com/analytics.js")[0] is True
-        assert blocker._should_block("script", "https://analytics.google-analytics.com/analytics.js")[0] is True
+        assert (
+            blocker._should_block("script", "https://www.google-analytics.com/analytics.js")[0]
+            is True
+        )
+        assert (
+            blocker._should_block("script", "https://analytics.google-analytics.com/analytics.js")[
+                0
+            ]
+            is True
+        )
         assert blocker._should_block("script", "https://ads.example.com/script.js")[0] is True
 
     def test_malformed_url_blocking(self):

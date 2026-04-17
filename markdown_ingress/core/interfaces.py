@@ -8,7 +8,8 @@ These interfaces define contracts for core components, making it easier to:
 - Get better IDE support
 """
 
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol
 
 from markdown_ingress.models import ExtractionResult, FetchResult, SafeDocument
 
@@ -206,8 +207,20 @@ class ICacheBackend(Protocol):
 class IWebhookNotifier(Protocol):
     """Protocol for webhook delivery adapters."""
 
-    def notify(self, webhook_url: str, payload: dict[str, Any]) -> None:
-        """Deliver a webhook payload."""
+    def notify(
+        self,
+        webhook_url: str,
+        payload: dict[str, Any],
+        *,
+        validated_ip: str | None = None,
+    ) -> None:
+        """Deliver a webhook payload.
+
+        Args:
+            webhook_url: Target URL for webhook delivery
+            payload: JSON payload to deliver
+            validated_ip: Optional pre-validated IP address for DNS pinning
+        """
         ...  # pragma: no cover
 
 

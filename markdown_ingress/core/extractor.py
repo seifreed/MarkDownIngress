@@ -3,6 +3,7 @@ HTML extraction and cleaning module
 """
 
 import logging
+import re
 
 from readability import Document  # type: ignore[import-untyped]
 from selectolax.parser import HTMLParser
@@ -10,6 +11,26 @@ from selectolax.parser import HTMLParser
 from markdown_ingress.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
+
+_DANGEROUS_DATA_URL_PREFIXES = (
+    "text/html",
+    "text/javascript",
+    "application/javascript",
+    "application/x-javascript",
+    "application/ecmascript",
+    "application/xhtml+xml",
+    "application/xml",
+    "text/xml",
+    "image/svg+xml",
+    "image/svg",
+)
+
+# Only these image media types are safe in data: URLs; everything else is blocked.
+_SAFE_DATA_URL_MEDIA_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp"}
+)
+
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
 
 
 class Extractor:  # implements IExtractor protocol
@@ -36,16 +57,12 @@ class Extractor:  # implements IExtractor protocol
 
     @staticmethod
     def _sanitize_html(html: str) -> str:
-        """Drop control characters that break downstream HTML/XML tooling."""
-        cleaned = html.replace("\x00", "")
-        control_chars = {
-            ord(char): None
-            for char in cleaned
-            if ord(char) < 32 and char not in "\t\n\r"
-        }
-        if control_chars:
-            cleaned = cleaned.translate(control_chars)
-        return cleaned
+        """Drop control characters that break downstream HTML/XML tooling.
+
+        Removes C0 control characters (U+0000–U+001F except tab/newline/CR)
+        and C1 control characters (U+0080–U+009F) which are HTML5 parse errors.
+        """
+        return _CONTROL_CHARS_RE.sub("", html)
 
     def extract(self, html: str, url: str) -> ExtractionResult:
         """
@@ -121,11 +138,20 @@ class Extractor:  # implements IExtractor protocol
                 for elem in elements:
                     elem.decompose()
 
-        # Security: Remove dangerous on* event handler attributes
-        removed_handlers = self._remove_event_handlers(tree)
-        if removed_handlers > 0:
+        # Security: Sanitize dangerous content (event handlers, javascript URLs, etc.)
+        sanitize_stats = self._sanitize_dangerous_content(tree)
+        total_removed = sum(sanitize_stats.values())
+        if total_removed > 0:
             logger.debug(
-                "Removed %d event handler attributes from %s", removed_handlers, url
+                "Sanitized %d dangerous items from %s: %d event handlers, %d javascript URLs, "
+                "%d style attributes, %d data URLs, %d vbscript URLs",
+                total_removed,
+                url,
+                sanitize_stats["event_handlers"],
+                sanitize_stats["javascript_urls"],
+                sanitize_stats["style_attributes"],
+                sanitize_stats["data_urls"],
+                sanitize_stats["vbscript_urls"],
             )
 
         # Get cleaned HTML
@@ -157,53 +183,16 @@ class Extractor:  # implements IExtractor protocol
             # Attribute-based hiding
             "[hidden]",
             '[aria-hidden="true"]',
-            # Inline style display:none (case-insensitive patterns)
-            '[style*="display:none"]',
-            '[style*="display: none"]',
-            '[style*="DISPLAY:NONE"]',
-            '[style*="DISPLAY: NONE"]',
-            '[style*="Display:none"]',
-            '[style*="Display: None"]',
-            # Inline style visibility:hidden (case-insensitive patterns)
-            '[style*="visibility:hidden"]',
-            '[style*="visibility: hidden"]',
-            '[style*="VISIBILITY:HIDDEN"]',
-            '[style*="VISIBILITY: HIDDEN"]',
-            '[style*="Visibility:hidden"]',
-            '[style*="Visibility: Hidden"]',
-            # Visibility: collapse (table elements)
-            '[style*="visibility:collapse"]',
-            '[style*="visibility: collapse"]',
-            '[style*="VISIBILITY:COLLAPSE"]',
-            '[style*="VISIBILITY: COLLAPSE"]',
+            # NOTE: display/visibility inline-style hiding is handled by the
+            # second pass below using _style_has_exact_keyword(), which avoids
+            # false-positive substring matches (e.g. "display:nonexistent").
             # Opacity-based hiding
-            '[style*="opacity:0"]',
-            '[style*="opacity: 0"]',
-            '[style*="OPACITY:0"]',
-            '[style*="OPACITY: 0"]',
-            '[style*="Opacity:0"]',
-            '[style*="opacity:0.0"]',
-            '[style*="opacity: 0.0"]',
             # Size-based hiding (height/width/font-size = 0)
-            '[style*="height:0"]',
-            '[style*="height: 0"]',
-            '[style*="HEIGHT:0"]',
-            '[style*="Height:0"]',
-            '[style*="width:0"]',
-            '[style*="width: 0"]',
-            '[style*="WIDTH:0"]',
-            '[style*="Width:0"]',
-            '[style*="font-size:0"]',
-            '[style*="font-size: 0"]',
-            '[style*="FONT-SIZE:0"]',
-            '[style*="Font-Size:0"]',
             # Position-based hiding (off-screen)
             '[style*="left:-999"]',
             '[style*="left: -999"]',
             '[style*="top:-999"]',
             '[style*="top: -999"]',
-            '[style*="position:absolute"]',  # Often used with negative offsets
-            '[style*="Position:Absolute"]',
             # Clip-based hiding
             '[style*="clip:rect(0"]',
             '[style*="clip: rect(0"]',
@@ -230,46 +219,240 @@ class Extractor:  # implements IExtractor protocol
             ".hide",
             ".sr-only",  # Screen reader only - visually hidden
             ".visually-hidden",
-            "[class*='hidden']",  # Any class containing 'hidden'
-            "[class*='invisible']",  # Any class containing 'invisible'
-            # Details element without open attribute (hidden content inside)
-            "details:not([open])",
         ]
 
+        decomposed_ids: set[int] = set()
         for selector in hidden_selectors:
             try:
                 elements = tree.css(selector)
-                count += len(elements)
                 for elem in elements:
-                    elem.decompose()
+                    eid = id(elem)
+                    if eid not in decomposed_ids:
+                        decomposed_ids.add(eid)
+                        count += 1
+                        elem.decompose()
+            except (AttributeError, ValueError, TypeError) as e:
+                logger.debug("Selector '%s' not supported: %s", selector, e)
+                continue
             except Exception as e:
-                # Some selectors might not be supported by selectolax
-                logger.debug("Selector '%s' not supported or failed: %s", selector, e)
+                logger.warning("Unexpected error processing selector '%s': %s", selector, e)
                 continue
 
+        def _style_has_exact_zero(style_value: str, property_name: str) -> bool:
+            for declaration in style_value.split(";"):
+                if ":" not in declaration:
+                    continue
+                name, value = declaration.split(":", 1)
+                if name.strip().lower() != property_name:
+                    continue
+                normalized_value = value.strip().lower()
+                match = re.match(r"^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:[a-z%]*)$", normalized_value)
+                if match is None:
+                    continue
+                try:
+                    return float(match.group(1)) == 0.0
+                except ValueError:
+                    continue
+            return False
+
+        def _style_has_exact_keyword(
+            style_value: str, property_name: str, expected_values: set[str]
+        ) -> bool:
+            for declaration in style_value.split(";"):
+                if ":" not in declaration:
+                    continue
+                name, value = declaration.split(":", 1)
+                if name.strip().lower() != property_name:
+                    continue
+                normalized_value = re.sub(r"\s+", "", value.strip().lower())
+                if normalized_value.endswith("!important"):
+                    normalized_value = normalized_value[: -len("!important")]
+                if normalized_value in expected_values:
+                    return True
+            return False
+
+        def _style_has_prefix_value(
+            style_value: str, property_name: str, prefixes: tuple[str, ...]
+        ) -> bool:
+            for declaration in style_value.split(";"):
+                if ":" not in declaration:
+                    continue
+                name, value = declaration.split(":", 1)
+                if name.strip().lower() != property_name:
+                    continue
+                normalized_value = re.sub(r"\s+", "", value.strip().lower())
+                if normalized_value.endswith("!important"):
+                    normalized_value = normalized_value[: -len("!important")]
+                if any(normalized_value.startswith(prefix) for prefix in prefixes):
+                    return True
+            return False
+
+        def _style_has_negative_offset(
+            style_value: str, property_name: str, threshold: float = -999.0
+        ) -> bool:
+            for declaration in style_value.split(";"):
+                if ":" not in declaration:
+                    continue
+                name, value = declaration.split(":", 1)
+                if name.strip().lower() != property_name:
+                    continue
+                normalized_value = re.sub(r"\s+", "", value.strip().lower())
+                if normalized_value.endswith("!important"):
+                    normalized_value = normalized_value[: -len("!important")]
+                match = re.match(r"^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:[a-z%]*)$", normalized_value)
+                if match is None:
+                    continue
+                try:
+                    if float(match.group(1)) <= threshold:
+                        return True
+                except ValueError:
+                    continue
+            return False
+
+        # Snapshot nodes before iterating: decompose() mutates the tree and
+        # invalidates a live css("*") iterator, potentially skipping descendants.
+        for node in list(tree.css("*")):
+            if not hasattr(node, "attributes") or not node.attributes:
+                continue
+            if node.parent is None:
+                continue
+            style_value = node.attributes.get("style")
+            if not style_value:
+                continue
+            normalized_style = str(style_value).lower()
+            if (
+                _style_has_exact_zero(normalized_style, "opacity")
+                or _style_has_exact_zero(normalized_style, "height")
+                or _style_has_exact_zero(normalized_style, "width")
+                or _style_has_exact_zero(normalized_style, "font-size")
+                or _style_has_exact_keyword(normalized_style, "display", {"none"})
+                or _style_has_exact_keyword(normalized_style, "visibility", {"hidden", "collapse"})
+                or _style_has_exact_keyword(normalized_style, "content-visibility", {"hidden"})
+                or _style_has_exact_keyword(normalized_style, "color", {"transparent"})
+                or _style_has_exact_keyword(normalized_style, "clip-path", {"inset(100%)"})
+                or _style_has_prefix_value(normalized_style, "clip", ("rect(0",))
+                or _style_has_prefix_value(
+                    normalized_style, "transform", ("scale(0)", "translate(-999")
+                )
+                or _style_has_negative_offset(normalized_style, "left")
+                or _style_has_negative_offset(normalized_style, "top")
+            ):
+                node.decompose()
+                count += 1
+
         return count
 
-    def _remove_event_handlers(self, tree: HTMLParser) -> int:
+    def _sanitize_dangerous_content(self, tree: HTMLParser) -> dict[str, int]:
         """
-        Remove dangerous on* event handler attributes from all elements.
+        Remove dangerous content from HTML elements.
 
-        Security: This prevents XSS via event handlers like onclick, onerror, onload, etc.
+        Security: This prevents XSS via:
+        - Event handler attributes (onclick, onerror, onload, etc.)
+        - javascript: URLs in href/src/action attributes
+        - data: URLs with embedded scripts
+        - vbscript: URLs (IE-specific but still valid)
 
-        Returns count of removed attributes.
+        Returns:
+            Dict with counts of removed items by category.
         """
-        count = 0
+        result = {
+            "event_handlers": 0,
+            "style_attributes": 0,
+            "javascript_urls": 0,
+            "data_urls": 0,
+            "vbscript_urls": 0,
+        }
+
+        # Attributes that can contain URLs
+        url_attributes = {
+            "href",
+            "src",
+            "action",
+            "formaction",
+            "xlink:href",
+            "poster",
+            "data",
+            "code",
+            "codebase",
+        }
+
         # Iterate through all elements with attributes
         for node in tree.css("*"):
-            if hasattr(node, "attributes") and node.attributes:
-                # Find and remove on* event handler attributes
-                attrs_to_remove = []
-                for attr_name in node.attributes.keys():
-                    # Match on* attributes (onclick, onerror, onload, onmouseover, etc.)
-                    if attr_name.lower().startswith("on"):
+            if not hasattr(node, "attributes") or not node.attributes:
+                continue
+
+            attrs_to_remove = []
+
+            for attr_name in list(node.attributes.keys()):
+                attr_value = node.attributes.get(attr_name)
+                if not attr_value:
+                    continue
+
+                attr_name_lower = attr_name.lower()
+
+                # srcset-style attributes can embed multiple candidate URLs.
+                # Parsing every descriptor safely is error-prone, so drop them
+                # entirely rather than trying to sanitize individual entries.
+                if attr_name_lower in {"srcset", "imagesrcset"}:
+                    attrs_to_remove.append(attr_name)
+                    result["data_urls"] += 1
+                    continue
+
+                # Remove event handlers (on* attributes)
+                if attr_name_lower.startswith("on"):
+                    attrs_to_remove.append(attr_name)
+                    result["event_handlers"] += 1
+                    continue
+
+                # Inline CSS is not needed for markdown extraction and can hide
+                # active content via url(), expression(), or javascript: payloads.
+                if attr_name_lower == "style":
+                    attrs_to_remove.append(attr_name)
+                    result["style_attributes"] += 1
+                    continue
+
+                # Check URL attributes for dangerous schemes
+                if attr_name_lower in url_attributes:
+                    # Normalize and strip whitespace for scheme check
+                    # Handle obfuscation like "  javascript:" or "\tjavascript:"
+                    clean_value = str(attr_value).strip().lower()
+
+                    # Strip leading whitespace and control characters
+                    clean_value = "".join(c for c in clean_value if c not in "\t\n\r\x0b\x0c")
+
+                    if clean_value.startswith("javascript:"):
                         attrs_to_remove.append(attr_name)
+                        result["javascript_urls"] += 1
+                    elif clean_value.startswith("vbscript:"):
+                        attrs_to_remove.append(attr_name)
+                        result["vbscript_urls"] += 1
+                    elif clean_value.startswith("data:"):
+                        # Block all data: URLs except an explicit safe-image allowlist.
+                        # data:,... (no media type) defaults to application/octet-stream
+                        # in browsers and can carry executable content.
+                        data_content = clean_value[5:]  # Remove 'data:'
+                        comma_pos = data_content.find(",")
+                        media_type_part = (
+                            data_content[:comma_pos].split(";")[0].strip()
+                            if comma_pos != -1
+                            else ""
+                        )
+                        if not media_type_part:
+                            media_type_part = "application/octet-stream"
+                        if media_type_part not in _SAFE_DATA_URL_MEDIA_TYPES:
+                            attrs_to_remove.append(attr_name)
+                            result["data_urls"] += 1
 
-                for attr_name in attrs_to_remove:
-                    del node.attributes[attr_name]
-                    count += 1
+            for attr_name in attrs_to_remove:
+                try:
+                    del node.attrs[attr_name]
+                except Exception:
+                    # selectolax may not support del on all node types
+                    try:
+                        node.attrs[attr_name] = ""  # type: ignore[assignment]
+                    except Exception:
+                        logger.debug(
+                            "Unable to remove attribute %s on <%s>", attr_name, node.tag
+                        )
 
-        return count
+        return result

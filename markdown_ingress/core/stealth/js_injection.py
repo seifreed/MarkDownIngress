@@ -12,6 +12,17 @@ This module provides:
 
 import random
 
+_rng = random.SystemRandom()
+
+try:  # noqa: I001
+    from playwright.async_api import (  # noqa: I001
+        Error as PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+    )
+except ImportError:  # pragma: no cover
+    PlaywrightError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
+    PlaywrightTimeoutError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
+
 # ============================================================================
 # WEBGL FINGERPRINT POOL
 # Realistic GPU/driver combinations for fingerprint randomization
@@ -36,7 +47,7 @@ def _get_random_webgl_fingerprint() -> tuple[str, str]:
     Returns:
         Tuple of (vendor, renderer) strings
     """
-    return random.choice(WEBGL_FINGERPRINTS)
+    return _rng.choice(WEBGL_FINGERPRINTS)
 
 
 # ============================================================================
@@ -48,21 +59,42 @@ STEALTH_JS_INJECTION = """
 // Core WebDriver Detection Patches
 // ============================================================================
 
-// BUG FIX: Real browsers return false for navigator.webdriver, not undefined
-// Returning undefined makes it obvious the property has been tampered with
-Object.defineProperty(Navigator.prototype, 'webdriver', {
-    get: function() { return false; },
-    configurable: true,
-    enumerable: true,
+// Hide navigator.webdriver so access returns undefined and `'webdriver' in navigator` is false.
+const originalNavigator = window.navigator;
+const navigatorProxy = new Proxy(originalNavigator, {
+    has(target, key) {
+        if (key === 'webdriver') {
+            return false;
+        }
+        return Reflect.has(target, key);
+    },
+    get(target, key, receiver) {
+        if (key === 'webdriver') {
+            return undefined;
+        }
+        const value = Reflect.get(target, key, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+    },
+    getOwnPropertyDescriptor(target, key) {
+        if (key === 'webdriver') {
+            return undefined;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+    },
 });
 
-// Also delete the property from navigator instance if it exists
 try {
-    delete navigator.webdriver;
+    delete Navigator.prototype.webdriver;
+} catch (e) {}
+try {
+    Object.defineProperty(window, 'navigator', {
+        get: () => navigatorProxy,
+        configurable: true,
+    });
 } catch (e) {}
 
 // Override automation-controlled flag
-Object.defineProperty(navigator, 'automationControlled', {
+Object.defineProperty(originalNavigator, 'automationControlled', {
     get: () => false,
 });
 
@@ -141,38 +173,94 @@ window.navigator.permissions.query = function(parameters) {
 // Plugin and MIME Type Patches
 // ============================================================================
 
-// Patch plugins to appear like a real browser
-Object.defineProperty(navigator, 'plugins', {
-    get: () => {
-        const pluginArray = [
-            {
-                name: 'Chrome PDF Plugin',
-                filename: 'internal-pdf-viewer',
-                description: 'Portable Document Format',
-                length: 1,
-            },
-            {
-                name: 'Chrome PDF Viewer',
-                filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
-                description: '',
-                length: 1,
-            },
-            {
-                name: 'Native Client',
-                filename: 'internal-nacl-plugin',
-                description: '',
-                length: 2,
-            },
-        ];
-        // Make it iterable like a real PluginArray
-        pluginArray.item = function(index) {
-            return this[index] || null;
-        };
-        pluginArray.namedItem = function(name) {
-            return this.find(p => p.name === name) || null;
-        };
-        return pluginArray;
-    },
+const makeFakeMimeType = (type, suffixes, description) => {
+    const mimeType = typeof MimeType !== 'undefined' ? Object.create(MimeType.prototype) : {};
+    Object.defineProperties(mimeType, {
+        type: { value: type, enumerable: true },
+        suffixes: { value: suffixes, enumerable: true },
+        description: { value: description, enumerable: true },
+        enabledPlugin: { value: null, enumerable: true, writable: true },
+    });
+    return mimeType;
+};
+
+const makeFakePlugin = (name, filename, description, mimeTypes) => {
+    const plugin = typeof Plugin !== 'undefined' ? Object.create(Plugin.prototype) : {};
+    Object.defineProperties(plugin, {
+        name: { value: name, enumerable: true },
+        filename: { value: filename, enumerable: true },
+        description: { value: description, enumerable: true },
+        length: { value: mimeTypes.length, enumerable: true },
+    });
+    mimeTypes.forEach((mimeType, index) => {
+        mimeType.enabledPlugin = plugin;
+        Object.defineProperty(plugin, index, {
+            value: mimeType,
+            enumerable: true,
+        });
+    });
+    plugin.item = function(index) {
+        return mimeTypes[index] || null;
+    };
+    plugin.namedItem = function(type) {
+        return mimeTypes.find(mimeType => mimeType.type === type) || null;
+    };
+    return plugin;
+};
+
+const fakePlugins = (() => {
+    const pluginEntries = [
+        makeFakePlugin(
+            'Chrome PDF Plugin',
+            'internal-pdf-viewer',
+            'Portable Document Format',
+            [makeFakeMimeType('application/x-google-chrome-pdf', 'pdf', 'Portable Document Format')]
+        ),
+        makeFakePlugin(
+            'Chrome PDF Viewer',
+            'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+            '',
+            [makeFakeMimeType('application/pdf', 'pdf', 'Portable Document Format')]
+        ),
+        makeFakePlugin(
+            'Native Client',
+            'internal-nacl-plugin',
+            '',
+            [
+                makeFakeMimeType('application/x-nacl', '', 'Native Client Executable'),
+                makeFakeMimeType('application/x-pnacl', '', 'Portable Native Client Executable'),
+            ]
+        ),
+    ];
+    const pluginArray = typeof PluginArray !== 'undefined'
+        ? Object.create(PluginArray.prototype)
+        : [];
+    Object.defineProperty(pluginArray, 'length', {
+        get: () => pluginEntries.length,
+        enumerable: false,
+    });
+    pluginEntries.forEach((plugin, index) => {
+        Object.defineProperty(pluginArray, index, {
+            get: () => pluginEntries[index],
+            enumerable: true,
+        });
+    });
+    pluginArray.item = function(index) {
+        return pluginEntries[index] || null;
+    };
+    pluginArray.namedItem = function(name) {
+        return pluginEntries.find(plugin => plugin.name === name) || null;
+    };
+    pluginArray[Symbol.iterator] = function* () {
+        for (const plugin of pluginEntries) {
+            yield plugin;
+        }
+    };
+    return pluginArray;
+})();
+
+Object.defineProperty(originalNavigator, 'plugins', {
+    get: () => fakePlugins,
 });
 
 // ============================================================================
@@ -243,11 +331,7 @@ if (typeof WebGL2RenderingContext !== 'undefined') {
 // Add noise to canvas fingerprinting attempts
 const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
 HTMLCanvasElement.prototype.toDataURL = function(type) {
-    // BUG FIX: Use <= 280 to include boundary case (280x280 canvas)
-    // Fingerprinting canvases can be wide but short (e.g., 280x60 for text rendering)
-    // Using || ensures any canvas with at least one small dimension gets noise
-    // Previously < 280 would miss exactly 280x280 canvases used for fingerprinting
-    if (this.width <= 280 || this.height <= 280) {
+    if (this.width <= 280 && this.height <= 280) {
         const ctx = this.getContext('2d');
         if (ctx) {
             const imageData = ctx.getImageData(0, 0, this.width, this.height);
@@ -454,23 +538,32 @@ async def inject_stealth(page):
         >>> await inject_stealth(page)
         >>> await page.goto("https://example.com")
     """
-    # Get random WebGL fingerprint for this session
+    await inject_stealth_pre_nav(page)
+    await inject_stealth_post_nav(page)
+
+
+async def inject_stealth_pre_nav(page) -> None:
+    """Inject stealth init scripts that persist across navigations.
+
+    Call this BEFORE page.goto(). Uses add_init_script so the patches
+    are re-applied on every navigation and frame load.
+    """
     webgl_vendor, webgl_renderer = _get_random_webgl_fingerprint()
 
-    # Replace placeholders with random values
-    stealth_js = STEALTH_JS_INJECTION.replace(
-        '__WEBGL_VENDOR__', webgl_vendor
-    ).replace(
-        '__WEBGL_RENDERER__', webgl_renderer
+    stealth_js = STEALTH_JS_INJECTION.replace("__WEBGL_VENDOR__", webgl_vendor).replace(
+        "__WEBGL_RENDERER__", webgl_renderer
     )
 
-    # Inject main stealth script before page loads
     await page.add_init_script(stealth_js)
 
-    # Add post-load stealth script
+
+async def inject_stealth_post_nav(page) -> None:
+    """Run post-load cleanup to remove automation artifacts.
+
+    Call this AFTER page.goto() has completed, so the evaluate runs
+    on the actual target page (not about:blank).
+    """
     try:
         await page.evaluate(STEALTH_JS_POST_LOAD)
-    except Exception:  # pragma: no cover
-        # Page might not be ready yet, that's okay
-        # The init script is the critical one
+    except (PlaywrightTimeoutError, PlaywrightError):
         pass  # pragma: no cover

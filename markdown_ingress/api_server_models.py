@@ -6,8 +6,14 @@ import logging
 import os
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
-from markdown_ingress.core.ssrf import validate_http_url_no_ssrf
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+
+from markdown_ingress.config_models import (
+    VALID_OUTPUT_REPRESENTATIONS,
+    VALID_POLICY_NAMES,
+    _validate_output_profile_name,
+)
+from markdown_ingress.core.ssrf import resolve_allow_local_urls, validate_http_url_no_ssrf
 
 Mode = Literal["auto", "fast", "render"]
 ChunkingStrategy = Literal["none", "heading", "size"]
@@ -25,21 +31,83 @@ def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
         _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
         return default
     if value < minimum:
-        _logger.warning("Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default)
+        _logger.warning(
+            "Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default
+        )
         return default
     return value
+
+
+def _read_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    _logger.warning("Invalid boolean for %s=%r. Using default %s.", name, raw, default)
+    return default
 
 
 MAX_BATCH_URLS = _read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100)
 MAX_TIMEOUT_SECONDS = _read_positive_int_env("MDI_API_MAX_TIMEOUT", 300)
 MAX_CHUNK_SIZE = _read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000)
 
-def _validate_url_no_ssrf(url: str) -> str:
+
+def _allow_local_webhooks_enabled() -> bool:
+    return _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
+
+
+def _validate_url_no_ssrf(url: str, *, allow_local: bool | None = None) -> str:
     """Validate URL against SSRF attacks."""
-    return validate_http_url_no_ssrf(url)
+    return validate_http_url_no_ssrf(
+        url,
+        allow_local=resolve_allow_local_urls(allow_local),
+        resolve_dns=False,
+    )
+
+
+def _validate_output_formats_value(value: list[str]) -> list[str]:
+    """Validate supported document output representations for HTTP requests."""
+    if not value:
+        raise ValueError("output_formats must be a non-empty list of supported format strings")
+    for index, item in enumerate(value):
+        if item not in VALID_OUTPUT_REPRESENTATIONS:
+            raise ValueError(
+                f"output_formats[{index}] has invalid value '{item}'. "
+                f"Must be one of: {', '.join(VALID_OUTPUT_REPRESENTATIONS)}"
+            )
+    return value
+
+
+def _validate_policy_name_value(value: str | None) -> str | None:
+    """Validate supported policy names for HTTP requests."""
+    if value is None:
+        return None
+    if value not in VALID_POLICY_NAMES:
+        raise ValueError(
+            f"policy_name has invalid value '{value}'. "
+            f"Must be one of: {', '.join(VALID_POLICY_NAMES)}"
+        )
+    return value
+
+
+def _validate_reports_dir_value(value: str) -> str:
+    """Validate that reports_dir is non-empty and safe from path traversal."""
+    if not value.strip():
+        raise ValueError("reports_dir cannot be empty")
+    if "\x00" in value:
+        raise ValueError("reports_dir contains null byte")
+    if ".." in value.split("/") or ".." in value.split("\\"):
+        raise ValueError("reports_dir must not contain '..' path segments")
+    return value
 
 
 class DomainPolicyModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     domain: str
     include_subdomains: bool = True
     mode: Mode | None = None
@@ -60,8 +128,20 @@ class DomainPolicyModel(BaseModel):
     unwrap_selectors: list[str] = Field(default_factory=list)
     notes: str | None = None
 
+    @field_validator("policy_name")
+    @classmethod
+    def validate_policy_name(cls, value: str | None) -> str | None:
+        return _validate_policy_name_value(value)
+
+    @field_validator("output_profile")
+    @classmethod
+    def validate_output_profile(cls, value: str | None) -> str | None:
+        return _validate_output_profile_name(value)
+
 
 class IngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     url: HttpUrl
     mode: Mode = Field(default="auto")
     strict: bool = Field(default=True)
@@ -83,13 +163,40 @@ class IngestRequest(BaseModel):
     use_llm: bool = Field(default=False)
     policy_name: str = Field(default="normal")
     custom_patterns: list[str] = Field(default_factory=list)
-    plugin_dirs: list[str] = Field(default_factory=list)
+    output_format: Literal["text", "json", "markdown"] = Field(default="text")
+    output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
     detect_language: bool = Field(default=True)
     normalize_multilingual: bool = Field(default=True)
     include_security_explanation: bool = Field(default=True)
     include_observability: bool = Field(default=True)
+    save_reports: bool = Field(default=False)
+    reports_dir: str = Field(default="reports")
+    fetcher_user_agent: str = Field(default="")
+    domain_request_interval: float = Field(default=0.25, ge=0.0, le=60.0)
+    circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
+    circuit_breaker_open_seconds: float = Field(default=30.0, ge=0.1, le=3600.0)
     render_cost_budget: int | None = Field(default=None, ge=1, le=100)
     domain_policies: list[DomainPolicyModel] = Field(default_factory=list)
+
+    @field_validator("output_formats")
+    @classmethod
+    def validate_output_formats(cls, value: list[str]) -> list[str]:
+        return _validate_output_formats_value(value)
+
+    @field_validator("policy_name")
+    @classmethod
+    def validate_policy_name(cls, value: str) -> str:
+        return _validate_policy_name_value(value) or "normal"
+
+    @field_validator("output_profile")
+    @classmethod
+    def validate_output_profile(cls, value: str) -> str:
+        return _validate_output_profile_name(value) or "default"
+
+    @field_validator("reports_dir")
+    @classmethod
+    def validate_reports_dir(cls, value: str) -> str:
+        return _validate_reports_dir_value(value)
 
     @model_validator(mode="after")
     def validate_url_ssrf(self):
@@ -99,6 +206,8 @@ class IngestRequest(BaseModel):
 
 
 class RetryIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     url: HttpUrl
     mode: Mode = Field(default="auto")
     strict: bool = Field(default=True)
@@ -106,7 +215,9 @@ class RetryIngestRequest(BaseModel):
     max_retries: int = Field(default=3, ge=1, le=10)
     enable_stealth: bool = Field(default=True)
     initial_timeout: float = Field(default=60.0, ge=1.0, le=float(MAX_TIMEOUT_SECONDS))
-    max_timeout: float = Field(default=float(MAX_TIMEOUT_SECONDS), ge=1.0, le=float(MAX_TIMEOUT_SECONDS))
+    max_timeout: float = Field(
+        default=float(MAX_TIMEOUT_SECONDS), ge=1.0, le=float(MAX_TIMEOUT_SECONDS)
+    )
 
     @model_validator(mode="after")
     def validate_timeout_bounds(self):
@@ -122,6 +233,8 @@ class RetryIngestRequest(BaseModel):
 
 
 class BatchIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     urls: list[HttpUrl] = Field(..., max_length=MAX_BATCH_URLS)
     mode: Mode = Field(default="auto")
     strict: bool = Field(default=True)
@@ -138,8 +251,9 @@ class BatchIngestRequest(BaseModel):
     use_llm: bool = Field(default=False)
     policy_name: str = Field(default="normal")
     custom_patterns: list[str] = Field(default_factory=list)
-    plugin_dirs: list[str] = Field(default_factory=list)
+    output_format: Literal["text", "json", "markdown"] = Field(default="text")
     output_profile: str = Field(default="default")
+    output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
     extract_blocks: bool = Field(default=False)
     chunking_strategy: ChunkingStrategy = Field(default="none")
     chunk_size: int = Field(default=1200, ge=100, le=MAX_CHUNK_SIZE)
@@ -148,10 +262,36 @@ class BatchIngestRequest(BaseModel):
     normalize_multilingual: bool = Field(default=True)
     include_security_explanation: bool = Field(default=True)
     include_observability: bool = Field(default=True)
+    save_reports: bool = Field(default=False)
+    reports_dir: str = Field(default="reports")
+    fetcher_user_agent: str = Field(default="")
+    domain_request_interval: float = Field(default=0.25, ge=0.0, le=60.0)
+    circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
+    circuit_breaker_open_seconds: float = Field(default=30.0, ge=0.1, le=3600.0)
     render_cost_budget: int | None = Field(default=None, ge=1, le=100)
     domain_policies: list[DomainPolicyModel] = Field(default_factory=list)
     max_concurrent: int = Field(default=5, ge=1, le=64)
     webhook_url: HttpUrl | None = None
+
+    @field_validator("output_formats")
+    @classmethod
+    def validate_output_formats(cls, value: list[str]) -> list[str]:
+        return _validate_output_formats_value(value)
+
+    @field_validator("policy_name")
+    @classmethod
+    def validate_policy_name(cls, value: str) -> str:
+        return _validate_policy_name_value(value) or "normal"
+
+    @field_validator("output_profile")
+    @classmethod
+    def validate_output_profile(cls, value: str) -> str:
+        return _validate_output_profile_name(value) or "default"
+
+    @field_validator("reports_dir")
+    @classmethod
+    def validate_reports_dir(cls, value: str) -> str:
+        return _validate_reports_dir_value(value)
 
     @model_validator(mode="after")
     def validate_urls_ssrf(self):
@@ -159,7 +299,10 @@ class BatchIngestRequest(BaseModel):
         for url in self.urls:
             _validate_url_no_ssrf(str(url))
         if self.webhook_url is not None:
-            _validate_url_no_ssrf(str(self.webhook_url))
+            _validate_url_no_ssrf(
+                str(self.webhook_url),
+                allow_local=_allow_local_webhooks_enabled(),
+            )
         return self
 
 
@@ -171,6 +314,11 @@ class IngestResponse(BaseModel):
     flags: list[str]
     content_hash: str
     removed_elements: dict[str, Any]
+    screenshot_path: str | None = None
+    enriched_metadata: dict[str, Any] | None = None
+    links: dict[str, Any] | None = None
+    nova_score: float | None = None
+    nova_details: dict[str, Any] | None = None
     structured_blocks: list[dict[str, Any]] | None = None
     chunks: list[dict[str, Any]] | None = None
     security_explanation: dict[str, Any] | None = None
@@ -193,6 +341,8 @@ class SecurityReportResponse(BaseModel):
     imperative_density: float
     url: str
     title: str
+    timestamp: str
+    version: str
     token_estimate: int
     token_reduction_percent: float
     original_size_bytes: int

@@ -170,6 +170,25 @@ def test_relative_urls():
     assert len(result["internal"]) == 3
 
 
+def test_base_href_resolves_relative_links_before_classification():
+    html = """
+    <html>
+    <head>
+        <base href="https://cdn.example.com/sub/">
+    </head>
+    <body>
+        <a href="child">Relative Child</a>
+    </body>
+    </html>
+    """
+    analyzer = LinkAnalyzer()
+    result = analyzer.analyze(html, "https://example.com/page")
+
+    assert result["internal"] == []
+    assert result["external"] == ["https://cdn.example.com/sub/child"]
+    assert result["by_domain"] == {"cdn.example.com": 1}
+
+
 def test_subdomain_as_external():
     """Test that subdomain is treated as external"""
     html = """
@@ -199,6 +218,40 @@ def test_case_insensitive_domain():
     result = analyzer.analyze(html, "https://example.com")
 
     assert len(result["internal"]) == 1
+
+
+def test_non_http_schemes_are_ignored():
+    """Test that only real HTTP(S) schemes are classified."""
+    html = """
+    <html>
+    <body>
+        <a href="httpx://example.com/path">Fake HTTP</a>
+        <a href="https://example.com/path">Real HTTPS</a>
+    </body>
+    </html>
+    """
+    analyzer = LinkAnalyzer()
+    result = analyzer.analyze(html, "https://example.com")
+
+    assert len(result["internal"]) == 1
+    assert "https://example.com/path" in result["internal"]
+    assert result["external"] == []
+
+
+def test_trailing_dot_hosts_are_normalized():
+    """Test that trailing-dot hostnames are treated as the same host."""
+    html = """
+    <html>
+    <body>
+        <a href="https://example.com./page">Internal</a>
+    </body>
+    </html>
+    """
+    analyzer = LinkAnalyzer()
+    result = analyzer.analyze(html, "https://example.com")
+
+    assert len(result["internal"]) == 1
+    assert "https://example.com./page" in result["internal"]
 
 
 def test_internal_link_classification_ignores_port_and_userinfo():

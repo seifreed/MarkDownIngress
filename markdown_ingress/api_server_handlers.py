@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from typing import Any, NoReturn
 
 import httpx
 from fastapi import HTTPException
-
-_logger = logging.getLogger(__name__)
-_INTERNAL_ERROR_DETAIL = "Internal server error"
 
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
@@ -34,13 +32,15 @@ from markdown_ingress.api_server_support import (
 from markdown_ingress.core.fetcher import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.core.policy import PolicyBlockedError
 
+_logger = logging.getLogger(__name__)
+_INTERNAL_ERROR_DETAIL = "Internal server error"
+
 
 def _is_playwright_runtime_import_error(exc: ImportError) -> bool:
     """Return whether this ImportError is the explicit render-mode Playwright denial."""
     message = str(exc)
-    return (
-        message.startswith("Render mode requires Playwright")
-        or message.startswith("Playwright is not installed.")
+    return message.startswith("Render mode requires Playwright") or message.startswith(
+        "Playwright is not installed."
     )
 
 
@@ -54,31 +54,48 @@ def _raise_runtime_http_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=429, detail=str(exc))
     if isinstance(exc, (httpx.InvalidURL, httpx.UnsupportedProtocol)):
         raise HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, ValueError):
+        # Never echo ValueError message back — it often carries internal
+        # hostnames, IP addresses, or filesystem paths (e.g. SSRF protection).
+        _logger.warning("ValueError mapped to 400 Bad Request: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid request")
     if isinstance(exc, PolicyBlockedError):
-        detail = {"type": "policy_blocked", "message": str(exc)}
+        # Generic policy message only. Flags and policy_action may reveal
+        # internal detection patterns and are logged server-side instead.
         if exc.document is not None:
-            detail["policy_action"] = exc.document.metadata.get("policy_action")
-            detail["flags"] = exc.document.flags
-        raise HTTPException(status_code=403, detail=detail)
+            _logger.info(
+                "PolicyBlockedError flags=%s action=%s",
+                exc.document.flags,
+                exc.document.metadata.get("policy_action"),
+            )
+        raise HTTPException(
+            status_code=403,
+            detail={"type": "policy_blocked", "message": "Content blocked by security policy"},
+        )
     raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
 
 
-def _is_queue_full_error(exc: RuntimeError) -> bool:
+def _is_queue_full_error(exc: Exception) -> bool:
     """Return whether a RuntimeError from the job queue is the expected capacity denial."""
     return str(exc) == "Job queue is full"
 
 
-def _is_queue_unavailable_error(exc: RuntimeError) -> bool:
+def _is_queue_unavailable_error(exc: Exception) -> bool:
     """Return whether the queue is operationally unavailable but not internally broken."""
     message = str(exc)
-    return message in {
-        "Job queue is unavailable",
-        "Job queue is closing",
-        "Job queue is closed",
-        "Job queue lease was lost; this instance can no longer accept or execute jobs",
-        "Job queue is unavailable because the DB is owned by another active instance",
-        "Job queue backend is temporarily unavailable because the current owner is busy",
-    } or message.startswith("Job queue backend read failed:")
+    return (
+        isinstance(exc, sqlite3.Error)
+        or message
+        in {
+            "Job queue is unavailable",
+            "Job queue is closing",
+            "Job queue is closed",
+            "Job queue lease was lost; this instance can no longer accept or execute jobs",
+            "Job queue is unavailable because the DB is owned by another active instance",
+            "Job queue backend is temporarily unavailable because the current owner is busy",
+        }
+        or message.startswith("Job queue backend read failed:")
+    )
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
@@ -103,8 +120,9 @@ async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
             use_llm=request.use_llm,
             policy_name=request.policy_name,
             custom_patterns=request.custom_patterns,
-            plugin_dirs=request.plugin_dirs,
+            output_format=request.output_format,
             output_profile=request.output_profile,
+            output_formats=request.output_formats,
             extract_blocks=request.extract_blocks,
             chunking_strategy=request.chunking_strategy,
             chunk_size=request.chunk_size,
@@ -113,6 +131,12 @@ async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
             normalize_multilingual=request.normalize_multilingual,
             include_security_explanation=request.include_security_explanation,
             include_observability=request.include_observability,
+            save_reports=request.save_reports,
+            reports_dir=request.reports_dir,
+            fetcher_user_agent=request.fetcher_user_agent,
+            domain_request_interval=request.domain_request_interval,
+            circuit_breaker_threshold=request.circuit_breaker_threshold,
+            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
             render_cost_budget=request.render_cost_budget,
             domain_policies=domain_policy_payload(request.domain_policies) or None,
         )
@@ -144,7 +168,11 @@ async def handle_retry_ingest(request: RetryIngestRequest, retry_ingest_func) ->
 
 
 async def handle_sync_batch(request: BatchIngestRequest, ingest_many_func) -> BatchIngestResponse:
-    return BatchIngestResponse(**await sync_batch_response(request, ingest_many_func))
+    try:
+        return BatchIngestResponse(**await sync_batch_response(request, ingest_many_func))
+    except Exception as exc:
+        _logger.exception("Error processing sync batch request")
+        _raise_runtime_http_error(exc)
 
 
 async def handle_batch_submit(
@@ -159,7 +187,7 @@ async def handle_batch_submit(
             webhook_url=str(request.webhook_url) if request.webhook_url is not None else None,
             start_immediately=False,
         )
-    except RuntimeError as exc:
+    except Exception as exc:
         if _is_queue_full_error(exc):
             raise HTTPException(status_code=429, detail=str(exc))
         if _is_queue_unavailable_error(exc):
@@ -180,7 +208,7 @@ async def handle_batch_submit(
 async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
     try:
         job = job_source(job_id) if callable(job_source) else job_source.get(job_id)
-    except RuntimeError as exc:
+    except Exception as exc:
         if _is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc))
         _logger.exception("Unexpected batch status error for %s", job_id)
@@ -198,7 +226,9 @@ async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
     )
 
 
-async def handle_security_report(request: IngestRequest, generate_security_report_func) -> SecurityReportResponse:
+async def handle_security_report(
+    request: IngestRequest, generate_security_report_func
+) -> SecurityReportResponse:
     # Cancellation interrupts the async wait only; report generation continues
     # in the dispatched worker thread.
     try:
@@ -220,8 +250,9 @@ async def handle_security_report(request: IngestRequest, generate_security_repor
             use_llm=request.use_llm,
             policy_name=request.policy_name,
             custom_patterns=request.custom_patterns,
-            plugin_dirs=request.plugin_dirs,
+            output_format=request.output_format,
             output_profile=request.output_profile,
+            output_formats=request.output_formats,
             extract_blocks=request.extract_blocks,
             chunking_strategy=request.chunking_strategy,
             chunk_size=request.chunk_size,
@@ -230,6 +261,12 @@ async def handle_security_report(request: IngestRequest, generate_security_repor
             normalize_multilingual=request.normalize_multilingual,
             include_security_explanation=request.include_security_explanation,
             include_observability=request.include_observability,
+            save_reports=request.save_reports,
+            reports_dir=request.reports_dir,
+            fetcher_user_agent=request.fetcher_user_agent,
+            domain_request_interval=request.domain_request_interval,
+            circuit_breaker_threshold=request.circuit_breaker_threshold,
+            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
             render_cost_budget=request.render_cost_budget,
             domain_policies=domain_policy_payload(request.domain_policies) or None,
         )
@@ -243,21 +280,26 @@ async def handle_extractor_comparison(
     compare_extractors_func,
 ) -> ExtractorComparisonResponse:
     try:
-        return ExtractorComparisonResponse(results=compare_extractors_func(request.html, model=request.model))
-    except Exception as exc:
+        results = await asyncio.to_thread(
+            compare_extractors_func, request.html, model=request.model
+        )
+        return ExtractorComparisonResponse(results=results)
+    except Exception:
         _logger.exception("Error processing extractor comparison request")
         raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
 
 
-def build_stats_payload(api_version: str, get_ingest_stats_func, job_queue, job_ttl_seconds: int, max_queued_jobs: int):
+def build_stats_payload(
+    api_version: str, get_ingest_stats_func, job_queue, job_ttl_seconds: int, max_queued_jobs: int
+):
     try:
         pending = job_queue.pending_count(cleanup_expired=False)
     except TypeError:
         try:
             pending = job_queue.pending_count()
-        except RuntimeError:
+        except (RuntimeError, sqlite3.Error):
             pending = None
-    except RuntimeError:
+    except (RuntimeError, sqlite3.Error):
         pending = None
     return {
         "version": api_version,

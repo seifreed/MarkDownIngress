@@ -1,0 +1,110 @@
+name: URL Campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_campaign_limit:
+        description: "Number of unique URLs to process"
+        required: true
+        default: "50000"
+      url_campaign_scenarios:
+        description: "Comma-separated scenario list (blank = defaults)"
+        required: false
+        default: ""
+      url_campaign_concurrency:
+        description: "Global worker concurrency"
+        required: true
+        default: "32"
+      url_campaign_batch_size:
+        description: "Scheduler batch size"
+        required: true
+        default: "64"
+      python_version:
+        description: "Python version"
+        required: true
+        default: "3.11"
+
+jobs:
+  campaign:
+    name: URL Dataset Campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    env:
+      URL_CAMPAIGN_LIMIT: ${{ github.event.inputs.url_campaign_limit || '50000' }}
+      URL_CAMPAIGN_SCENARIOS: ${{ github.event.inputs.url_campaign_scenarios || '' }}
+      URL_CAMPAIGN_CONCURRENCY: ${{ github.event.inputs.url_campaign_concurrency || '32' }}
+      URL_CAMPAIGN_BATCH_SIZE: ${{ github.event.inputs.url_campaign_batch_size || '64' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version || '3.11' }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run URL dataset campaign
+        run: |
+          pytest -q -o addopts='' tests/test_url_dataset_campaign.py \
+            --run-url-campaign \
+            --url-campaign-limit "${URL_CAMPAIGN_LIMIT}" \
+            --url-campaign-concurrency "${URL_CAMPAIGN_CONCURRENCY}" \
+            --url-campaign-batch-size "${URL_CAMPAIGN_BATCH_SIZE}" \
+            ${URL_CAMPAIGN_SCENARIOS:+--url-campaign-scenarios "${URL_CAMPAIGN_SCENARIOS}"}
+
+      - name: Locate latest campaign run
+        id: campaign_run
+        run: |
+          latest_run=$(ls -1dt artifacts/url_dataset_campaign/campaign_* | head -n 1)
+          echo "latest_run=${latest_run}" >> "$GITHUB_OUTPUT"
+          echo "Latest run: ${latest_run}"
+
+      - name: Publish campaign summary
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["SUMMARY_PATH"])
+          data = json.loads(summary_path.read_text(encoding="utf-8"))
+          lines = [
+              "## URL Campaign Summary",
+              "",
+              f"- Dataset: `{data['dataset_url']}`",
+              f"- Requested URLs: `{data['requested_unique_urls']}`",
+              f"- Selected URLs: `{data['selected_unique_urls']}`",
+              f"- Processed: `{data['counts'].get('processed', 0)}`",
+              f"- OK: `{data['counts'].get('ok', 0)}`",
+              f"- Errors: `{data['counts'].get('errors', 0)}`",
+              f"- Warnings: `{data['counts'].get('warnings', 0)}`",
+              "",
+              "### Top error types",
+          ]
+          for key, value in sorted(data["error_types"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
+              lines.append(f"- `{key}`: `{value}`")
+          lines.extend(["", "### Top warning types"])
+          for key, value in sorted(data["warning_types"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
+              lines.append(f"- `{key}`: `{value}`")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
+        env:
+          SUMMARY_PATH: ${{ steps.campaign_run.outputs.latest_run }}/summary.json
+
+      - name: Upload campaign artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: url-campaign-${{ github.run_id }}
+          path: ${{ steps.campaign_run.outputs.latest_run }}
+          retention-days: 14

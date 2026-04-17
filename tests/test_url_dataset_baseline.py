@@ -48,7 +48,11 @@ def _warning_reasons(doc) -> list[str]:
 @pytest.mark.network
 def test_url_dataset_baseline(pytestconfig):
     dataset_file = _download_dataset()
-    all_urls = [line.strip() for line in dataset_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    all_urls = [
+        line.strip()
+        for line in dataset_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
     raw_limit = str(pytestconfig.getoption("--url-baseline-limit"))
     limit = int(raw_limit)
@@ -134,7 +138,7 @@ def test_url_dataset_baseline(pytestconfig):
         loop.set_default_executor(ThreadPoolExecutor(max_workers=64))
         batch_size = 512
         for start in range(0, len(urls), batch_size):
-            batch = list(enumerate(urls[start:start + batch_size], start=start))
+            batch = list(enumerate(urls[start : start + batch_size], start=start))
             await asyncio.gather(*(process_one(index, url) for index, url in batch))
 
     asyncio.run(run())

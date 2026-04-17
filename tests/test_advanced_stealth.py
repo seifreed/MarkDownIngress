@@ -102,7 +102,74 @@ def test_advanced_stealth_config():
     ), "Randomized configs should differ"
     print("  ✓ Randomization works")
 
-    # Test custom config
+
+def test_stealth_config_generator_request_scoped_no_immediate_repeat(monkeypatch):
+    """Generator keeps state per request and avoids immediate repetition without globals."""
+    from markdown_ingress.core.stealth import browser_config
+    from markdown_ingress.core.stealth.browser_config import StealthConfigGenerator
+
+    def _fixed_choice(seq):
+        if seq is browser_config.ADVANCED_USER_AGENTS:
+            return seq[0]
+        if seq is browser_config.ADVANCED_VIEWPORT_SIZES:
+            return seq[0]
+        if seq is browser_config.TIMEZONES:
+            return seq[0]
+        return seq[0]
+
+    monkeypatch.setattr(browser_config.random, "choice", _fixed_choice)
+    monkeypatch.setattr(browser_config.random, "uniform", lambda _low, _high: 1.0)
+
+    generator = StealthConfigGenerator(randomize=True)
+    first = generator.next_config()
+    second = generator.next_config()
+
+    assert (
+        first.user_agent != second.user_agent
+        or first.viewport_width != second.viewport_width
+        or first.timezone != second.timezone
+        or first.device_scale_factor != second.device_scale_factor
+    ), "request-scoped generator should avoid immediate repetition"
+
+
+def test_advanced_stealth_config_avoids_immediate_repeat_with_explicit_signature(monkeypatch):
+    """Request-scoped signature prevents returning the same random signature twice."""
+    from markdown_ingress.core.stealth import browser_config
+
+    def _fixed_choice(seq):
+        if seq is browser_config.ADVANCED_USER_AGENTS:
+            return seq[0]
+        if seq is browser_config.ADVANCED_VIEWPORT_SIZES:
+            return seq[0]
+        if seq is browser_config.TIMEZONES:
+            return seq[0]
+        return seq[0]
+
+    monkeypatch.setattr(browser_config.random, "choice", _fixed_choice)
+    monkeypatch.setattr(browser_config.random, "uniform", lambda _low, _high: 1.0)
+
+    base = browser_config.get_advanced_stealth_config(randomize=True)
+    previous_signature = (
+        base.user_agent,
+        (base.viewport_width, base.viewport_height),
+        base.timezone,
+        base.device_scale_factor,
+    )
+    next_config = browser_config.get_advanced_stealth_config(
+        randomize=True,
+        previous_signature=previous_signature,
+    )
+
+    assert (
+        next_config.user_agent != base.user_agent
+        or next_config.viewport_width != base.viewport_width
+        or next_config.timezone != base.timezone
+        or next_config.device_scale_factor != base.device_scale_factor
+    ), "previous_signature must avoid immediate repetition"
+
+
+def test_advanced_stealth_config_custom_inputs():
+    """Test custom inputs are applied directly."""
     custom_ua = "Custom User Agent"
     custom_viewport = (1024, 768)
     custom_tz = "Europe/London"
@@ -116,9 +183,6 @@ def test_advanced_stealth_config():
     assert config.viewport_width == 1024
     assert config.viewport_height == 768
     assert config.timezone == custom_tz
-    print("  ✓ Custom config works")
-
-    print("✓ AdvancedStealthConfig tests passed\n")
 
 
 def test_context_options():
@@ -212,6 +276,11 @@ def test_javascript_injection_content():
     for patch in critical_patches:
         assert patch in js, f"Missing critical patch: {patch}"
         print(f"  ✓ Includes {patch} patch")
+
+    assert "new Proxy(originalNavigator" in js
+    assert "PluginArray.prototype" in js
+    assert "return undefined;" in js
+    assert "this.width <= 280 && this.height <= 280" in js
 
     print("✓ JavaScript injection content tests passed\n")
 

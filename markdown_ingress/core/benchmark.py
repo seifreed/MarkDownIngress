@@ -123,15 +123,20 @@ class Benchmark:
 
         # Size metrics
         original_size = last_doc.metadata.get("original_size_bytes", 0)
-        cleaned_size = last_doc.metadata.get("cleaned_size_bytes", len(last_doc.markdown.encode("utf-8")))
-        size_reduction = (
-            (original_size - cleaned_size) / original_size * 100 if original_size > 0 else 0.0
+        cleaned_size = last_doc.metadata.get(
+            "cleaned_size_bytes", len(last_doc.markdown.encode("utf-8"))
+        )
+        size_reduction = max(
+            0.0,
+            (original_size - cleaned_size) / original_size * 100 if original_size > 0 else 0.0,
         )
         extractor_comparison = None
         if compare_extractors_enabled:
             try:
                 from markdown_ingress.core.fetcher import Fetcher
-                fetch_result = Fetcher(timeout=30.0).fetch_sync(url)
+
+                with Fetcher(timeout=30.0) as fetcher:
+                    fetch_result = fetcher.fetch_sync(url)
                 extractor_comparison = compare_extractors(fetch_result.html, model=self.model)
             except Exception as e:
                 _logger.debug("Extractor comparison failed: %s", e)
@@ -244,8 +249,14 @@ class Benchmark:
             report_lines.append(
                 f"   Timing: {result.avg_time_ms:.1f}ms avg (min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms)"
             )
-            token_pct = f"-{result.reduction_percent:.1f}%" if result.reduction_percent > 0 else "0.0%"
-            size_pct = f"-{result.size_reduction_percent:.1f}%" if result.size_reduction_percent > 0 else "0.0%"
+            token_pct = (
+                f"-{result.reduction_percent:.1f}%" if result.reduction_percent > 0 else "0.0%"
+            )
+            size_pct = (
+                f"-{result.size_reduction_percent:.1f}%"
+                if result.size_reduction_percent > 0
+                else "0.0%"
+            )
             report_lines.append(
                 f"   Tokens: {result.original_tokens:,} → {result.cleaned_tokens:,} ({token_pct})"
             )
@@ -271,7 +282,9 @@ class Benchmark:
                 continue
             for name, data in result.extractor_comparison.items():
                 if data.get("available"):
-                    extractor_summary.setdefault(name, []).append(float(data.get("token_estimate", 0)))
+                    extractor_summary.setdefault(name, []).append(
+                        float(data.get("token_estimate", 0))
+                    )
 
         report_lines.append("=" * 80)
         report_lines.append("Summary")

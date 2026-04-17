@@ -48,7 +48,9 @@ class Scorer:
         elif score > 1.0:
             score = 1.0
         if score != original_score:
-            _logger.warning("Clamped out-of-range injection score from %s to %s", original_score, score)
+            _logger.warning(
+                "Clamped out-of-range injection score from %s to %s", original_score, score
+            )
 
         # Handle exact boundary cases explicitly for clarity
         if score >= 0.8:

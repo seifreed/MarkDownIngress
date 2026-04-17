@@ -2,7 +2,9 @@
 Tests for FastAPI server endpoints
 """
 
+import asyncio
 import importlib
+import logging
 import sqlite3
 import threading
 import time
@@ -12,15 +14,30 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import markdown_ingress.api_server as api_server
-from markdown_ingress.api_server import _get_job_queue, _get_job_record, _init_job_queue, _snapshot_job_subsystem, _start_job_queue_repair_loop, app
-from markdown_ingress.api_server_models import BatchIngestRequest, IngestRequest, RetryIngestRequest
+from markdown_ingress.api_server import (
+    LEGACY_UNKNOWN_TTL_SECONDS,
+    _get_job_queue,
+    _get_job_record,
+    _init_job_queue,
+    _snapshot_job_subsystem,
+    _start_job_queue_repair_loop,
+    app,
+)
+from markdown_ingress.api_server_handlers import handle_sync_batch
+from markdown_ingress.api_server_models import (
+    BatchIngestRequest,
+    DomainPolicyModel,
+    IngestRequest,
+    RetryIngestRequest,
+)
 from markdown_ingress.core.fetcher import DomainCircuitOpenError, UnsupportedContentTypeError
-from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.core.policy import PolicyBlockedError
+from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchErrorItem
 
 client = TestClient(app)
@@ -36,11 +53,13 @@ client = TestClient(app)
         "http://metadata.google.internal./",
         "http://metadata.azure.net/",
         "http://metadata.azure.net./",
+        "http://metadata.oracle.internal/",
         "http://[::ffff:127.0.0.1]/",
         "http://[::ffff:10.0.0.1]/",
     ],
 )
-def test_api_server_models_block_private_and_loopback_urls(url: str):
+def test_api_server_models_block_private_and_loopback_urls(monkeypatch, url: str):
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "false")
     with pytest.raises(ValueError, match="SSRF protection"):
         IngestRequest(url=url)
 
@@ -57,6 +76,172 @@ def test_batch_request_blocks_metadata_azure_webhook_url():
             urls=["https://example.com"],
             webhook_url="https://metadata.azure.net/hook",
         )
+
+
+def test_batch_request_blocks_metadata_oracle_webhook_url():
+    with pytest.raises(ValueError, match="SSRF protection"):
+        BatchIngestRequest(
+            urls=["https://example.com"],
+            webhook_url="https://metadata.oracle.internal/hook",
+        )
+
+
+def test_batch_request_blocks_local_webhook_url_by_default():
+    with pytest.raises(ValueError, match="SSRF protection"):
+        BatchIngestRequest(
+            urls=["https://example.com"],
+            webhook_url="http://127.0.0.1/hook",
+        )
+
+
+def test_batch_request_allows_local_webhook_url_when_enabled(monkeypatch):
+    monkeypatch.setenv("MDI_API_ALLOW_LOCAL_WEBHOOKS", "true")
+
+    request = BatchIngestRequest(
+        urls=["https://example.com"],
+        webhook_url="http://127.0.0.1/hook",
+    )
+
+    assert str(request.webhook_url) == "http://127.0.0.1/hook"
+
+
+def test_ingest_request_rejects_invalid_output_formats_early():
+    with pytest.raises(ValueError, match="output_formats\\[0\\] has invalid value 'bogus'"):
+        IngestRequest(url="https://example.com", output_formats=["bogus"])
+
+
+def test_batch_request_rejects_invalid_output_formats_early():
+    with pytest.raises(ValueError, match="output_formats\\[0\\] has invalid value 'bogus'"):
+        BatchIngestRequest(urls=["https://example.com"], output_formats=["bogus"])
+
+
+def test_ingest_request_rejects_invalid_policy_name_early():
+    with pytest.raises(ValueError, match="policy_name has invalid value 'bogus'"):
+        IngestRequest(url="https://example.com", policy_name="bogus")
+
+
+def test_batch_request_rejects_invalid_policy_name_early():
+    with pytest.raises(ValueError, match="policy_name has invalid value 'bogus'"):
+        BatchIngestRequest(urls=["https://example.com"], policy_name="bogus")
+
+
+def test_domain_policy_model_rejects_invalid_policy_name_early():
+    with pytest.raises(ValueError, match="policy_name has invalid value 'bogus'"):
+        DomainPolicyModel(domain="example.com", policy_name="bogus")
+
+
+def test_ingest_request_rejects_invalid_output_profile_early():
+    with pytest.raises(ValueError, match="Unknown output profile 'bogus'"):
+        IngestRequest(url="https://example.com", output_profile="bogus")
+
+
+def test_batch_request_rejects_invalid_output_profile_early():
+    with pytest.raises(ValueError, match="Unknown output profile 'bogus'"):
+        BatchIngestRequest(urls=["https://example.com"], output_profile="bogus")
+
+
+def test_domain_policy_model_rejects_invalid_output_profile_early():
+    with pytest.raises(ValueError, match="Unknown output profile 'bogus'"):
+        DomainPolicyModel(domain="example.com", output_profile="bogus")
+
+
+def test_ingest_request_rejects_client_supplied_allow_local_urls():
+    """Security fix (S1): allow_local_urls must be server-side only (env var)."""
+    with pytest.raises(ValueError):
+        IngestRequest(url="https://example.com", allow_local_urls=True)
+
+
+def test_batch_request_rejects_client_supplied_allow_local_urls():
+    """Security fix (S1): allow_local_urls must be server-side only (env var)."""
+    with pytest.raises(ValueError):
+        BatchIngestRequest(urls=["https://example.com"], allow_local_urls=True)
+
+
+def test_retry_request_rejects_client_supplied_allow_local_urls():
+    """Security fix (S1): allow_local_urls must be server-side only (env var)."""
+    with pytest.raises(ValueError):
+        RetryIngestRequest(url="https://example.com", allow_local_urls=True)
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [
+        (IngestRequest, {"url": "http://127.0.0.1:8000"}),
+        (BatchIngestRequest, {"urls": ["http://127.0.0.1:8000"]}),
+        (RetryIngestRequest, {"url": "http://127.0.0.1:8000"}),
+    ],
+)
+def test_request_models_honor_env_allow_local_urls_fallback(monkeypatch, factory, kwargs):
+    """When env var is set, local-URL validation must permit local targets."""
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")
+
+    # Should not raise — env var opts into local URL acceptance.
+    factory(**kwargs)
+
+
+def test_ingest_request_rejects_empty_reports_dir_early():
+    with pytest.raises(ValueError, match="reports_dir cannot be empty"):
+        IngestRequest(url="https://example.com", reports_dir="   ")
+
+
+def test_batch_request_rejects_empty_reports_dir_early():
+    with pytest.raises(ValueError, match="reports_dir cannot be empty"):
+        BatchIngestRequest(urls=["https://example.com"], reports_dir="")
+
+
+def test_ingest_request_rejects_unknown_extra_fields():
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        IngestRequest(url="https://example.com", ouput_profile="bogus")
+
+
+def test_batch_request_rejects_unknown_extra_fields():
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        BatchIngestRequest(urls=["https://example.com"], allow_local_url=True)
+
+
+def test_retry_request_rejects_unknown_extra_fields():
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        RetryIngestRequest(url="https://example.com", allow_local_url=True)
+
+
+def test_domain_policy_model_rejects_unknown_extra_fields():
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        DomainPolicyModel(domain="example.com", include_subdomainz=True)
+
+
+def test_handle_sync_batch_maps_value_error_to_http_400():
+    request = BatchIngestRequest(urls=["https://example.com"])
+
+    def bad_ingest_many(**kwargs):
+        raise ValueError("bad runtime config")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(handle_sync_batch(request, bad_ingest_many))
+
+    # Security fix (S3): ValueError messages may carry internal IPs/paths,
+    # so the handler masks them with a generic detail.
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid request"
+
+
+def test_handle_sync_batch_maps_policy_block_to_http_403():
+    request = BatchIngestRequest(urls=["https://example.com"])
+    blocked_doc = create_mock_document()
+    blocked_doc.metadata["policy_action"] = "block"
+    blocked_doc.flags = blocked_doc.flags + ["policy_block"]
+
+    def blocked_ingest_many(**kwargs):
+        raise PolicyBlockedError("Blocked by policy", document=blocked_doc)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(handle_sync_batch(request, blocked_ingest_many))
+
+    # Security fix (S12): 403 must not leak internal flags or policy_action.
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["type"] == "policy_blocked"
+    assert exc_info.value.detail["message"] == "Content blocked by security policy"
+    assert "policy_action" not in exc_info.value.detail
+    assert "flags" not in exc_info.value.detail
 
 
 # Mock SafeDocument for testing
@@ -158,18 +343,23 @@ def create_mock_security_report():
         },
     )
 
+
 def test_root_endpoint():
-    """Test root endpoint returns API info"""
+    """Security fix (S5): root endpoint must not expose internal endpoint list."""
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
     assert data["version"] == "0.8.0"
-    assert "message" in data
-    assert "endpoints" in data
+    assert data["name"] == "markdown-ingress"
+    assert data["docs"] == "/docs"
+    # Must NOT leak endpoint inventory / internal metadata
+    assert "endpoints" not in data
+    assert "message" not in data
 
 
 def test_health_endpoint(monkeypatch):
-    """Test health check endpoint"""
+    """Security fix (S5): public /health must not expose job_queue paths."""
+
     class OpenQueue:
         state = "open"
         db_path = "current.sqlite3"
@@ -187,7 +377,22 @@ def test_health_endpoint(monkeypatch):
     assert data["status"] == "healthy"
     assert data["version"] == "0.8.0"
     assert data["service"] == "MarkDownIngress API"
-    assert data["job_queue"]["state"] == "open"
+    # Must NOT expose job_queue internals on public endpoint
+    assert "job_queue" not in data
+
+
+def test_health_detailed_requires_api_key(monkeypatch):
+    """Security fix (S5): /health/detailed must require auth."""
+    monkeypatch.setattr(api_server, "OPTIONAL_API_KEY", "secret-test-key")
+    monkeypatch.setattr(api_server, "API_KEY_CONFIG_ERROR", False)
+
+    response = client.get("/api/v1/health/detailed")
+    assert response.status_code == 401
+
+    ok = client.get("/api/v1/health/detailed", headers={"x-api-key": "secret-test-key"})
+    assert ok.status_code == 200
+    data = ok.json()
+    assert "job_queue" in data
 
 
 def test_rate_limit_cleanup_evicts_oldest_clients_first(monkeypatch):
@@ -212,22 +417,19 @@ def test_rate_limit_cleanup_evicts_oldest_clients_first(monkeypatch):
 
     assert allowed is True
     assert retry_after == 0
-    assert sorted(api_server._request_counts) == ["new", "trigger"]
+    # Cleanup now runs before the rate limit check, so with 3 existing clients
+    # and max=2, the oldest (old) is evicted (3-2=1), leaving mid+new+trigger
+    assert sorted(api_server._request_counts) == ["mid", "new", "trigger"]
 
 
-@patch('markdown_ingress.api_server.ingest')
+@patch("markdown_ingress.api_server.ingest")
 def test_ingest_endpoint_basic(mock_ingest):
     """Test basic ingestion endpoint with fast mode"""
     mock_ingest.return_value = create_mock_document()
 
     response = client.post(
         "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "strict": True,
-            "timeout": 30
-        }
+        json={"url": "https://example.com", "mode": "fast", "strict": True, "timeout": 30},
     )
     assert response.status_code == 200
     data = response.json()
@@ -259,18 +461,12 @@ def test_ingest_endpoint_basic(mock_ingest):
     assert data["observability"]["policy_action"] == "allow"
 
 
-@patch('markdown_ingress.api_server.ingest')
+@patch("markdown_ingress.api_server.ingest")
 def test_ingest_endpoint_auto_mode(mock_ingest):
     """Test ingestion with auto mode"""
     mock_ingest.return_value = create_mock_document()
 
-    response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "auto"
-        }
-    )
+    response = client.post("/ingest", json={"url": "https://example.com", "mode": "auto"})
     assert response.status_code == 200
     data = response.json()
     assert "markdown" in data
@@ -292,11 +488,13 @@ def test_ingest_endpoint_returns_403_for_policy_block(mock_ingest):
         },
     )
 
+    # Security fix (S12): 403 must not leak flags or policy_action.
     assert response.status_code == 403
     data = response.json()
     assert data["detail"]["type"] == "policy_blocked"
-    assert data["detail"]["policy_action"] == "block"
-    assert "policy_block" in data["detail"]["flags"]
+    assert data["detail"]["message"] == "Content blocked by security policy"
+    assert "policy_action" not in data["detail"]
+    assert "flags" not in data["detail"]
 
 
 @patch("markdown_ingress.api_server.ingest")
@@ -308,7 +506,15 @@ def test_versioned_ingest_endpoint_forwards_profiles_and_domain_policies(mock_in
         json={
             "url": "https://docs.example.com/guide",
             "mode": "fast",
+            "output_format": "json",
             "output_profile": "rag_chunkable",
+            "output_formats": ["markdown", "blocks", "chunks"],
+            "save_reports": True,
+            "reports_dir": "saved-reports",
+            "fetcher_user_agent": "UA/1.0",
+            "domain_request_interval": 0.5,
+            "circuit_breaker_threshold": 7,
+            "circuit_breaker_open_seconds": 12.5,
             "extract_blocks": True,
             "chunking_strategy": "heading",
             "chunk_size": 900,
@@ -332,7 +538,17 @@ def test_versioned_ingest_endpoint_forwards_profiles_and_domain_policies(mock_in
     assert response.status_code == 200
     mock_ingest.assert_called_once()
     kwargs = mock_ingest.call_args.kwargs
+    # allow_local_urls is server-side only now; handler must not forward it.
+    assert "allow_local_urls" not in kwargs
+    assert kwargs["output_format"] == "json"
     assert kwargs["output_profile"] == "rag_chunkable"
+    assert kwargs["output_formats"] == ["markdown", "blocks", "chunks"]
+    assert kwargs["save_reports"] is True
+    assert kwargs["reports_dir"] == "saved-reports"
+    assert kwargs["fetcher_user_agent"] == "UA/1.0"
+    assert kwargs["domain_request_interval"] == 0.5
+    assert kwargs["circuit_breaker_threshold"] == 7
+    assert kwargs["circuit_breaker_open_seconds"] == 12.5
     assert kwargs["extract_blocks"] is True
     assert kwargs["chunking_strategy"] == "heading"
     assert kwargs["chunk_size"] == 900
@@ -358,25 +574,13 @@ def test_versioned_ingest_endpoint_forwards_profiles_and_domain_policies(mock_in
 
 def test_ingest_endpoint_invalid_mode():
     """Test ingestion with invalid mode parameter"""
-    response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "invalid_mode"
-        }
-    )
+    response = client.post("/ingest", json={"url": "https://example.com", "mode": "invalid_mode"})
     assert response.status_code == 422  # Validation error
 
 
 def test_ingest_endpoint_invalid_url():
     """Test ingestion with invalid URL"""
-    response = client.post(
-        "/ingest",
-        json={
-            "url": "not-a-valid-url",
-            "mode": "fast"
-        }
-    )
+    response = client.post("/ingest", json={"url": "not-a-valid-url", "mode": "fast"})
     assert response.status_code == 422  # Validation error
 
 
@@ -385,8 +589,9 @@ def test_api_server_models_honor_env_limits(monkeypatch):
     monkeypatch.setenv("MDI_API_MAX_TIMEOUT", "42")
     monkeypatch.setenv("MDI_API_MAX_CHUNK_SIZE", "321")
 
-    import markdown_ingress.api_server_models as api_server_models
     from pydantic import ValidationError
+
+    import markdown_ingress.api_server_models as api_server_models
 
     reloaded = importlib.reload(api_server_models)
     try:
@@ -414,23 +619,18 @@ def test_api_server_models_honor_env_limits(monkeypatch):
         importlib.reload(api_server_models)
 
 
-@patch('markdown_ingress.api_server.ingest')
+@patch("markdown_ingress.api_server.ingest")
 def test_ingest_endpoint_with_stealth(mock_ingest):
     """Test ingestion with stealth mode enabled"""
     mock_ingest.return_value = create_mock_document()
 
     response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "stealth": True
-        }
+        "/ingest", json={"url": "https://example.com", "mode": "fast", "stealth": True}
     )
     assert response.status_code == 200
 
 
-@patch('markdown_ingress.api_server.retry_ingest')
+@patch("markdown_ingress.api_server.retry_ingest")
 def test_retry_ingest_endpoint(mock_retry):
     """Test retry ingestion endpoint"""
     mock_retry.return_value = create_mock_document()
@@ -441,8 +641,8 @@ def test_retry_ingest_endpoint(mock_retry):
             "url": "https://example.com",
             "mode": "fast",
             "max_retries": 2,
-            "initial_timeout": 30.0
-        }
+            "initial_timeout": 30.0,
+        },
     )
     assert response.status_code == 200
     data = response.json()
@@ -451,6 +651,28 @@ def test_retry_ingest_endpoint(mock_retry):
     assert "metadata" in data
     assert "retry_attempts" in data["metadata"]
     assert data["metadata"]["retry_attempts"] >= 1
+
+
+@patch("markdown_ingress.api_server.retry_ingest")
+def test_retry_ingest_endpoint_rejects_client_allow_local_urls(mock_retry, monkeypatch):
+    """Security fix (S1): client cannot supply allow_local_urls; server-side env only."""
+    mock_retry.return_value = create_mock_document()
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")
+
+    # Client-supplied field must be rejected (extra=forbid).
+    response_rejected = client.post(
+        "/ingest/retry",
+        json={"url": "http://127.0.0.1:8000", "mode": "fast", "allow_local_urls": True},
+    )
+    assert response_rejected.status_code == 422
+
+    # Without the field, env var MDI_ALLOW_LOCAL_URLS opts in server-side.
+    response_ok = client.post(
+        "/ingest/retry",
+        json={"url": "http://127.0.0.1:8000", "mode": "fast"},
+    )
+    assert response_ok.status_code == 200
+    assert "allow_local_urls" not in mock_retry.call_args.kwargs
 
 
 @patch("markdown_ingress.api_server.retry_ingest")
@@ -510,6 +732,27 @@ def test_ingest_endpoint_returns_400_for_invalid_url_error(mock_ingest):
 
 
 @patch("markdown_ingress.api_server.ingest")
+def test_ingest_endpoint_returns_400_for_runtime_validation_error(mock_ingest):
+    mock_ingest.side_effect = ValueError(
+        "chunk_overlap must be less than chunk_size, got 200 >= 100"
+    )
+
+    response = client.post(
+        "/api/v1/ingest",
+        json={
+            "url": "https://example.com",
+            "mode": "fast",
+            "chunk_size": 100,
+            "chunk_overlap": 200,
+        },
+    )
+
+    # Security fix (S3): ValueError detail is masked to avoid leaking internal state.
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid request"
+
+
+@patch("markdown_ingress.api_server.ingest")
 def test_ingest_endpoint_returns_429_for_domain_circuit_open(mock_ingest):
     mock_ingest.side_effect = DomainCircuitOpenError("Circuit breaker open for host: example.com")
 
@@ -534,10 +777,12 @@ def test_retry_ingest_endpoint_returns_403_for_policy_block(mock_retry):
         json={"url": "https://example.com", "mode": "fast"},
     )
 
+    # Security fix (S12): no policy_action/flags in response.
     assert response.status_code == 403
     data = response.json()
     assert data["detail"]["type"] == "policy_blocked"
-    assert data["detail"]["policy_action"] == "block"
+    assert data["detail"]["message"] == "Content blocked by security policy"
+    assert "policy_action" not in data["detail"]
 
 
 @patch("markdown_ingress.api_server.retry_ingest")
@@ -561,6 +806,7 @@ def test_retry_ingest_endpoint_forwards_max_timeout(mock_retry):
 @patch("markdown_ingress.api_server.ingest_many")
 def test_batch_ingest_endpoint(mock_ingest_many):
     """Test batch ingestion endpoint"""
+
     class FakeBatchResult:
         successful = 2
         failed = 0
@@ -572,13 +818,10 @@ def test_batch_ingest_endpoint(mock_ingest_many):
     response = client.post(
         "/ingest/batch",
         json={
-            "urls": [
-                "https://example.com",
-                "https://example.org"
-            ],
+            "urls": ["https://example.com", "https://example.org"],
             "mode": "fast",
-            "timeout": 30
-        }
+            "timeout": 30,
+        },
     )
     assert response.status_code == 200
     data = response.json()
@@ -757,7 +1000,16 @@ def test_batch_endpoint_forwards_output_flags(mock_ingest_many):
             "use_llm": True,
             "policy_name": "strict",
             "custom_patterns": ["secret"],
-            "plugin_dirs": ["/tmp/plugins"],
+
+            "output_format": "json",
+            "output_profile": "llm_safe",
+            "output_formats": ["markdown", "security"],
+            "save_reports": True,
+            "reports_dir": "saved-reports",
+            "fetcher_user_agent": "UA/1.0",
+            "domain_request_interval": 0.5,
+            "circuit_breaker_threshold": 7,
+            "circuit_breaker_open_seconds": 12.5,
             "render_cost_budget": 9,
             "domain_policies": [
                 {
@@ -771,6 +1023,8 @@ def test_batch_endpoint_forwards_output_flags(mock_ingest_many):
 
     assert response.status_code == 200
     kwargs = mock_ingest_many.call_args.kwargs
+    # allow_local_urls removed from client-controllable params
+    assert "allow_local_urls" not in kwargs
     assert kwargs["auto_render_threshold"] == 77
     assert kwargs["stealth"] is True
     assert kwargs["disable_http2"] is True
@@ -782,11 +1036,20 @@ def test_batch_endpoint_forwards_output_flags(mock_ingest_many):
     assert kwargs["use_llm"] is True
     assert kwargs["policy_name"] == "strict"
     assert kwargs["custom_patterns"] == ["secret"]
-    assert kwargs["plugin_dirs"] == ["/tmp/plugins"]
+
+    assert kwargs["output_format"] == "json"
+    assert kwargs["output_profile"] == "llm_safe"
+    assert kwargs["output_formats"] == ["markdown", "security"]
     assert kwargs["detect_language"] is False
     assert kwargs["normalize_multilingual"] is False
     assert kwargs["include_security_explanation"] is False
     assert kwargs["include_observability"] is False
+    assert kwargs["save_reports"] is True
+    assert kwargs["reports_dir"] == "saved-reports"
+    assert kwargs["fetcher_user_agent"] == "UA/1.0"
+    assert kwargs["domain_request_interval"] == 0.5
+    assert kwargs["circuit_breaker_threshold"] == 7
+    assert kwargs["circuit_breaker_open_seconds"] == 12.5
     assert kwargs["render_cost_budget"] == 9
     assert kwargs["domain_policies"] == [
         {
@@ -825,11 +1088,13 @@ def test_security_report_endpoint_returns_403_for_policy_block(mock_report):
         json={"url": "https://example.com", "mode": "fast"},
     )
 
+    # Security fix (S12): 403 must not leak flags or policy_action.
     assert response.status_code == 403
     data = response.json()
     assert data["detail"]["type"] == "policy_blocked"
-    assert data["detail"]["policy_action"] == "block"
-    assert "policy_block" in data["detail"]["flags"]
+    assert data["detail"]["message"] == "Content blocked by security policy"
+    assert "policy_action" not in data["detail"]
+    assert "flags" not in data["detail"]
 
 
 @patch("markdown_ingress.api_server.ingest")
@@ -881,7 +1146,7 @@ def test_security_report_endpoint_forwards_runtime_contract(mock_report):
             "use_llm": True,
             "policy_name": "strict",
             "custom_patterns": ["secret"],
-            "plugin_dirs": ["/tmp/plugins"],
+
             "output_profile": "llm_safe",
             "extract_blocks": True,
             "chunking_strategy": "heading",
@@ -919,7 +1184,7 @@ def test_security_report_endpoint_forwards_runtime_contract(mock_report):
     assert kwargs["use_llm"] is True
     assert kwargs["policy_name"] == "strict"
     assert kwargs["custom_patterns"] == ["secret"]
-    assert kwargs["plugin_dirs"] == ["/tmp/plugins"]
+
     assert kwargs["output_profile"] == "llm_safe"
     assert kwargs["extract_blocks"] is True
     assert kwargs["chunking_strategy"] == "heading"
@@ -990,8 +1255,18 @@ def test_stats_endpoint_does_not_call_get_job_queue(mock_stats, monkeypatch):
 @patch("markdown_ingress.api_server.compare_extractors")
 def test_versioned_extractor_evaluation_endpoint(mock_compare):
     mock_compare.return_value = {
-        "readability": {"available": True, "length": 120, "token_estimate": 40, "injection_score": 0.0},
-        "trafilatura": {"available": False, "length": 0, "token_estimate": 0, "injection_score": 0.0},
+        "readability": {
+            "available": True,
+            "length": 120,
+            "token_estimate": 40,
+            "injection_score": 0.0,
+        },
+        "trafilatura": {
+            "available": False,
+            "length": 0,
+            "token_estimate": 0,
+            "injection_score": 0.0,
+        },
     }
 
     response = client.post(
@@ -1027,7 +1302,9 @@ def test_batch_job_polling_completes_and_returns_result(mock_ingest_many, monkey
         errors = {"https://example.org/": "timeout"}
 
     mock_ingest_many.return_value = FakeBatchResult()
-    queue = api_server.PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+    queue = api_server.PersistentJobQueue(
+        str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600
+    )
     monkeypatch.setattr(api_server, "JOB_QUEUE", queue)
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
     monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
@@ -1064,7 +1341,9 @@ def test_batch_job_polling_completes_and_returns_result(mock_ingest_many, monkey
         assert job["result"]["success_count"] == 1
         assert job["result"]["failure_count"] == 1
         assert job["result"]["results"][0]["success"] is True
-        assert job["result"]["results"][0]["data"]["structured_blocks"][0]["block_type"] == "heading"
+        assert (
+            job["result"]["results"][0]["data"]["structured_blocks"][0]["block_type"] == "heading"
+        )
         assert job["result"]["results"][1]["success"] is False
         assert job["result"]["results"][1]["error"] == "timeout"
     finally:
@@ -1078,13 +1357,7 @@ def test_batch_job_polling_returns_404_for_unknown_job():
 
 def test_batch_ingest_empty_urls():
     """Test batch ingestion with no URLs"""
-    response = client.post(
-        "/ingest/batch",
-        json={
-            "urls": [],
-            "mode": "fast"
-        }
-    )
+    response = client.post("/ingest/batch", json={"urls": [], "mode": "fast"})
     assert response.status_code == 200
     data = response.json()
     assert data["success_count"] == 0
@@ -1095,13 +1368,7 @@ def test_batch_ingest_too_many_urls():
     """Test batch ingestion exceeding max limit"""
     # Create 101 URLs (exceeds 100 limit)
     urls = [f"https://example{i}.com" for i in range(101)]
-    response = client.post(
-        "/ingest/batch",
-        json={
-            "urls": urls,
-            "mode": "fast"
-        }
-    )
+    response = client.post("/ingest/batch", json={"urls": urls, "mode": "fast"})
     assert response.status_code == 422  # Validation error
 
 
@@ -1133,19 +1400,14 @@ def test_legacy_aliases_require_api_key_when_configured(monkeypatch):
         importlib.reload(api_server_module)
 
 
-@patch('markdown_ingress.api_server.generate_security_report')
+@patch("markdown_ingress.api_server.generate_security_report")
 def test_security_report_endpoint(mock_report):
     """Test security report generation endpoint"""
     mock_report.return_value = create_mock_security_report()
 
     response = client.post(
         "/security/report",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "strict": True,
-            "timeout": 30
-        }
+        json={"url": "https://example.com", "mode": "fast", "strict": True, "timeout": 30},
     )
     assert response.status_code == 200
     data = response.json()
@@ -1181,78 +1443,45 @@ def test_security_report_endpoint(mock_report):
     assert data["risk_level"] in ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"]
 
 
-@patch('markdown_ingress.api_server.ingest')
+@patch("markdown_ingress.api_server.ingest")
 def test_timeout_validation(mock_ingest):
     """Test timeout parameter validation"""
     mock_ingest.return_value = create_mock_document()
 
     # Too low
     response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "timeout": 0
-        }
+        "/ingest", json={"url": "https://example.com", "mode": "fast", "timeout": 0}
     )
     assert response.status_code == 422
 
     # Too high
     response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "timeout": 400
-        }
+        "/ingest", json={"url": "https://example.com", "mode": "fast", "timeout": 400}
     )
     assert response.status_code == 422
 
     # Valid range
     response = client.post(
-        "/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-            "timeout": 60
-        }
+        "/ingest", json={"url": "https://example.com", "mode": "fast", "timeout": 60}
     )
     assert response.status_code == 200
 
 
-@patch('markdown_ingress.api_server.retry_ingest')
+@patch("markdown_ingress.api_server.retry_ingest")
 def test_max_retries_validation(mock_retry):
     """Test max_retries parameter validation"""
     mock_retry.return_value = create_mock_document()
 
     # Too low
-    response = client.post(
-        "/ingest/retry",
-        json={
-            "url": "https://example.com",
-            "max_retries": 0
-        }
-    )
+    response = client.post("/ingest/retry", json={"url": "https://example.com", "max_retries": 0})
     assert response.status_code == 422
 
     # Too high
-    response = client.post(
-        "/ingest/retry",
-        json={
-            "url": "https://example.com",
-            "max_retries": 15
-        }
-    )
+    response = client.post("/ingest/retry", json={"url": "https://example.com", "max_retries": 15})
     assert response.status_code == 422
 
     # Valid range
-    response = client.post(
-        "/ingest/retry",
-        json={
-            "url": "https://example.com",
-            "max_retries": 3
-        }
-    )
+    response = client.post("/ingest/retry", json={"url": "https://example.com", "max_retries": 3})
     assert response.status_code == 200
 
 
@@ -1400,7 +1629,9 @@ def test_get_job_queue_returns_external_owner_queue_and_starts_repair(monkeypatc
 
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", current_queue)
     monkeypatch.setattr("markdown_ingress.api_server._JOB_QUEUE_REPAIR_THREAD", None)
-    monkeypatch.setattr("markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair)
+    monkeypatch.setattr(
+        "markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair
+    )
 
     resolved = _get_job_queue()
 
@@ -1490,7 +1721,9 @@ def test_init_job_queue_degrades_when_external_owner_still_holds_db(monkeypatch)
     monkeypatch.setattr("markdown_ingress.api_server._JOB_QUEUE_WATCHDOG_THREAD", None)
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", previous)
     monkeypatch.setattr("markdown_ingress.api_server._build_job_queue", failing_build)
-    monkeypatch.setattr("markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair)
+    monkeypatch.setattr(
+        "markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair
+    )
 
     resolved = _init_job_queue(previous)
 
@@ -1517,7 +1750,9 @@ def test_init_job_queue_cold_start_degrades_to_external_owner_when_db_is_owned(m
     monkeypatch.setattr("markdown_ingress.api_server._JOB_QUEUE_WATCHDOG_THREAD", None)
     monkeypatch.setattr("markdown_ingress.api_server._build_job_queue", failing_build)
     monkeypatch.setattr("markdown_ingress.api_server.JOB_DB_PATH", "cold-start.sqlite3")
-    monkeypatch.setattr("markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair)
+    monkeypatch.setattr(
+        "markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair
+    )
 
     resolved = _init_job_queue(None)
 
@@ -1573,7 +1808,9 @@ def test_batch_job_submit_returns_503_when_queue_is_closing(monkeypatch):
 
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", ClosingQueue())
 
-    response = client.post("/api/v1/jobs/batch", json={"urls": ["https://example.com"], "mode": "fast"})
+    response = client.post(
+        "/api/v1/jobs/batch", json={"urls": ["https://example.com"], "mode": "fast"}
+    )
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Job queue is closing"
@@ -1582,11 +1819,15 @@ def test_batch_job_submit_returns_503_when_queue_is_closing(monkeypatch):
 def test_batch_job_submit_returns_503_when_queue_lease_is_lost(monkeypatch):
     class LeaseLostQueue:
         def submit(self, *args, **kwargs):
-            raise RuntimeError("Job queue lease was lost; this instance can no longer accept or execute jobs")
+            raise RuntimeError(
+                "Job queue lease was lost; this instance can no longer accept or execute jobs"
+            )
 
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", LeaseLostQueue())
 
-    response = client.post("/api/v1/jobs/batch", json={"urls": ["https://example.com"], "mode": "fast"})
+    response = client.post(
+        "/api/v1/jobs/batch", json={"urls": ["https://example.com"], "mode": "fast"}
+    )
 
     assert response.status_code == 503
     assert "lease was lost" in response.json()["detail"]
@@ -1620,6 +1861,16 @@ def test_rate_limit_uses_client_ip_for_anonymous_requests():
     assert api_server._rate_limit_client_id(request, None) == "ip:203.0.113.10"
 
 
+def test_detect_multiworker_environment_ignores_invalid_worker_counts(monkeypatch, caplog):
+    monkeypatch.setenv("GUNICORN_WORKERS", "not-an-int")
+    monkeypatch.delenv("UVICORN_WORKERS", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        assert api_server._detect_multiworker_environment() is False
+
+    assert "Invalid integer for GUNICORN_WORKERS" in caplog.text
+
+
 def test_ensure_job_queue_initialized_retries_after_failed_attempt(monkeypatch):
     calls = {"count": 0}
 
@@ -1646,12 +1897,13 @@ def test_ensure_job_queue_initialized_retries_after_failed_attempt(monkeypatch):
 
     api_server._ensure_job_queue_initialized()
     assert api_server.JOB_QUEUE is None
-    assert api_server._job_queue_initialized is False
-
-    api_server._ensure_job_queue_initialized()
-    assert calls["count"] == 2
+    # After failure, _job_queue_initialized is True to prevent repeated retries
     assert api_server._job_queue_initialized is True
-    assert getattr(api_server.JOB_QUEUE, "state", None) == "open"
+
+    # Second call should be a no-op (no retry)
+    api_server._ensure_job_queue_initialized()
+    assert calls["count"] == 1
+    assert api_server.JOB_QUEUE is None
 
 
 def test_health_endpoint_reports_degraded_job_queue_state(monkeypatch):
@@ -1677,8 +1929,10 @@ def test_health_endpoint_reports_degraded_job_queue_state(monkeypatch):
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
     monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
     monkeypatch.setattr(api_server, "_start_job_queue_repair_loop", fake_start_repair)
+    # Security fix (S5): full job_queue details moved to authenticated /detailed endpoint.
+    monkeypatch.setattr(api_server, "OPTIONAL_API_KEY", None)
 
-    response = client.get("/api/v1/health")
+    response = client.get("/api/v1/health/detailed")
 
     assert response.status_code == 200
     data = response.json()
@@ -1711,6 +1965,7 @@ def test_stats_endpoint_aggregates_current_and_legacy_job_visibility(mock_stats,
 
     response = client.get("/api/v1/stats")
 
+    # Security fix (S10): /stats must expose only basename + count, not paths.
     assert response.status_code == 200
     jobs = response.json()["job_queue"]
     assert jobs["current_pending"] == 2
@@ -1718,7 +1973,10 @@ def test_stats_endpoint_aggregates_current_and_legacy_job_visibility(mock_stats,
     assert jobs["pending_visible_total"] == 5
     assert jobs["pending"] == 5
     assert jobs["legacy_visible_queues"] == 1
-    assert jobs["legacy_db_paths"] == ["legacy.sqlite3"]
+    assert jobs["current_db_name"] == "current.sqlite3"
+    assert jobs["legacy_db_count"] == 1
+    assert "current_db_path" not in jobs
+    assert "legacy_db_paths" not in jobs
     assert jobs["ttl_applies_to"] == "completed_jobs_with_persisted_ttl_or_legacy_compatibility_ttl"
 
 
@@ -1748,6 +2006,27 @@ def test_snapshot_job_subsystem_deduplicates_same_db_path(monkeypatch):
     assert snapshot["pending_visible_total"] == 5
     assert snapshot["legacy_visible_queues"] == 1
     assert snapshot["legacy_db_paths"] == ["legacy.sqlite3"]
+
+
+def test_snapshot_job_subsystem_counts_legacy_queue_when_current_queue_is_none(monkeypatch):
+    class LegacyQueue:
+        state = "closed"
+        db_path = "artifacts/api_jobs/jobs.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 7
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", None)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    snapshot = _snapshot_job_subsystem(start_repair=False)
+
+    assert snapshot["current_state"] == "uninitialized"
+    assert snapshot["legacy_pending"] == 7
+    assert snapshot["pending_visible_total"] is None
+    assert snapshot["legacy_visible_queues"] == 1
+    assert snapshot["legacy_db_paths"] == ["artifacts/api_jobs/jobs.sqlite3"]
 
 
 def test_snapshot_job_subsystem_does_not_cleanup_expired_jobs(monkeypatch):
@@ -1785,8 +2064,9 @@ def test_health_degrades_when_pending_visibility_is_unknown(monkeypatch):
     monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [BrokenLegacyQueue()])
     monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+    monkeypatch.setattr(api_server, "OPTIONAL_API_KEY", None)
 
-    response = client.get("/api/v1/health")
+    response = client.get("/api/v1/health/detailed")
 
     assert response.status_code == 200
     data = response.json()
@@ -1948,7 +2228,9 @@ def test_get_job_record_uses_api_ttl_without_cleanup_side_effects(monkeypatch):
     assert job.job_id == "legacy-job"
 
 
-def test_get_job_record_keeps_legacy_job_visible_when_ttl_is_unknown_but_legacy_expiry_is_future(monkeypatch):
+def test_get_job_record_keeps_legacy_job_visible_when_ttl_is_unknown_but_legacy_expiry_is_future(
+    monkeypatch,
+):
     class LegacyQueue:
         db_path = "legacy.sqlite3"
 
@@ -1988,7 +2270,9 @@ def test_get_job_record_keeps_legacy_job_visible_when_ttl_is_unknown_but_legacy_
     assert job.job_id == "legacy-job"
 
 
-def test_get_job_record_hides_legacy_job_when_ttl_is_unknown_and_legacy_expiry_is_missing(monkeypatch):
+def test_get_job_record_keeps_legacy_job_visible_when_ttl_is_unknown_and_legacy_expiry_is_missing(
+    monkeypatch,
+):
     class LegacyQueue:
         db_path = "legacy.sqlite3"
 
@@ -2020,6 +2304,126 @@ def test_get_job_record_hides_legacy_job_when_ttl_is_unknown_and_legacy_expiry_i
 
     monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+    monkeypatch.setattr(api_server, "JOB_TTL_SECONDS", 60)
+
+    job = _get_job_record("legacy-job")
+
+    assert job is not None
+    assert job.job_id == "legacy-job"
+
+
+def test_get_job_record_treats_naive_legacy_expiry_as_utc(monkeypatch):
+    class LegacyQueue:
+        db_path = "legacy.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": job_id,
+                    "status": "completed",
+                    "created_at": "2026-03-30 00:00:00",
+                    "started_at": None,
+                    "completed_at": "2026-03-30 00:01:00",
+                    "result": {"ok": True},
+                    "error": None,
+                    "ttl_seconds": None,
+                    "legacy_expires_at": "2999-01-01 00:00:00",
+                },
+            )()
+
+    class CurrentQueue:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return None
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+
+    job = _get_job_record("legacy-job")
+
+    assert job is not None
+    assert job.job_id == "legacy-job"
+
+
+def test_get_job_record_keeps_legacy_job_visible_when_completed_at_is_corrupt_but_legacy_expiry_is_valid(
+    monkeypatch,
+):
+    class LegacyQueue:
+        db_path = "legacy.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": job_id,
+                    "status": "completed",
+                    "created_at": "2026-03-30T00:00:00+00:00",
+                    "started_at": None,
+                    "completed_at": "not-a-date",
+                    "result": {"ok": True},
+                    "error": None,
+                    "ttl_seconds": None,
+                    "legacy_expires_at": (datetime.now(UTC) + timedelta(seconds=120)).isoformat(),
+                },
+            )()
+
+    class CurrentQueue:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return None
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+
+    job = _get_job_record("legacy-job")
+
+    assert job is not None
+    assert job.job_id == "legacy-job"
+
+
+def test_get_job_record_hides_completed_job_with_missing_completed_at_and_ttl_seconds(monkeypatch):
+    class LegacyQueue:
+        db_path = "legacy.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": job_id,
+                    "status": "completed",
+                    "created_at": "2026-03-30T00:00:00+00:00",
+                    "started_at": None,
+                    "completed_at": None,
+                    "result": {"ok": True},
+                    "error": None,
+                    "ttl_seconds": 120,
+                    "legacy_expires_at": None,
+                },
+            )()
+
+    class CurrentQueue:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return None
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
 
     job = _get_job_record("legacy-job")
 
@@ -2037,8 +2441,7 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs(monkeypatch):
         def _connect(self):
             conn = sqlite3.connect(":memory:")
             conn.row_factory = sqlite3.Row
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE jobs (
                     job_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
@@ -2051,13 +2454,17 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs(monkeypatch):
                     ttl_seconds INTEGER,
                     legacy_expires_at TEXT
                 )
-                """
-            )
+                """)
+            conn.execute("""
+                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', '2026-03-30T00:01:00+00:00', NULL, '2999-01-01T00:00:00+00:00')
+                """)
             conn.execute(
                 """
                 INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', '2026-03-30T00:01:00+00:00', NULL, '2999-01-01T00:00:00+00:00')
-                """
+                VALUES ('legacy-missing-expiry', 'completed', '2026-03-30T00:00:00+00:00', ?, NULL, NULL)
+                """,
+                ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(),),
             )
             conn.commit()
             return conn
@@ -2068,9 +2475,50 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs(monkeypatch):
 
     snapshot = api_server._snapshot_job_subsystem()
 
-    assert snapshot["current_unknown_ttl_jobs"] == 1
+    assert snapshot["current_unknown_ttl_jobs"] == 2
     assert snapshot["legacy_unknown_ttl_jobs"] == 0
     assert snapshot["legacy_unknown_ttl_seconds"] == 3600
+
+
+def test_snapshot_job_subsystem_counts_naive_unknown_ttl_jobs(monkeypatch):
+    class QueueWithNaiveUnknownTTL:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 1
+
+        def _connect(self):
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            conn.execute("""
+                CREATE TABLE jobs (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    result_json TEXT,
+                    error TEXT,
+                    webhook_url TEXT,
+                    ttl_seconds INTEGER,
+                    legacy_expires_at TEXT
+                )
+                """)
+            conn.execute("""
+                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+                VALUES ('legacy', 'completed', '2026-03-30 00:00:00', '2026-03-30 00:01:00', NULL, '2999-01-01 00:00:00')
+                """)
+            conn.commit()
+            return conn
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", QueueWithNaiveUnknownTTL())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    snapshot = api_server._snapshot_job_subsystem()
+
+    assert snapshot["current_unknown_ttl_jobs"] == 1
 
 
 def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch):
@@ -2084,8 +2532,7 @@ def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch)
         def _connect(self):
             conn = sqlite3.connect(":memory:")
             conn.row_factory = sqlite3.Row
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE jobs (
                     job_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
@@ -2098,13 +2545,17 @@ def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch)
                     ttl_seconds INTEGER,
                     legacy_expires_at TEXT
                 )
-                """
-            )
+                """)
             conn.execute(
                 """
                 INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', '2026-03-30T00:01:00+00:00', NULL, NULL)
-                """
+                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', ?, NULL, NULL)
+                """,
+                (
+                    (
+                        datetime.now(UTC) - timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS + 10)
+                    ).isoformat(),
+                ),
             )
             conn.commit()
             return conn
@@ -2118,10 +2569,19 @@ def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch)
     assert snapshot["current_unknown_ttl_jobs"] == 0
 
 
-def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed_at(monkeypatch):
-    class QueueWithCorruptCompletedAt:
+def test_snapshot_job_subsystem_counts_unknown_ttl_jobs_when_completed_at_is_corrupt_but_legacy_expiry_is_valid(
+    monkeypatch,
+):
+    class CurrentQueue:
         state = "open"
         db_path = "current.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 0
+
+    class LegacyQueue:
+        state = "open"
+        db_path = "legacy.sqlite3"
 
         def pending_count(self, cleanup_expired=True):
             return 0
@@ -2129,8 +2589,7 @@ def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed
         def _connect(self):
             conn = sqlite3.connect(":memory:")
             conn.row_factory = sqlite3.Row
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE jobs (
                     job_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
@@ -2143,14 +2602,102 @@ def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed
                     ttl_seconds INTEGER,
                     legacy_expires_at TEXT
                 )
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
                 VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', 'not-a-date', NULL, '2999-01-01T00:00:00+00:00')
-                """
-            )
+                """)
+            conn.commit()
+            return conn
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    snapshot = api_server._snapshot_job_subsystem()
+
+    assert snapshot["status"] == "healthy"
+    assert snapshot["legacy_visible_queues"] == 1
+    assert snapshot["legacy_db_paths"] == ["legacy.sqlite3"]
+    assert snapshot["legacy_unknown_ttl_jobs"] == 1
+
+
+def test_snapshot_job_subsystem_keeps_legacy_queue_with_missing_completed_at_but_valid_legacy_expiry(
+    monkeypatch,
+):
+    class LegacyQueue:
+        state = "open"
+        db_path = "legacy.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 0
+
+        def _connect(self):
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            conn.execute("""
+                CREATE TABLE jobs (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    result_json TEXT,
+                    error TEXT,
+                    webhook_url TEXT,
+                    ttl_seconds INTEGER,
+                    legacy_expires_at TEXT
+                )
+                """)
+            conn.execute("""
+                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', NULL, NULL, '2999-01-01T00:00:00+00:00')
+                """)
+            conn.commit()
+            return conn
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", None)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    snapshot = api_server._snapshot_job_subsystem(start_repair=False)
+
+    assert snapshot["legacy_visible_queues"] == 1
+    assert snapshot["legacy_db_paths"] == ["legacy.sqlite3"]
+    assert snapshot["legacy_unknown_ttl_jobs"] == 1
+
+
+def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed_at_and_missing_legacy_expiry(
+    monkeypatch,
+):
+    class QueueWithCorruptCompletedAt:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 0
+
+        def _connect(self):
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            conn.execute("""
+                CREATE TABLE jobs (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    result_json TEXT,
+                    error TEXT,
+                    webhook_url TEXT,
+                    ttl_seconds INTEGER,
+                    legacy_expires_at TEXT
+                )
+                """)
+            conn.execute("""
+                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', 'not-a-date', NULL, NULL)
+                """)
             conn.commit()
             return conn
 
@@ -2208,8 +2755,12 @@ def test_remember_job_queue_does_not_drop_visible_queues_by_fixed_history_cap(mo
 def test_prune_job_queue_history_drops_expired_sqlite_queues(tmp_path, monkeypatch):
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
 
-    expired_queue = api_server.PersistentJobQueue(str(tmp_path / "expired.sqlite3"), worker_count=1, ttl_seconds=60)
-    visible_queue = api_server.PersistentJobQueue(str(tmp_path / "visible.sqlite3"), worker_count=1, ttl_seconds=60)
+    expired_queue = api_server.PersistentJobQueue(
+        str(tmp_path / "expired.sqlite3"), worker_count=1, ttl_seconds=60
+    )
+    visible_queue = api_server.PersistentJobQueue(
+        str(tmp_path / "visible.sqlite3"), worker_count=1, ttl_seconds=60
+    )
 
     with closing(expired_queue._connect()) as conn:
         conn.execute(
@@ -2267,6 +2818,52 @@ def test_external_owner_backend_read_failure_transitions_queue_to_backend_error(
         api_server._external_owner_backend_still_owned(queue)
 
     assert queue.state == "backend_error"
+
+
+def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_without_pid_metadata(tmp_path):
+    db_path = tmp_path / "jobs.sqlite3"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE queue_leases (
+                lease_name TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                owner_pid INTEGER NOT NULL DEFAULT 0,
+                owner_start_time REAL
+            )
+            """)
+        conn.execute(
+            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+            ("default", "other-owner", datetime.now(UTC).isoformat(), 0, None),
+        )
+        conn.commit()
+
+    queue = api_server._ExternalOwnerJobQueue(db_path)
+
+    assert api_server._external_owner_backend_still_owned(queue) is True
+
+
+def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_with_dead_pid(tmp_path):
+    db_path = tmp_path / "jobs.sqlite3"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE queue_leases (
+                lease_name TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                owner_pid INTEGER NOT NULL DEFAULT 0,
+                owner_start_time REAL
+            )
+            """)
+        conn.execute(
+            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+            ("default", "other-owner", datetime.now(UTC).isoformat(), 999999, None),
+        )
+        conn.commit()
+
+    queue = api_server._ExternalOwnerJobQueue(db_path)
+
+    assert api_server._external_owner_backend_still_owned(queue) is True
 
 
 def test_external_owner_backend_error_state_restarts_repair(monkeypatch, tmp_path):
@@ -2341,7 +2938,9 @@ def test_start_job_queue_watchdog_keeps_running_if_global_stop_reference_is_clea
     thread.join(timeout=1.0)
 
 
-def test_backend_error_repair_loop_converges_without_recreating_replacement_queue(monkeypatch, tmp_path):
+def test_backend_error_repair_loop_converges_without_recreating_replacement_queue(
+    monkeypatch, tmp_path
+):
     queue = api_server._ExternalOwnerJobQueue(tmp_path / "missing.sqlite3")
     queue.state = "backend_error"
 
@@ -2402,7 +3001,9 @@ def test_batch_job_status_returns_503_when_external_owner_backend_is_busy(monkey
             return None
 
         def get(self, job_id, cleanup_expired=True):
-            raise RuntimeError("Job queue backend is temporarily unavailable because the current owner is busy")
+            raise RuntimeError(
+                "Job queue backend is temporarily unavailable because the current owner is busy"
+            )
 
     monkeypatch.setattr(api_server, "JOB_QUEUE", ExternalOwnerQueue())
     monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
@@ -2417,8 +3018,7 @@ def test_batch_job_status_returns_503_when_external_owner_backend_is_busy(monkey
 def test_external_owner_get_preserves_legacy_expires_at(tmp_path):
     db_path = tmp_path / "jobs.sqlite3"
     with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE jobs (
                 job_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -2431,8 +3031,7 @@ def test_external_owner_get_preserves_legacy_expires_at(tmp_path):
                 ttl_seconds INTEGER,
                 legacy_expires_at TEXT
             )
-            """
-        )
+            """)
         conn.execute(
             """
             INSERT INTO jobs (
@@ -2460,6 +3059,50 @@ def test_external_owner_get_preserves_legacy_expires_at(tmp_path):
     assert job.legacy_expires_at == "2026-03-31T01:00:00+00:00"
 
 
+def test_external_owner_get_handles_corrupt_result_json(tmp_path):
+    db_path = tmp_path / "jobs.sqlite3"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result_json TEXT,
+                error TEXT,
+                webhook_url TEXT,
+                ttl_seconds INTEGER,
+                legacy_expires_at TEXT
+            )
+            """)
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-job",
+                "completed",
+                "2026-03-31T00:00:00+00:00",
+                "2026-03-31T00:01:00+00:00",
+                "not-json",
+                None,
+                None,
+                None,
+                "2026-03-31T01:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    queue = api_server._ExternalOwnerJobQueue(db_path)
+    job = queue.get("legacy-job", cleanup_expired=False)
+
+    assert job is not None
+    assert job.result is None
+
+
 def test_batch_job_status_returns_503_when_external_owner_backend_read_fails(monkeypatch):
     class ExternalOwnerQueue:
         state = "external_owner"
@@ -2481,6 +3124,66 @@ def test_batch_job_status_returns_503_when_external_owner_backend_read_fails(mon
     assert "backend read failed" in response.json()["detail"]
 
 
+def test_batch_job_status_returns_503_when_old_signature_queue_get_raises_sqlite_operational_error(
+    monkeypatch,
+):
+    class OldSignatureQueue:
+        state = "open"
+        db_path = "jobs.sqlite3"
+
+        def get(self, job_id):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", OldSignatureQueue())
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    response = client.get("/api/v1/jobs/some-job")
+
+    assert response.status_code == 503
+    assert "database is locked" in response.json()["detail"]
+
+
+def test_batch_job_submit_returns_503_when_queue_submit_raises_sqlite_operational_error(
+    monkeypatch,
+):
+    class BadQueue:
+        state = "open"
+        db_path = "jobs.sqlite3"
+
+        def submit(self, *args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", BadQueue())
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    response = client.post(
+        "/api/v1/jobs/batch",
+        json={
+            "urls": ["https://example.com"],
+            "mode": "fast",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "database is locked" in response.json()["detail"]
+
+
+def test_batch_job_status_returns_503_when_job_lookup_raises_sqlite_operational_error(monkeypatch):
+    def bad_lookup(job_id):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_server, "_get_job_record", bad_lookup)
+
+    response = client.get("/api/v1/jobs/some-job")
+
+    assert response.status_code == 503
+    assert "database is locked" in response.json()["detail"]
+
+
 def test_backend_error_repair_handles_non_runtime_build_failures(monkeypatch, tmp_path):
     queue = api_server._ExternalOwnerJobQueue(tmp_path / "missing.sqlite3")
     queue.state = "backend_error"
@@ -2489,7 +3192,11 @@ def test_backend_error_repair_handles_non_runtime_build_failures(monkeypatch, tm
     monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
     monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_STOP", None)
     monkeypatch.setattr(api_server, "_BACKEND_ERROR_REPAIR_RETRY_SECONDS", 0.0)
-    monkeypatch.setattr(api_server, "_build_job_queue", lambda: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
+    monkeypatch.setattr(
+        api_server,
+        "_build_job_queue",
+        lambda: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")),
+    )
 
     api_server._start_job_queue_repair_loop()
     thread = api_server._JOB_QUEUE_REPAIR_THREAD
@@ -2540,6 +3247,52 @@ def test_stats_uses_current_queue_capacity_when_available(monkeypatch):
     assert response.json()["job_queue"]["max_queued_jobs"] == 42
 
 
+def test_health_endpoint_degrades_when_pending_count_raises_sqlite_operational_error(monkeypatch):
+    class Queue:
+        state = "open"
+        db_path = "jobs.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", Queue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+    monkeypatch.setattr(api_server, "OPTIONAL_API_KEY", None)
+
+    response = client.get("/api/v1/health/detailed")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["job_queue"]["current_pending"] is None
+    assert data["job_queue"]["pending_visible_total"] is None
+
+
+def test_health_endpoint_degrades_when_old_signature_pending_count_raises_sqlite_operational_error(
+    monkeypatch,
+):
+    class Queue:
+        state = "open"
+        db_path = "jobs.sqlite3"
+
+        def pending_count(self):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", Queue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+    monkeypatch.setattr(api_server, "OPTIONAL_API_KEY", None)
+
+    response = client.get("/api/v1/health/detailed")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["job_queue"]["current_pending"] is None
+    assert data["job_queue"]["pending_visible_total"] is None
+
+
 def test_init_job_queue_raises_if_previous_repair_thread_does_not_stop(monkeypatch):
     stop_event = threading.Event()
 
@@ -2556,7 +3309,9 @@ def test_init_job_queue_raises_if_previous_repair_thread_does_not_stop(monkeypat
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_STOP", None)
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_THREAD", None)
 
-    with pytest.raises(RuntimeError, match="Previous job queue repair thread did not stop before reload"):
+    with pytest.raises(
+        RuntimeError, match="Previous job queue repair thread did not stop before reload"
+    ):
         api_server._init_job_queue(None)
 
 
@@ -2578,7 +3333,9 @@ def test_init_job_queue_raises_if_previous_watchdog_thread_does_not_stop(monkeyp
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_STOP", None)
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_THREAD", None)
 
-    with pytest.raises(RuntimeError, match="Previous job queue watchdog thread did not stop before reload"):
+    with pytest.raises(
+        RuntimeError, match="Previous job queue watchdog thread did not stop before reload"
+    ):
         api_server._init_job_queue(None)
 
 
@@ -2592,11 +3349,12 @@ def test_external_owner_queue_reads_do_not_create_sqlite_file(tmp_path):
     assert db_path.exists() is False
 
 
-def test_prune_job_queue_history_drops_legacy_queue_with_invalid_legacy_expires_at(tmp_path, monkeypatch):
+def test_prune_job_queue_history_drops_legacy_queue_with_invalid_legacy_expires_at(
+    tmp_path, monkeypatch
+):
     db_path = tmp_path / "legacy-invalid.sqlite3"
     with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE jobs (
                 job_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -2609,14 +3367,20 @@ def test_prune_job_queue_history_drops_legacy_queue_with_invalid_legacy_expires_
                 ttl_seconds INTEGER,
                 legacy_expires_at TEXT
             )
-            """
-        )
+            """)
         conn.execute(
             """
             INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("legacy-job", "completed", "2026-03-30T00:00:00+00:00", "2026-03-30T00:01:00+00:00", None, "not-a-date"),
+            (
+                "legacy-job",
+                "completed",
+                "2026-03-30T00:00:00+00:00",
+                "2026-03-30T00:01:00+00:00",
+                None,
+                "not-a-date",
+            ),
         )
         conn.commit()
 

@@ -22,6 +22,11 @@ def to_document_response(doc: SafeDocument) -> IngestResponse:
         flags=doc.flags,
         content_hash=doc.content_hash,
         removed_elements=doc.removed_elements,
+        screenshot_path=doc.screenshot_path,
+        enriched_metadata=doc.enriched_metadata,
+        links=doc.links,
+        nova_score=doc.nova_score,
+        nova_details=doc.nova_details,
         structured_blocks=doc.structured_blocks,
         chunks=doc.chunks,
         security_explanation=doc.security_explanation,
@@ -40,6 +45,8 @@ def to_security_report_response(report: SecurityReport) -> SecurityReportRespons
         imperative_density=report.imperative_density,
         url=report.url,
         title=report.title,
+        timestamp=report.timestamp,
+        version=report.version,
         token_estimate=report.token_estimate,
         token_reduction_percent=report.token_reduction_percent,
         original_size_bytes=report.original_size_bytes,
@@ -94,14 +101,19 @@ def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[st
     total_inputs = len(request.urls)
     for index in range(total_inputs):
         document = documents[index] if index < len(documents) else None
-        error = error_by_index.get(index, _fallback_error_for(index))
+        if index in error_by_index:
+            error = error_by_index[index]
+        else:
+            error = _fallback_error_for(index)
         if document is None and error is None:
             error = f"Missing batch result for input index {index}"
         rows.append(
             {
                 "url": str(request.urls[index]),
                 "success": document is not None,
-                "data": to_document_response(document).model_dump() if document is not None else None,
+                "data": (
+                    to_document_response(document).model_dump() if document is not None else None
+                ),
                 "error": error,
             }
         )
@@ -140,8 +152,10 @@ async def sync_batch_response(
         use_llm=request.use_llm,
         policy_name=request.policy_name,
         custom_patterns=request.custom_patterns,
-        plugin_dirs=request.plugin_dirs,
+
+        output_format=request.output_format,
         output_profile=request.output_profile,
+        output_formats=request.output_formats,
         extract_blocks=request.extract_blocks,
         chunking_strategy=request.chunking_strategy,
         chunk_size=request.chunk_size,
@@ -150,6 +164,12 @@ async def sync_batch_response(
         normalize_multilingual=request.normalize_multilingual,
         include_security_explanation=request.include_security_explanation,
         include_observability=request.include_observability,
+        save_reports=request.save_reports,
+        reports_dir=request.reports_dir,
+        fetcher_user_agent=request.fetcher_user_agent,
+        domain_request_interval=request.domain_request_interval,
+        circuit_breaker_threshold=request.circuit_breaker_threshold,
+        circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
         render_cost_budget=request.render_cost_budget,
         domain_policies=domain_policy_payload(request.domain_policies) or None,
         max_concurrent=request.max_concurrent,
@@ -178,8 +198,9 @@ def make_batch_job_task(request: BatchIngestRequest, ingest_many_func):
             use_llm=request.use_llm,
             policy_name=request.policy_name,
             custom_patterns=request.custom_patterns,
-            plugin_dirs=request.plugin_dirs,
+            output_format=request.output_format,
             output_profile=request.output_profile,
+            output_formats=request.output_formats,
             extract_blocks=request.extract_blocks,
             chunking_strategy=request.chunking_strategy,
             chunk_size=request.chunk_size,
@@ -188,6 +209,12 @@ def make_batch_job_task(request: BatchIngestRequest, ingest_many_func):
             normalize_multilingual=request.normalize_multilingual,
             include_security_explanation=request.include_security_explanation,
             include_observability=request.include_observability,
+            save_reports=request.save_reports,
+            reports_dir=request.reports_dir,
+            fetcher_user_agent=request.fetcher_user_agent,
+            domain_request_interval=request.domain_request_interval,
+            circuit_breaker_threshold=request.circuit_breaker_threshold,
+            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
             render_cost_budget=request.render_cost_budget,
             domain_policies=domain_policy_payload(request.domain_policies) or None,
             max_concurrent=request.max_concurrent,

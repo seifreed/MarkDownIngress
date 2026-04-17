@@ -33,7 +33,7 @@ class SecurityEngine:
     # Default fallback score when Nova scan fails or returns None.
     # Conservative value: higher score = more suspicious.
     DEFAULT_EXCEPTION_FALLBACK_SCORE = 0.75
-    DEFAULT_NONE_SCORE = 0.5
+    DEFAULT_NONE_SCORE = DEFAULT_EXCEPTION_FALLBACK_SCORE
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class SecurityEngine:
         # Score to use when Nova scan throws an exception (malicious payloads shouldn't bypass)
         # Validate score is within valid range [0.0, 1.0]
         # BUG FIX: Enforce minimum of 0.5 to prevent complete security bypass
-        MIN_FALLBACK_SCORE = 0.5
+        min_fallback_score = 0.5
         if exception_fallback_score is not None:
             if not (0.0 <= exception_fallback_score <= 1.0):
                 logger.warning(
@@ -56,15 +56,15 @@ class SecurityEngine:
                     exception_fallback_score,
                 )
                 self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
-            elif exception_fallback_score < MIN_FALLBACK_SCORE:
+            elif exception_fallback_score < min_fallback_score:
                 logger.warning(
                     "exception_fallback_score '%s' is below safe minimum %.1f. "
                     "Setting to %.1f to prevent security bypass.",
                     exception_fallback_score,
-                    MIN_FALLBACK_SCORE,
-                    MIN_FALLBACK_SCORE,
+                    min_fallback_score,
+                    min_fallback_score,
                 )
-                self.exception_fallback_score = MIN_FALLBACK_SCORE
+                self.exception_fallback_score = min_fallback_score
             else:
                 self.exception_fallback_score = exception_fallback_score
         else:
@@ -123,7 +123,9 @@ class SecurityEngine:
             hidden_count = metadata.get("hidden_elements_count")
             if isinstance(hidden_count, (int, float)) and hidden_count > 0:
                 hidden_detected = True
-        basic_analysis = self.basic_analyzer.analyze(markdown, hidden_content_detected=hidden_detected)
+        basic_analysis = self.basic_analyzer.analyze(
+            markdown, hidden_content_detected=hidden_detected
+        )
         basic_score = basic_analysis.score
 
         # Tier 2+3: Nova Framework (CONDITIONAL)
@@ -142,22 +144,33 @@ class SecurityEngine:
                 if nova_result is None:
                     nova_score = self.exception_fallback_score
                     nova_details = {"error": "Nova returned None", "scan_incomplete": True}
+                    scan_method = "nova_failed"
                     logger.warning("Nova returned None, using fallback score: %s", nova_score)
                 else:
                     # Handle None score from Nova (e.g., when no rules configured)
                     nova_score_raw = nova_result.get("score")
                     if nova_score_raw is None:
-                        nova_score = self.DEFAULT_NONE_SCORE
-                        logger.debug("Nova returned None score, using default: %s", nova_score)
+                        # Distinguish between "disabled" (no rules) and actual failures.
+                        # When Nova is disabled (no rules loaded), it should not contribute
+                        # to the score — treat as 0.0 so basic analysis dominates.
+                        if nova_result.get("severity") == "disabled":
+                            nova_score = 0.0
+                            nova_details = {}
+                            scan_method = "basic"
+                            logger.debug(
+                                "Nova scanner disabled (no rules loaded), "
+                                "using basic analysis only"
+                            )
+                        else:
+                            nova_score = self.exception_fallback_score
+                            logger.debug("Nova returned None score, using default: %s", nova_score)
                     else:
                         nova_score = max(0.0, min(1.0, nova_score_raw))
                     nova_details = nova_result
                     scan_method = "nova_llm" if self.use_llm else "nova_semantic"
-                    scan_time = nova_details.get('scan_time_ms')
+                    scan_time = nova_details.get("scan_time_ms")
                     if scan_time is not None:
-                        logger.info(
-                            f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms"
-                        )
+                        logger.info(f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms")
                     else:
                         logger.info(f"Nova scan: score={nova_score:.3f} (scan incomplete)")
             except Exception as e:
@@ -167,32 +180,19 @@ class SecurityEngine:
                 # Use configurable fallback (default 0.75) for security.
                 nova_score = self.exception_fallback_score
                 nova_details = {"error": str(e), "scan_incomplete": True}
+                scan_method = "nova_error"
 
-        # Combine scores: weighted combination that accounts for both signals.
-        # If one score is very high (>= 0.7), use max to prioritize the strong signal.
-        # Otherwise, blend both scores (40% basic + 60% nova) to capture combined risk.
-        # This prevents attacks that partially evade both detectors from getting low scores.
-        # BUG FIX: Add score floor to prevent bypass when basic detects content but nova scores 0.
-        # Attackers can craft content that triggers basic patterns (score ~0.5) but evades
-        # nova semantic detection (score 0.0), resulting in combined score 0.2 that bypasses.
-        if max(basic_score, nova_score) >= 0.7:
-            final_score = max(basic_score, nova_score)
+        # Combine scores: when Nova was never invoked, use basic score directly.
+        # When both signals exist, never allow combination to reduce the highest signal.
+        if scan_method == "basic":
+            final_score = basic_score
         else:
-            # Weighted combination: nova is more sophisticated, so weight it higher
-            combined = 0.4 * basic_score + 0.6 * nova_score
-            # Score floor: if basic detected something, ensure minimum score
-            # This prevents attackers from evading detection by crafting content
-            # that scores just below thresholds on both detectors
-            score_floor = basic_score * 0.5 if basic_score > 0.05 else 0.0
-            final_score = min(1.0, max(combined, score_floor))
+            final_score = max(basic_score, nova_score)
 
         # Adjust thresholds in strict mode for more aggressive blocking
         if self.strict:
             block_threshold = min(block_threshold, 0.5)
             warn_threshold = min(warn_threshold, 0.3)
-            # BUG FIX: Ensure warn_threshold <= block_threshold after adjustment
-            if warn_threshold > block_threshold:
-                warn_threshold = max(0.0, block_threshold - 0.1)
 
         # Generate flags
         flags = self._generate_flags(basic_analysis, nova_details)
@@ -208,7 +208,7 @@ class SecurityEngine:
             "flags": flags,
             "scan_method": scan_method,
             "nova_available": NOVA_AVAILABLE,
-            "nova_used": self.nova is not None,
+            "nova_used": scan_method in ("nova_semantic", "nova_llm"),
             "advanced_security_available": not self._nova_init_failed,
             "pattern_matches": basic_analysis.pattern_matches,
             "imperative_density": basic_analysis.imperative_density,

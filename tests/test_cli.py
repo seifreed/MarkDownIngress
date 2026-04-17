@@ -9,10 +9,12 @@ import json
 import sys
 import threading
 from argparse import Namespace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from markdown_ingress.api_runtime import UNSET, build_runtime_config
+from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.cli import (
     IngestArgs,
     _add_common_ingest_args,
@@ -45,12 +47,13 @@ from markdown_ingress.cli import (
     cmd_ingest,
     main,
 )
-from markdown_ingress.application.batch import BatchProcessor
-from markdown_ingress.api_runtime import UNSET
+from markdown_ingress.cli_commands import _build_batch_json_output, ingest_many_with_progress
+from markdown_ingress.cli_support import load_domain_policies
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchResult
 
 # ── Local HTTP test server ─────────────────────────────────────────────────────
+
 
 class _SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -67,14 +70,17 @@ class _SimpleHandler(BaseHTTPRequestHandler):
 
 @pytest.fixture(scope="module")
 def local_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _SimpleHandler)
+    server = HTTPServer(("127.0.0.1", 0), _SimpleHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    server.server_close()
+    t.join(timeout=2)
 
 
 # ── Shared document fixtures ───────────────────────────────────────────────────
+
 
 @pytest.fixture
 def safe_doc():
@@ -129,6 +135,7 @@ def batch_result(safe_doc):
 
 # ── _determine_mode ────────────────────────────────────────────────────────────
 
+
 class TestDetermineMode:
     def test_fast_flag(self):
         assert _determine_mode(IngestArgs(url="http://x.com", fast=True)) == "fast"
@@ -145,6 +152,7 @@ class TestDetermineMode:
 
 
 # ── _prepare_ingest_params ─────────────────────────────────────────────────────
+
 
 class TestPrepareIngestParams:
     def test_basic(self):
@@ -191,8 +199,27 @@ class TestPrepareIngestParams:
         assert params["config"].timeout == 45.0
         assert params["config"].strict is False
 
+    def test_config_file_domain_policies_are_not_cleared_without_cli_overrides(self, tmp_path):
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text(
+            "domain_policies:\n" "  - domain: example.com\n" "    mode: render\n"
+        )
+
+        params = _prepare_ingest_params(
+            IngestArgs(url="https://example.com", config=str(config_path))
+        )
+
+        assert params["config"] is not None
+        assert len(params["config"].domain_policies) == 1
+        assert params["domain_policies"] is None
+
+        runtime = build_runtime_config(**{k: v for k, v in params.items() if k != "url"})
+        assert len(runtime.domain_policies) == 1
+        assert runtime.domain_policies[0].domain == "example.com"
+
 
 # ── _build_json_output ─────────────────────────────────────────────────────────
+
 
 class TestBuildJsonOutput:
     def test_with_content(self, safe_doc):
@@ -206,15 +233,80 @@ class TestBuildJsonOutput:
     def test_all_keys_present(self, safe_doc):
         out = _build_json_output(safe_doc, IngestArgs(url="http://x.com"))
         for key in (
-            "markdown", "metadata", "token_estimate", "content_hash",
-            "injection_score", "flags", "removed_elements",
-            "screenshot_path", "enriched_metadata", "links",
-            "nova_score", "nova_details",
+            "markdown",
+            "metadata",
+            "token_estimate",
+            "content_hash",
+            "injection_score",
+            "flags",
+            "removed_elements",
+            "screenshot_path",
+            "enriched_metadata",
+            "links",
+            "nova_score",
+            "nova_details",
         ):
             assert key in out
 
+    def test_batch_json_output_preserves_rich_document_fields(self):
+        doc = SafeDocument(
+            markdown="# Batch",
+            metadata={"url": "http://x.com"},
+            token_estimate=10,
+            content_hash="sha256:1",
+            injection_score=0.2,
+            flags=["flagged"],
+            removed_elements={"scripts": 1},
+            screenshot_path="/tmp/s.png",
+            enriched_metadata={"author": "Alice"},
+            links={"internal": ["https://x.com/about"]},
+            nova_score=0.4,
+            nova_details={"trace": "ok"},
+            structured_blocks=[{"block_type": "paragraph"}],
+            chunks=[{"chunk_id": "c1"}],
+            security_explanation={"recommendation": "allow"},
+            observability={"stage_timings_ms": {"fetch": 1.0}},
+        )
+        result = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        row = _build_batch_json_output(["http://x.com"], result)["results"][0]
+
+        assert row["markdown"] == doc.markdown
+        assert row["token_estimate"] == 10
+        assert row["tokens"] == 10
+        assert row["flags"] == ["flagged"]
+        assert row["removed_elements"] == {"scripts": 1}
+        assert row["screenshot_path"] == "/tmp/s.png"
+        assert row["enriched_metadata"] == {"author": "Alice"}
+        assert row["links"] == {"internal": ["https://x.com/about"]}
+        assert row["nova_score"] == 0.4
+        assert row["nova_details"] == {"trace": "ok"}
+        assert row["security_explanation"] == {"recommendation": "allow"}
+        assert row["observability"] == {"stage_timings_ms": {"fetch": 1.0}}
+
+    def test_batch_json_output_hides_markdown_with_no_content(self):
+        doc = SafeDocument(
+            markdown="SECRET",
+            metadata={"url": "http://x.com"},
+            token_estimate=1,
+            content_hash="sha256:1",
+            injection_score=0.0,
+        )
+        result = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        row = _build_batch_json_output(
+            ["http://x.com"],
+            result,
+            no_content=True,
+        )[
+            "results"
+        ][0]
+
+        assert row["markdown"] is None
+
 
 # ── display functions ──────────────────────────────────────────────────────────
+
 
 class TestDisplayFunctions:
     def test_display_header(self, safe_doc):
@@ -270,17 +362,22 @@ class TestDisplayFunctions:
 
 # ── _save_json_output / _save_markdown_output ──────────────────────────────────
 
+
 class TestSaveJsonOutput:
     def test_prints_to_stdout(self, safe_doc, capsys):
-        _save_json_output(_build_json_output(safe_doc, IngestArgs(url="http://x.com")),
-                          IngestArgs(url="http://x.com"))
+        _save_json_output(
+            _build_json_output(safe_doc, IngestArgs(url="http://x.com")),
+            IngestArgs(url="http://x.com"),
+        )
         data = json.loads(capsys.readouterr().out)
         assert "metadata" in data
 
     def test_writes_to_file(self, safe_doc, tmp_path):
         save = tmp_path / "out.json"
-        _save_json_output(_build_json_output(safe_doc, IngestArgs(url="http://x.com")),
-                          IngestArgs(url="http://x.com", save=str(save)))
+        _save_json_output(
+            _build_json_output(safe_doc, IngestArgs(url="http://x.com")),
+            IngestArgs(url="http://x.com", save=str(save)),
+        )
         assert save.exists()
         assert "metadata" in json.loads(save.read_text())
 
@@ -297,6 +394,7 @@ class TestSaveMarkdownOutput:
 
 
 # ── cmd_ingest ─────────────────────────────────────────────────────────────────
+
 
 class TestCmdIngest:
     def test_success_rich_output(self, local_server):
@@ -356,11 +454,17 @@ class TestCmdIngest:
 
 # ── _load_urls_from_file ───────────────────────────────────────────────────────
 
+
 class TestLoadUrlsFromFile:
     def test_valid_file(self, tmp_path):
         f = tmp_path / "urls.txt"
         f.write_text("http://a.com\n# comment\n\nhttp://b.com\n")
         assert _load_urls_from_file(str(f)) == ["http://a.com", "http://b.com"]
+
+    def test_ignores_indented_comments(self, tmp_path):
+        f = tmp_path / "urls.txt"
+        f.write_text("   # comment\nhttp://a.com\n")
+        assert _load_urls_from_file(str(f)) == ["http://a.com"]
 
     def test_missing_file_exits_1(self, tmp_path):
         with pytest.raises(SystemExit) as exc:
@@ -377,16 +481,33 @@ class TestLoadUrlsFromFile:
 
 # ── _create_batch_processor ────────────────────────────────────────────────────
 
+
 class TestCreateBatchProcessor:
     def test_returns_processor(self):
-        args = Namespace(fast=False, render=False, strict=True, permissive=False,
-                         concurrent=3, timeout=10.0, model=None, config=None)
+        args = Namespace(
+            fast=False,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=3,
+            timeout=10.0,
+            model=None,
+            config=None,
+        )
         processor = _create_batch_processor(args)
         assert isinstance(processor, BatchProcessor)
 
     def test_fast_mode_propagated(self):
-        args = Namespace(fast=True, render=False, strict=True, permissive=False,
-                         concurrent=1, timeout=5.0, model=None, config=None)
+        args = Namespace(
+            fast=True,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=1,
+            timeout=5.0,
+            model=None,
+            config=None,
+        )
         assert _create_batch_processor(args).mode == "fast"
 
     def test_config_defaults_propagated(self, tmp_path):
@@ -411,8 +532,40 @@ class TestCreateBatchProcessor:
         assert processor.timeout == 22
         assert processor.max_concurrent == 7
 
+    def test_preserves_full_runtime_config_in_build_config(self, tmp_path):
+        config_path = tmp_path / "batch.yaml"
+        config_path.write_text(
+            "output_profile: for_archive\n"
+            "extract_blocks: true\n"
+            "custom_patterns:\n"
+            "  - abc\n"
+            "cache_enabled: true\n"
+            "cache_type: memory\n"
+            "cache_ttl: 123\n"
+        )
+        args = Namespace(
+            fast=False,
+            render=False,
+            strict=None,
+            permissive=False,
+            concurrent=None,
+            timeout=None,
+            model=None,
+            config=str(config_path),
+        )
+
+        processor = _create_batch_processor(args)
+        config = processor._build_config()
+
+        assert config.output_profile == "for_archive"
+        assert config.extract_blocks is True
+        assert config.custom_patterns == ["abc"]
+        assert config.cache is not None
+        assert config.cache_ttl == 123
+
 
 # ── _process_batch_with_progress ──────────────────────────────────────────────
+
 
 class TestProcessBatchWithProgress:
     def test_returns_batch_result(self, local_server):
@@ -425,6 +578,7 @@ class TestProcessBatchWithProgress:
 
 # ── batch display helpers ──────────────────────────────────────────────────────
 
+
 class TestDisplayBatchSummary:
     def test_runs_without_error(self, batch_result):
         _display_batch_summary(batch_result)
@@ -433,9 +587,12 @@ class TestDisplayBatchSummary:
 class TestCreateBatchResultsTable:
     def test_basic_table(self, safe_doc):
         from rich.table import Table
+
         long_error_url = "http://" + "e" * 50 + ".com"
         br = BatchResult(
-            total=2, successful=1, failed=1,
+            total=2,
+            successful=1,
+            failed=1,
             documents=[safe_doc, None],
             errors={long_error_url: "err"},
         )
@@ -444,6 +601,7 @@ class TestCreateBatchResultsTable:
 
     def test_long_doc_url_truncated(self, safe_doc):
         from rich.table import Table
+
         long_url = "http://" + "d" * 50 + ".com"
         br = BatchResult(total=1, successful=1, failed=0, documents=[safe_doc], errors={})
         table = _create_batch_results_table([long_url], br)
@@ -460,6 +618,7 @@ class TestCreateBatchResultsTable:
 
 # ── _save_batch_json / _save_batch_markdown ────────────────────────────────────
 
+
 class TestSaveBatchJson:
     def test_saves_correct_structure(self, tmp_path, safe_doc):
         br = BatchResult(total=1, successful=1, failed=0, documents=[safe_doc], errors={})
@@ -470,8 +629,9 @@ class TestSaveBatchJson:
         assert len(data["results"]) == 1
 
     def test_none_docs_excluded(self, tmp_path):
-        br = BatchResult(total=1, successful=0, failed=1, documents=[None],
-                         errors={"http://a.com": "err"})
+        br = BatchResult(
+            total=1, successful=0, failed=1, documents=[None], errors={"http://a.com": "err"}
+        )
         out = tmp_path / "r.json"
         _save_batch_json(out, ["http://a.com"], br)
         data = json.loads(out.read_text())
@@ -491,6 +651,24 @@ class TestSaveBatchJson:
         assert data["results"][1]["success"] is False
         assert data["results"][1]["error"] == "Missing batch result for input index 1"
 
+    def test_no_content_omits_markdown_payload(self, tmp_path):
+        doc = SafeDocument(
+            markdown="SECRET",
+            metadata={},
+            token_estimate=1,
+            content_hash="sha256:test",
+            injection_score=0.0,
+            flags=[],
+            removed_elements={},
+        )
+        br = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+        out = tmp_path / "r.json"
+
+        _save_batch_json(out, ["http://ok.com"], br, no_content=True)
+
+        data = json.loads(out.read_text())
+        assert data["results"][0]["markdown"] is None
+
 
 class TestSaveBatchMarkdown:
     def test_saves_md_files(self, tmp_path, safe_doc):
@@ -503,45 +681,133 @@ class TestSaveBatchMarkdown:
         _save_batch_markdown(tmp_path, br)
         assert list(tmp_path.glob("*.md")) == []
 
+    def test_preserves_sparse_numbering_when_urls_are_unavailable(self, tmp_path, safe_doc):
+        br = BatchResult(
+            total=3, successful=2, failed=1, documents=[safe_doc, None, safe_doc], errors={}
+        )
+        _save_batch_markdown(tmp_path, br)
+
+        files = sorted(path.name for path in tmp_path.glob("*.md"))
+        assert files == ["doc_001.md", "doc_003.md"]
+
+    def test_no_content_skips_writing_markdown_files(self, tmp_path):
+        doc = SafeDocument(
+            markdown="SECRET",
+            metadata={},
+            token_estimate=1,
+            content_hash="sha256:test",
+            injection_score=0.0,
+            flags=[],
+            removed_elements={},
+        )
+        br = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        _save_batch_markdown(tmp_path, br, no_content=True)
+
+        assert list(tmp_path.glob("*.md")) == []
+
 
 # ── _save_batch_results ────────────────────────────────────────────────────────
 
+
 class TestSaveBatchResults:
     def _br(self, safe_doc):
-        return BatchResult(total=1, successful=1, failed=0,
-                           documents=[safe_doc], errors={})
+        return BatchResult(total=1, successful=1, failed=0, documents=[safe_doc], errors={})
 
     def test_no_output_is_noop(self, safe_doc):
-        _save_batch_results(Namespace(output=None, json=False), ["http://x.com"],
-                            self._br(safe_doc))
+        _save_batch_results(
+            Namespace(output=None, json=False), ["http://x.com"], self._br(safe_doc)
+        )
 
     def test_json_to_new_dir_without_suffix(self, tmp_path, safe_doc):
-        # path has no suffix and doesn't exist → treated as directory
-        out = tmp_path / "newdir"
-        _save_batch_results(Namespace(output=str(out), json=True), ["http://x.com"],
-                            self._br(safe_doc))
-        assert (out / "results.json").exists()
+        # path has no suffix and doesn't exist → treated as the requested file path
+        out = tmp_path / "results"
+        _save_batch_results(
+            Namespace(output=str(out), json=True), ["http://x.com"], self._br(safe_doc)
+        )
+        assert out.exists()
 
     def test_json_to_existing_dir(self, tmp_path, safe_doc):
         # path already exists as a directory
         out = tmp_path / "existing"
         out.mkdir()
-        _save_batch_results(Namespace(output=str(out), json=True), ["http://x.com"],
-                            self._br(safe_doc))
+        _save_batch_results(
+            Namespace(output=str(out), json=True), ["http://x.com"], self._br(safe_doc)
+        )
         assert (out / "results.json").exists()
 
     def test_json_to_explicit_file(self, tmp_path, safe_doc):
         # path has a suffix → write directly
         out = tmp_path / "res.json"
-        _save_batch_results(Namespace(output=str(out), json=True), ["http://x.com"],
-                            self._br(safe_doc))
+        _save_batch_results(
+            Namespace(output=str(out), json=True), ["http://x.com"], self._br(safe_doc)
+        )
         assert out.exists()
+
+    def test_json_file_preserves_rich_document_fields(self, tmp_path):
+        doc = SafeDocument(
+            markdown="# Batch",
+            metadata={"url": "http://x.com"},
+            token_estimate=10,
+            content_hash="sha256:1",
+            injection_score=0.2,
+            flags=["flagged"],
+            removed_elements={"scripts": 1},
+            screenshot_path="/tmp/s.png",
+            enriched_metadata={"author": "Alice"},
+            links={"internal": ["https://x.com/about"]},
+            nova_score=0.4,
+            nova_details={"trace": "ok"},
+            security_explanation={"recommendation": "allow"},
+            observability={"stage_timings_ms": {"fetch": 1.0}},
+        )
+        out = tmp_path / "res.json"
+        br = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        _save_batch_results(Namespace(output=str(out), json=True), ["http://x.com"], br)
+
+        payload = json.loads(out.read_text())
+        row = payload["results"][0]
+        assert row["screenshot_path"] == "/tmp/s.png"
+        assert row["links"] == {"internal": ["https://x.com/about"]}
+        assert row["nova_score"] == 0.4
+        assert row["security_explanation"] == {"recommendation": "allow"}
+
+    def test_json_file_hides_markdown_with_no_content(self, tmp_path):
+        doc = SafeDocument(
+            markdown="SECRET",
+            metadata={"url": "http://x.com"},
+            token_estimate=1,
+            content_hash="sha256:1",
+            injection_score=0.0,
+        )
+        out = tmp_path / "res.json"
+        br = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        _save_batch_results(
+            Namespace(output=str(out), json=True, no_content=True),
+            ["http://x.com"],
+            br,
+        )
+
+        payload = json.loads(out.read_text())
+        assert payload["results"][0]["markdown"] is None
 
     def test_markdown_to_dir(self, tmp_path, safe_doc):
         out = tmp_path / "mdout"
-        _save_batch_results(Namespace(output=str(out), json=False), ["http://x.com"],
-                            self._br(safe_doc))
+        _save_batch_results(
+            Namespace(output=str(out), json=False), ["http://x.com"], self._br(safe_doc)
+        )
         assert (out / "doc_001.md").exists()
+
+    def test_markdown_to_dir_respects_no_content(self, tmp_path, safe_doc):
+        out = tmp_path / "mdout"
+        _save_batch_results(
+            Namespace(output=str(out), json=False, no_content=True),
+            ["http://x.com"],
+            self._br(safe_doc),
+        )
+        assert list(out.glob("*.md")) == []
 
     def test_markdown_ignores_extra_documents_without_matching_url(self, tmp_path, safe_doc):
         out = tmp_path / "mdout"
@@ -559,17 +825,111 @@ class TestSaveBatchResults:
 
 # ── cmd_batch ──────────────────────────────────────────────────────────────────
 
+
 class TestCmdBatch:
+    def test_load_domain_policies_missing_file_exits_cleanly(self):
+        args = Namespace(domain_policy_file="does-not-exist.json", domain_policy=[])
+
+        with pytest.raises(SystemExit) as exc_info:
+            load_domain_policies(args)
+
+        assert exc_info.value.code == 1
+
+    def test_load_domain_policies_rejects_non_object_entries(self, tmp_path):
+        policy_file = tmp_path / "policies.json"
+        policy_file.write_text("[1]")
+        args = Namespace(domain_policy_file=str(policy_file), domain_policy=[])
+
+        with pytest.raises(SystemExit) as exc_info:
+            load_domain_policies(args)
+
+        assert exc_info.value.code == 1
+
+    def test_ingest_many_with_progress_uses_loaded_runtime_config(self, monkeypatch, tmp_path):
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text(
+            "output_profile: for_archive\n"
+            "extract_blocks: true\n"
+            "custom_patterns:\n"
+            "  - abc\n"
+            "cache_enabled: true\n"
+            "cache_type: memory\n"
+            "cache_ttl: 123\n"
+            "domain_policies:\n"
+            "  - domain: example.com\n"
+            "    mode: render\n"
+        )
+
+        captured = {}
+
+        async def fake_ingest_many_async(urls, **kwargs):
+            captured["urls"] = urls
+            captured["kwargs"] = kwargs
+            return BatchResult(total=0, successful=0, failed=0, documents=[], errors={})
+
+        monkeypatch.setattr(
+            "markdown_ingress.cli_commands.ingest_many_async", fake_ingest_many_async
+        )
+
+        args = Namespace(
+            config=str(config_path),
+            permissive=False,
+            strict=False,
+            fast=False,
+            render=False,
+            timeout=None,
+            concurrent=None,
+            model=None,
+            screenshot=None,
+            metadata=False,
+            no_metadata=False,
+            links=False,
+            no_links=False,
+            advanced_security=False,
+            no_advanced_security=False,
+            use_llm=False,
+            no_llm=False,
+            output_profile=None,
+            extract_blocks=None,
+            chunking_strategy=None,
+            chunk_size=None,
+            chunk_overlap=None,
+            render_cost_budget=None,
+            domain_policy_file=None,
+            domain_policy=[],
+        )
+
+        asyncio.run(ingest_many_with_progress(args, ["https://example.com"]))
+
+        runtime_config = captured["kwargs"]["config"]
+        assert captured["urls"] == ["https://example.com"]
+        assert runtime_config is not None
+        assert runtime_config.output_profile == "for_archive"
+        assert runtime_config.extract_blocks is True
+        assert runtime_config.custom_patterns == ["abc"]
+        assert runtime_config.cache is not None
+        assert runtime_config.cache_ttl == 123
+        assert len(runtime_config.domain_policies) == 1
+        assert captured["kwargs"]["output_profile"] is None
+        assert captured["kwargs"]["extract_blocks"] is None
+        assert captured["kwargs"]["domain_policies"] is None
+
     def test_batch_success_saves_markdown(self, local_server, tmp_path):
         urls_file = tmp_path / "urls.txt"
         urls_file.write_text(f"{local_server}\n")
         out_dir = tmp_path / "output"
         args = Namespace(
             file=str(urls_file),
-            fast=True, render=False,
-            strict=True, permissive=False,
-            concurrent=1, timeout=10.0, model=None, config=None,
-            output=str(out_dir), json=False,
+            fast=True,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=1,
+            timeout=10.0,
+            model=None,
+            config=None,
+            output=str(out_dir),
+            json=False,
         )
         cmd_batch(args)
         assert len(list(out_dir.glob("*.md"))) == 1
@@ -579,10 +939,16 @@ class TestCmdBatch:
         urls_file.write_text(f"{local_server}\n")
         args = Namespace(
             file=str(urls_file),
-            fast=True, render=False,
-            strict=True, permissive=False,
-            concurrent=1, timeout=10.0, model=None, config=None,
-            output=None, json=False,
+            fast=True,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=1,
+            timeout=10.0,
+            model=None,
+            config=None,
+            output=None,
+            json=False,
         )
         cmd_batch(args)  # should return normally
 
@@ -594,27 +960,83 @@ class TestCmdBatch:
         out_file = tmp_path / "results.json"
         args = Namespace(
             file=str(urls_file),
-            fast=True, render=False,
-            strict=True, permissive=False,
-            concurrent=1, timeout=10.0, model=None, config=str(config_path),
-            output=str(out_file), json=False,
+            fast=True,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=1,
+            timeout=10.0,
+            model=None,
+            config=str(config_path),
+            output=str(out_file),
+            json=False,
         )
         cmd_batch(args)
         assert out_file.exists()
         data = json.loads(out_file.read_text())
         assert data["summary"]["successful"] == 1
 
+    def test_batch_markdown_mode_respects_no_content(self, monkeypatch, capsys, tmp_path):
+        urls_file = tmp_path / "urls.txt"
+        urls_file.write_text("https://example.com\n")
+        config_path = tmp_path / "mdi.yaml"
+        config_path.write_text("output_format: markdown\n")
+        doc = SafeDocument(
+            markdown="SECRET",
+            metadata={"url": "https://example.com"},
+            token_estimate=1,
+            content_hash="sha256:1",
+            injection_score=0.0,
+        )
+        batch_result = BatchResult(total=1, successful=1, failed=0, documents=[doc], errors={})
+
+        async def fake_ingest_many_with_progress(args, urls):
+            return batch_result
+
+        monkeypatch.setattr(
+            "markdown_ingress.cli_commands.ingest_many_with_progress",
+            fake_ingest_many_with_progress,
+        )
+
+        args = Namespace(
+            file=str(urls_file),
+            fast=True,
+            render=False,
+            strict=True,
+            permissive=False,
+            concurrent=1,
+            timeout=10.0,
+            model=None,
+            config=str(config_path),
+            output=None,
+            json=False,
+            no_content=True,
+        )
+
+        cmd_batch(args)
+        captured = capsys.readouterr()
+        assert "SECRET" not in captured.out
+
 
 # ── parser helpers ─────────────────────────────────────────────────────────────
+
 
 class TestParsers:
     def test_add_common_ingest_args(self):
         p = argparse.ArgumentParser()
         _add_common_ingest_args(p)
-        args = p.parse_args(["--fast", "--json", "--no-content",
-                              "--no-metadata", "--no-links",
-                              "--advanced-security", "--use-llm",
-                              "--screenshot"])
+        args = p.parse_args(
+            [
+                "--fast",
+                "--json",
+                "--no-content",
+                "--no-metadata",
+                "--no-links",
+                "--advanced-security",
+                "--use-llm",
+                "--screenshot",
+            ]
+        )
         assert args.fast is True
         assert args.json is True
         assert args.screenshot is True  # const=True (boolean)
@@ -638,9 +1060,10 @@ class TestParsers:
         p = argparse.ArgumentParser()
         sp = p.add_subparsers(dest="cmd")
         _create_batch_parser(sp)
-        args = p.parse_args(["batch", "urls.txt"])
+        args = p.parse_args(["batch", "urls.txt", "--no-content"])
         assert args.file == "urls.txt"
         assert args.concurrent is None
+        assert args.no_content is True
 
     def test_create_legacy_parser(self):
         p = _create_legacy_parser()
@@ -654,6 +1077,7 @@ class TestParsers:
 
 
 # ── _is_legacy_mode ────────────────────────────────────────────────────────────
+
 
 class TestIsLegacyMode:
     def test_http_url(self, monkeypatch):
@@ -683,6 +1107,7 @@ class TestIsLegacyMode:
 
 # ── main() ─────────────────────────────────────────────────────────────────────
 
+
 class TestMain:
     def test_no_command_prints_help_and_exits_0(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["cli"])
@@ -691,15 +1116,13 @@ class TestMain:
         assert exc.value.code == 0
 
     def test_legacy_mode_ingest(self, monkeypatch, local_server):
-        monkeypatch.setattr(sys, "argv",
-                            ["cli", local_server, "--fast", "--no-content"])
+        monkeypatch.setattr(sys, "argv", ["cli", local_server, "--fast", "--no-content"])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 0
 
     def test_ingest_subcommand(self, monkeypatch, local_server):
-        monkeypatch.setattr(sys, "argv",
-                            ["cli", "ingest", local_server, "--fast", "--no-content"])
+        monkeypatch.setattr(sys, "argv", ["cli", "ingest", local_server, "--fast", "--no-content"])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 0
@@ -708,8 +1131,8 @@ class TestMain:
         urls_file = tmp_path / "urls.txt"
         urls_file.write_text(f"{local_server}\n")
         out_dir = tmp_path / "batch_out"
-        monkeypatch.setattr(sys, "argv",
-                            ["cli", "batch", str(urls_file),
-                             "--output", str(out_dir), "--fast"])
+        monkeypatch.setattr(
+            sys, "argv", ["cli", "batch", str(urls_file), "--output", str(out_dir), "--fast"]
+        )
         main()  # no SystemExit expected
         assert out_dir.exists()

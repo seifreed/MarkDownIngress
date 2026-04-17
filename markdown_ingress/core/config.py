@@ -6,14 +6,20 @@ import copy
 import json
 import logging
 import os
-from collections.abc import Callable
-from dataclasses import MISSING, dataclass, field, fields
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml  # type: ignore[import-untyped]
 
-from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.config_models import (
+    DomainPolicy,
+    IngestConfig,
+    _validate_output_profile_name,
+    _validate_output_representations,
+)
 from markdown_ingress.core.cache import Cache, MemoryCache, SQLiteCache
 
 _logger = logging.getLogger(__name__)
@@ -26,7 +32,55 @@ VALID_CHUNKING_STRATEGIES = ("none", "heading", "size")
 VALID_POLICIES = ("permissive", "normal", "strict", "paranoid", "moderate")
 
 
-def _collect_config_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], frozenset[str]]:
+def _validate_regex_patterns(patterns: list[str]) -> None:
+    for pattern in patterns:
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern '{pattern}': {e}") from e
+
+
+def _validate_string_list(field_name: str, value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
+        normalized.append(item)
+    return normalized
+
+
+def _parse_csv_string_list(field_name: str, value: str) -> list[str]:
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    return _validate_string_list(field_name, parsed)
+
+
+def _normalize_domain_policies(value: Any) -> list[DomainPolicy]:
+    if not isinstance(value, list):
+        raise ValueError(
+            "domain_policies must be a list of DomainPolicy objects or mappings, "
+            f"got {type(value).__name__}"
+        )
+    normalized: list[DomainPolicy] = []
+    for index, item in enumerate(value):
+        if isinstance(item, DomainPolicy):
+            normalized.append(copy.deepcopy(item))
+            continue
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"domain_policies[{index}] must be a mapping or DomainPolicy, got {type(item).__name__}"
+            )
+        try:
+            normalized.append(DomainPolicy(**dict(item)))
+        except Exception as exc:
+            raise ValueError(f"domain_policies[{index}] is invalid: {exc}") from exc
+    return normalized
+
+
+def _collect_config_init_values(
+    cls, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], frozenset[str]]:
     """Resolve dataclass-style init arguments while preserving explicit keys."""
     init_fields = [config_field for config_field in fields(cls) if config_field.init]
     if len(args) > len(init_fields):
@@ -42,7 +96,9 @@ def _collect_config_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, An
     for index, config_field in enumerate(init_fields):
         if index < len(args):
             if config_field.name in remaining_kwargs:
-                raise TypeError(f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'")
+                raise TypeError(
+                    f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'"
+                )
             values[config_field.name] = args[index]
             explicit.add(config_field.name)
             continue
@@ -53,18 +109,22 @@ def _collect_config_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, An
             continue
 
         if config_field.default is not MISSING:
-            values[config_field.name] = config_field.default
+            values[config_field.name] = copy.deepcopy(config_field.default)
             continue
 
         if config_field.default_factory is not MISSING:
             values[config_field.name] = config_field.default_factory()
             continue
 
-        raise TypeError(f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'")
+        raise TypeError(
+            f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'"
+        )
 
     if remaining_kwargs:
         unexpected = next(iter(remaining_kwargs))
-        raise TypeError(f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'")
+        raise TypeError(
+            f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'"
+        )
 
     return values, frozenset(explicit)
 
@@ -76,6 +136,7 @@ class Config:
     # Fetching
     mode: Literal["fast", "render", "auto"] = "auto"
     timeout: float = 30.0
+    auto_render_threshold: int = 50
 
     # Security
     strict: bool = True
@@ -99,6 +160,7 @@ class Config:
     disable_http2: bool = False
     extreme_mode: bool = False
     screenshot: bool | str | None = None
+    fetcher_user_agent: str = ""
     domain_request_interval: float = 0.25
     circuit_breaker_threshold: int = 3
     circuit_breaker_open_seconds: float = 30.0
@@ -106,18 +168,32 @@ class Config:
     # Policy
     policy: str = "normal"
     custom_patterns: list[str] = field(default_factory=list)
-    domain_policies: list[dict[str, Any]] = field(default_factory=list)
+    plugin_dirs: list[str] = field(default_factory=list)
+    domain_policies: list[DomainPolicy] = field(default_factory=list)
 
     # Output
     output_format: Literal["text", "json", "markdown"] = "text"
     output_profile: str = "default"
+    output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     extract_blocks: bool = False
+    extract_metadata: bool = True
+    extract_links: bool = True
+    advanced_security: bool = False
+    use_llm: bool = False
+    detect_language: bool = True
+    normalize_multilingual: bool = True
+    include_security_explanation: bool = True
     chunking_strategy: Literal["none", "heading", "size"] = "none"
     chunk_size: int = 1200
     chunk_overlap: int = 120
     save_reports: bool = False
     reports_dir: str = "reports"
+    render_cost_budget: int | None = None
+    include_observability: bool = True
     _cache_backend: Cache | None = field(default=None, init=False, repr=False)
+    _cache_backend_settings: tuple[str, str | None, int] | None = field(
+        default=None, init=False, repr=False
+    )
     _explicit_keys: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -125,6 +201,7 @@ class Config:
         for key, value in values.items():
             setattr(self, key, value)
         self._cache_backend = None
+        self._cache_backend_settings = None
         self.__post_init__()
         self._explicit_keys = explicit
 
@@ -132,23 +209,37 @@ class Config:
         """Validate configuration after initialization."""
         # Validate Literal fields
         if self.mode not in VALID_MODES:
-            raise ValueError(f"Invalid mode '{self.mode}'. Must be one of: {', '.join(VALID_MODES)}")
+            raise ValueError(
+                f"Invalid mode '{self.mode}'. Must be one of: {', '.join(VALID_MODES)}"
+            )
         if self.cache_type not in VALID_CACHE_TYPES:
-            raise ValueError(f"Invalid cache_type '{self.cache_type}'. Must be one of: {', '.join(VALID_CACHE_TYPES)}")
+            raise ValueError(
+                f"Invalid cache_type '{self.cache_type}'. Must be one of: {', '.join(VALID_CACHE_TYPES)}"
+            )
         if self.output_format not in VALID_OUTPUT_FORMATS:
-            raise ValueError(f"Invalid output_format '{self.output_format}'. Must be one of: {', '.join(VALID_OUTPUT_FORMATS)}")
+            raise ValueError(
+                f"Invalid output_format '{self.output_format}'. Must be one of: {', '.join(VALID_OUTPUT_FORMATS)}"
+            )
         if self.chunking_strategy not in VALID_CHUNKING_STRATEGIES:
-            raise ValueError(f"Invalid chunking_strategy '{self.chunking_strategy}'. Must be one of: {', '.join(VALID_CHUNKING_STRATEGIES)}")
+            raise ValueError(
+                f"Invalid chunking_strategy '{self.chunking_strategy}'. Must be one of: {', '.join(VALID_CHUNKING_STRATEGIES)}"
+            )
 
         # Validate policy
         if self.policy not in VALID_POLICIES:
-            raise ValueError(f"Invalid policy '{self.policy}'. Must be one of: {', '.join(VALID_POLICIES)}")
+            raise ValueError(
+                f"Invalid policy '{self.policy}'. Must be one of: {', '.join(VALID_POLICIES)}"
+            )
 
         # Validate positive values
-        if self.timeout <= 0:
-            raise ValueError(f"timeout must be positive, got {self.timeout}")
-        if self.batch_max_concurrent <= 0:
-            raise ValueError(f"batch_max_concurrent must be positive, got {self.batch_max_concurrent}")
+        if self.timeout <= 0 or self.timeout > 3600:
+            raise ValueError(f"timeout must be > 0 and <= 3600, got {self.timeout}")
+        if self.auto_render_threshold < 1:
+            raise ValueError(
+                "auto_render_threshold must be >= 1, " f"got {self.auto_render_threshold}"
+            )
+        if self.batch_max_concurrent < 1:
+            raise ValueError(f"batch_max_concurrent must be >= 1, got {self.batch_max_concurrent}")
         if self.batch_timeout <= 0:
             raise ValueError(f"batch_timeout must be positive, got {self.batch_timeout}")
         if self.cache_ttl <= 0:
@@ -157,23 +248,40 @@ class Config:
             raise ValueError(f"chunk_size must be between 100 and 50000, got {self.chunk_size}")
         if self.chunk_overlap < 0 or self.chunk_overlap > 10000:
             raise ValueError(f"chunk_overlap must be between 0 and 10000, got {self.chunk_overlap}")
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
+            )
+
+        self.custom_patterns = _validate_string_list("custom_patterns", self.custom_patterns)
+        self.plugin_dirs = _validate_string_list("plugin_dirs", self.plugin_dirs)
+        self.output_formats = _validate_output_representations(self.output_formats)
+        self.domain_policies = _normalize_domain_policies(self.domain_policies)
+        _validate_output_profile_name(self.output_profile)
+
+        if self.render_cost_budget is not None and self.render_cost_budget < 1:
+            raise ValueError(
+                "render_cost_budget must be >= 1 when provided, " f"got {self.render_cost_budget}"
+            )
 
         # Validate custom_patterns are valid regex
-        import re
-
-        for pattern in self.custom_patterns:
-            try:
-                re.compile(pattern)
-            except re.error as e:
-                raise ValueError(f"Invalid regex pattern '{pattern}': {e}")
+        _validate_regex_patterns(self.custom_patterns)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary"""
-        return {
-            config_field.name: copy.deepcopy(getattr(self, config_field.name))
-            for config_field in fields(self)
-            if not config_field.name.startswith("_")
-        }
+        data: dict[str, Any] = {}
+        for config_field in fields(self):
+            if config_field.name.startswith("_"):
+                continue
+            value = getattr(self, config_field.name)
+            if config_field.name == "domain_policies":
+                data[config_field.name] = [
+                    asdict(item) if isinstance(item, DomainPolicy) else copy.deepcopy(item)
+                    for item in value
+                ]
+                continue
+            data[config_field.name] = copy.deepcopy(value)
+        return data
 
     def explicit_keys(self) -> frozenset[str]:
         """Return config fields explicitly set by the caller, file, or environment."""
@@ -196,16 +304,35 @@ class Config:
     def create_cache(self) -> Cache | None:
         """Instantiate a cache backend from config settings."""
         if not self.cache_enabled:
+            self._cache_backend = None
+            self._cache_backend_settings = None
             return None
 
-        if self._cache_backend is not None:
+        sqlite_path = (
+            str(Path(self.cache_path).expanduser()) if self.cache_type == "sqlite" else None
+        )
+        cache_settings = (
+            self.cache_type,
+            sqlite_path,
+            self.cache_ttl,
+        )
+        cached_backend_closed = bool(getattr(self._cache_backend, "_closed", False))
+        if (
+            self._cache_backend is not None
+            and self._cache_backend_settings == cache_settings
+            and not cached_backend_closed
+        ):
             return self._cache_backend
 
         if self.cache_type == "sqlite":
-            self._cache_backend = SQLiteCache(db_path=self.cache_path, default_ttl=self.cache_ttl)
+            if sqlite_path is None:
+                raise ValueError("sqlite_path must not be None when cache_type is 'sqlite'")
+            self._cache_backend = SQLiteCache(db_path=sqlite_path, default_ttl=self.cache_ttl)
+            self._cache_backend_settings = cache_settings
             return self._cache_backend
 
         self._cache_backend = MemoryCache(default_ttl=self.cache_ttl)
+        self._cache_backend_settings = cache_settings
         return self._cache_backend
 
     def to_ingest_config(self) -> IngestConfig:
@@ -215,23 +342,38 @@ class Config:
             strict=self.strict,
             model=self.model,
             timeout=self.timeout,
+            auto_render_threshold=self.auto_render_threshold,
             cache=self.create_cache(),
             cache_ttl=self.cache_ttl if self.cache_enabled else None,
             allow_local_urls=self.allow_local_urls,
             policy_name=self.normalized_policy(),
-            custom_patterns=list(self.custom_patterns),
-            domain_policies=[DomainPolicy(**policy) for policy in self.domain_policies],
+            custom_patterns=_validate_string_list("custom_patterns", self.custom_patterns),
+            plugin_dirs=_validate_string_list("plugin_dirs", self.plugin_dirs),
+            domain_policies=_normalize_domain_policies(self.domain_policies),
             output_format=self.output_format,
             output_profile=self.output_profile,
+            output_formats=_validate_string_list("output_formats", self.output_formats),
             extract_blocks=self.extract_blocks,
+            extract_metadata=self.extract_metadata,
+            extract_links=self.extract_links,
+            advanced_security=self.advanced_security,
+            use_llm=self.use_llm,
+            detect_language=self.detect_language,
+            normalize_multilingual=self.normalize_multilingual,
+            include_security_explanation=self.include_security_explanation,
             chunking_strategy=self.chunking_strategy,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             save_reports=self.save_reports,
             reports_dir=self.reports_dir,
+            render_cost_budget=self.render_cost_budget,
+            include_observability=self.include_observability,
+            fetcher_user_agent=self.fetcher_user_agent,
             domain_request_interval=self.domain_request_interval,
             circuit_breaker_threshold=self.circuit_breaker_threshold,
             circuit_breaker_open_seconds=self.circuit_breaker_open_seconds,
+            batch_timeout=self.batch_timeout,
+            batch_max_concurrent=self.batch_max_concurrent,
         )
         # Forward render-related settings when present on the legacy Config
         for render_field in ("stealth", "disable_http2", "extreme_mode", "screenshot"):
@@ -242,6 +384,7 @@ class Config:
         config_to_runtime_keys: dict[str, tuple[str, ...]] = {
             "mode": ("mode",),
             "timeout": ("timeout",),
+            "auto_render_threshold": ("auto_render_threshold",),
             "strict": ("strict",),
             "allow_local_urls": ("allow_local_urls",),
             "model": ("model",),
@@ -249,10 +392,19 @@ class Config:
             "cache_ttl": ("cache_ttl",),
             "policy": ("policy_name",),
             "custom_patterns": ("custom_patterns",),
+            "plugin_dirs": ("plugin_dirs",),
             "domain_policies": ("domain_policies",),
             "output_format": ("output_format",),
             "output_profile": ("output_profile",),
+            "output_formats": ("output_formats",),
             "extract_blocks": ("extract_blocks",),
+            "extract_metadata": ("extract_metadata",),
+            "extract_links": ("extract_links",),
+            "advanced_security": ("advanced_security",),
+            "use_llm": ("use_llm",),
+            "detect_language": ("detect_language",),
+            "normalize_multilingual": ("normalize_multilingual",),
+            "include_security_explanation": ("include_security_explanation",),
             "chunking_strategy": ("chunking_strategy",),
             "chunk_size": ("chunk_size",),
             "chunk_overlap": ("chunk_overlap",),
@@ -262,6 +414,11 @@ class Config:
             "disable_http2": ("disable_http2",),
             "extreme_mode": ("extreme_mode",),
             "screenshot": ("screenshot",),
+            "batch_timeout": ("batch_timeout",),
+            "batch_max_concurrent": ("batch_max_concurrent",),
+            "render_cost_budget": ("render_cost_budget",),
+            "include_observability": ("include_observability",),
+            "fetcher_user_agent": ("fetcher_user_agent",),
             "domain_request_interval": ("domain_request_interval",),
             "circuit_breaker_threshold": ("circuit_breaker_threshold",),
             "circuit_breaker_open_seconds": ("circuit_breaker_open_seconds",),
@@ -286,6 +443,17 @@ class Config:
         import logging
 
         _logger = logging.getLogger(__name__)
+        if not isinstance(data, Mapping):
+            raise ValueError(
+                "Config data must be a JSON/YAML object (mapping), " f"got {type(data).__name__}"
+            )
+        data = dict(data)
+        if "policy_name" in data:
+            if "policy" in data and data["policy"] != data["policy_name"]:
+                raise ValueError(
+                    "Config cannot define both policy and policy_name with different values"
+                )
+            data["policy"] = data.pop("policy_name")
         valid_keys = {k for k in cls.__dataclass_fields__ if not k.startswith("_")}
         unknown_keys = set(data.keys()) - valid_keys
         if unknown_keys:
@@ -392,9 +560,22 @@ class ConfigLoader:
     def _apply_env_overrides(self, config: Config) -> Config:
         """Apply environment variable overrides"""
         explicit = set(config.explicit_keys())
+        previous_explicit = {
+            config_field.name: config_field.name in explicit
+            for config_field in fields(Config)
+            if not config_field.name.startswith("_")
+        }
+        env_policy = os.getenv("MDI_POLICY")
+        env_policy_name = os.getenv("MDI_POLICY_NAME")
+        if env_policy is not None and env_policy_name is not None and env_policy != env_policy_name:
+            raise ValueError(
+                "Environment cannot define both MDI_POLICY and MDI_POLICY_NAME "
+                "with different values"
+            )
         env_mapping: dict[str, tuple[str, Callable[[str], object]]] = {
             "MDI_MODE": ("mode", str),
             "MDI_TIMEOUT": ("timeout", float),
+            "MDI_AUTO_RENDER_THRESHOLD": ("auto_render_threshold", int),
             "MDI_STRICT": ("strict", self._str_to_bool),
             "MDI_ALLOW_LOCAL_URLS": ("allow_local_urls", self._str_to_bool),
             "MDI_MODEL": ("model", str),
@@ -405,25 +586,38 @@ class ConfigLoader:
             "MDI_BATCH_MAX_CONCURRENT": ("batch_max_concurrent", int),
             "MDI_BATCH_TIMEOUT": ("batch_timeout", float),
             "MDI_POLICY": ("policy", str),
+            "MDI_POLICY_NAME": ("policy", str),
             "MDI_OUTPUT_FORMAT": ("output_format", str),
             "MDI_OUTPUT_PROFILE": ("output_profile", str),
             "MDI_EXTRACT_BLOCKS": ("extract_blocks", self._str_to_bool),
+            "MDI_EXTRACT_METADATA": ("extract_metadata", self._str_to_bool),
+            "MDI_EXTRACT_LINKS": ("extract_links", self._str_to_bool),
+            "MDI_ADVANCED_SECURITY": ("advanced_security", self._str_to_bool),
+            "MDI_USE_LLM": ("use_llm", self._str_to_bool),
+            "MDI_DETECT_LANGUAGE": ("detect_language", self._str_to_bool),
+            "MDI_NORMALIZE_MULTILINGUAL": ("normalize_multilingual", self._str_to_bool),
+            "MDI_INCLUDE_SECURITY_EXPLANATION": (
+                "include_security_explanation",
+                self._str_to_bool,
+            ),
             "MDI_CHUNKING_STRATEGY": ("chunking_strategy", str),
             "MDI_CHUNK_SIZE": ("chunk_size", int),
             "MDI_CHUNK_OVERLAP": ("chunk_overlap", int),
             "MDI_SAVE_REPORTS": ("save_reports", self._str_to_bool),
             "MDI_REPORTS_DIR": ("reports_dir", str),
+            "MDI_RENDER_COST_BUDGET": ("render_cost_budget", int),
+            "MDI_INCLUDE_OBSERVABILITY": ("include_observability", self._str_to_bool),
             "MDI_STEALTH": ("stealth", self._str_to_bool),
             "MDI_DISABLE_HTTP2": ("disable_http2", self._str_to_bool),
             "MDI_EXTREME_MODE": ("extreme_mode", self._str_to_bool),
             "MDI_SCREENSHOT": ("screenshot", self._str_to_bool_or_string),
+            "MDI_FETCHER_USER_AGENT": ("fetcher_user_agent", str),
             "MDI_DOMAIN_REQUEST_INTERVAL": ("domain_request_interval", float),
             "MDI_CIRCUIT_BREAKER_THRESHOLD": ("circuit_breaker_threshold", int),
             "MDI_CIRCUIT_BREAKER_OPEN_SECONDS": ("circuit_breaker_open_seconds", float),
         }
         previous_values = {
-            attr_name: getattr(config, attr_name)
-            for _, (attr_name, _) in env_mapping.items()
+            attr_name: getattr(config, attr_name) for _, (attr_name, _) in env_mapping.items()
         }
 
         for env_var, (attr_name, converter) in env_mapping.items():
@@ -444,15 +638,51 @@ class ConfigLoader:
         # Handle custom patterns (comma-separated)
         custom_patterns_env = os.getenv("MDI_CUSTOM_PATTERNS")
         if custom_patterns_env:
-            patterns = [p.strip() for p in custom_patterns_env.split(",") if p.strip()]
+            patterns = _parse_csv_string_list("custom_patterns", custom_patterns_env)
             if patterns:
-                config.custom_patterns = patterns
-                explicit.add("custom_patterns")
+                try:
+                    _validate_regex_patterns(patterns)
+                except ValueError as e:
+                    _logger.warning(
+                        "Invalid value for custom_patterns (%s=%s): %s. Keeping previous value.",
+                        "MDI_CUSTOM_PATTERNS",
+                        custom_patterns_env,
+                        e,
+                    )
+                else:
+                    config.custom_patterns = patterns
+                    explicit.add("custom_patterns")
+
+        list_env_mapping: dict[str, str] = {
+            "MDI_PLUGIN_DIRS": "plugin_dirs",
+            "MDI_OUTPUT_FORMATS": "output_formats",
+        }
+        for env_var, attr_name in list_env_mapping.items():
+            value = os.getenv(env_var)
+            if value is None:
+                continue
+            try:
+                parsed = _parse_csv_string_list(attr_name, value)
+                if attr_name == "output_formats":
+                    parsed = _validate_output_representations(parsed)
+                setattr(config, attr_name, parsed)
+                explicit.add(attr_name)
+            except (ValueError, TypeError) as e:
+                _logger.warning(
+                    "Invalid value for %s (%s=%s): %s. Keeping previous value.",
+                    attr_name,
+                    env_var,
+                    value,
+                    e,
+                )
 
         def _restore(attr_name: str, message: str, *args: object) -> None:
             _logger.warning(message, *args)
             setattr(config, attr_name, previous_values[attr_name])
-            explicit.discard(attr_name)
+            if previous_explicit.get(attr_name, False):
+                explicit.add(attr_name)
+            else:
+                explicit.discard(attr_name)
 
         # Validate Literal fields after env override (in case invalid values were set)
         # Mode validation
@@ -484,6 +714,48 @@ class ConfigLoader:
                 VALID_OUTPUT_FORMATS,
                 previous_values["output_format"],
             )
+        try:
+            config.output_profile = (
+                _validate_output_profile_name(config.output_profile) or "default"
+            )
+        except ValueError as exc:
+            _restore(
+                "output_profile",
+                "Invalid output_profile '%s' from environment: %s. Keeping previous value %r.",
+                config.output_profile,
+                exc,
+                previous_values["output_profile"],
+            )
+        if config.auto_render_threshold < 1:
+            _restore(
+                "auto_render_threshold",
+                "Invalid auto_render_threshold %r from environment, must be >= 1. Keeping previous value %r.",
+                config.auto_render_threshold,
+                previous_values["auto_render_threshold"],
+            )
+        if config.render_cost_budget is not None and config.render_cost_budget < 1:
+            _restore(
+                "render_cost_budget",
+                "Invalid render_cost_budget %r from environment, must be >= 1. Keeping previous value %r.",
+                config.render_cost_budget,
+                previous_values["render_cost_budget"],
+            )
+        if not config.output_formats:
+            _restore(
+                "output_formats",
+                "Invalid output_formats from environment, list cannot be empty. Keeping previous value %r.",
+                previous_values["output_formats"],
+            )
+        else:
+            try:
+                config.output_formats = _validate_output_representations(config.output_formats)
+            except (ValueError, TypeError) as exc:
+                _restore(
+                    "output_formats",
+                    "Invalid output_formats from environment: %s. Keeping previous value %r.",
+                    exc,
+                    previous_values["output_formats"],
+                )
 
         # Chunking strategy validation
         if config.chunking_strategy not in VALID_CHUNKING_STRATEGIES:
@@ -528,6 +800,15 @@ class ConfigLoader:
                 "chunk_overlap",
                 "Invalid chunk_overlap '%s' from environment, must be 0-10000. Keeping previous value %r.",
                 config.chunk_overlap,
+                previous_values["chunk_overlap"],
+            )
+
+        if config.chunk_overlap >= config.chunk_size:
+            _restore(
+                "chunk_overlap",
+                "chunk_overlap (%s) must be less than chunk_size (%s) after env overrides. Keeping previous value %r.",
+                config.chunk_overlap,
+                config.chunk_size,
                 previous_values["chunk_overlap"],
             )
 

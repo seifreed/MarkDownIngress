@@ -76,9 +76,7 @@ class NovaGuard:
         self.matchers: list = []
         if self.rules:
             for rule in self.rules:
-                self.matchers.append(
-                    NovaMatcher(rule=rule, create_llm_evaluator=enable_llm)
-                )
+                self.matchers.append(NovaMatcher(rule=rule, create_llm_evaluator=enable_llm))
         else:
             logger.warning(
                 "Nova-tracer enabled but no rules were loaded. "
@@ -116,38 +114,35 @@ class NovaGuard:
         def _decode_fully(encoded_path: str) -> str:
             """Decode URL-encoded path until fully decoded."""
             decoded = encoded_path
-            for _ in range(15):  # Prevent infinite loop (increased from 10 for better coverage)
+            for _ in range(25):  # Fixed-point loop breaks early; cap prevents adversarial deep-encoding
                 new_decoded = urllib.parse.unquote(decoded)
                 if new_decoded == decoded:
                     break
                 decoded = new_decoded
             return decoded
 
+        raw_lower = str(rules_path).lower().replace("\\", "/")
         fully_decoded = _decode_fully(str(rules_path))
-
-        # Check for various path traversal patterns
-        # BUG FIX: Expanded to include additional bypass vectors
-        traversal_patterns = [
-            "..",           # Basic traversal
-            "%2e%2e",       # URL-encoded ..
-            "%252e",        # Double-encoded .
-            "....",         # Double-dot sequences
-            "%5c",          # Backslash (Windows path separator)
-            "%c0%ae",       # Overlong UTF-8 encoding of '.'
-            "%c1%9c",       # Overlong UTF-8 encoding of '\'
-            "%c0%af",       # Overlong UTF-8 encoding of '/'
-            "%c0%2f",       # Another overlong UTF-8 encoding of '/'
-            "..%00",        # Null byte injection
-            "..%252f",      # Double URL-encoded /
-            "..%255c",      # Double-encoded backslash
-            "..;/",         # Path parameter bypass (some servers treat ; as segment end)
-            "%e0%80%ae",    # Another overlong encoding of '.'
-            "..%c0%ae/",    # Mixed encoding patterns
-        ]
         normalized_lower = fully_decoded.lower().replace("\\", "/")
-        for pattern in traversal_patterns:
-            if pattern.lower() in normalized_lower:
-                raise ValueError(f"Path traversal not allowed in rules_path: {rules_path}")
+
+        raw_encoded_traversal_patterns = [
+            "%2e%2e",
+            "%252e",
+            "%5c",
+            "%c0%ae",
+            "%c1%9c",
+            "%c0%af",
+            "%c0%2f",
+            "..%00",
+            "..%252f",
+            "..%255c",
+            "%e0%80%ae",
+            "..%c0%ae/",
+        ]
+        if any(pattern in raw_lower for pattern in raw_encoded_traversal_patterns):
+            raise ValueError(f"Path traversal not allowed in rules_path: {rules_path}")
+        if ".." in normalized_lower or "..;/" in normalized_lower:
+            raise ValueError(f"Path traversal not allowed in rules_path: {rules_path}")
 
         # Check if resolved path is within allowed directories
         if not self._is_path_allowed(resolved_path):
@@ -156,14 +151,6 @@ class NovaGuard:
                 f"Resolved path '{resolved_path}' is outside permitted locations. "
                 f"Allowed directories: {[str(d) for d in self._allowed_rules_dirs]}"
             )
-
-        # Ensure the file exists
-        if not resolved_path.exists():
-            raise FileNotFoundError(f"Rules file not found: {rules_path}")
-
-        # Ensure it's a file, not a directory
-        if not resolved_path.is_file():
-            raise ValueError(f"rules_path must be a file, not a directory: {rules_path}")
 
         # Check for symlinks that resolve outside allowed directories (already done above)
         # but also log if it's a symlink for transparency
@@ -174,27 +161,39 @@ class NovaGuard:
                 resolved_path,
             )
 
-        # Security: Check file size before loading (prevent DoS)
-        MAX_RULES_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-        try:
-            file_size = resolved_path.stat().st_size
-            if file_size > MAX_RULES_FILE_SIZE:
-                raise ValueError(
-                    f"Rules file too large: {file_size} bytes (max {MAX_RULES_FILE_SIZE} bytes). "
-                    "Large files may indicate a DoS attempt."
-                )
-        except OSError as e:
-            raise ValueError(f"Cannot check rules file size: {e}")
-
-        # BUG FIX: Use atomic read with explicit encoding to prevent TOCTOU race
-        # The resolved_path was validated above, but we read directly to avoid
-        # the window between stat() and open() where the file could be replaced
+        # Open first, then fstat() on the open fd — truly atomic size check.
+        # stat() + open() had a TOCTOU window where a file could be swapped between calls.
+        max_rules_file_size = 10 * 1024 * 1024  # 10MB
         parser = NovaParser()
+
         try:
-            file_content = resolved_path.read_text(encoding='utf-8')
-            self.rules = [parser.parse(file_content)]
+            import os
+
+            with resolved_path.open("r", encoding="utf-8") as f:
+                file_size = os.fstat(f.fileno()).st_size
+                if file_size > max_rules_file_size:
+                    raise ValueError(
+                        f"Rules file too large: {file_size} bytes (max {max_rules_file_size} bytes). "
+                        "Large files may indicate a DoS attempt."
+                    )
+                file_content = f.read()
+            blocks = self._extract_rule_blocks(file_content)
+            if blocks:
+                self.rules = []
+                for block in blocks:
+                    self.rules.append(parser.parse(block.strip()))
+            else:
+                self.rules = [parser.parse(file_content)]
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Rules file not found: {rules_path}")
+        except IsADirectoryError:
+            raise ValueError(f"rules_path must be a file, not a directory: {rules_path}")
+        except PermissionError as e:
+            raise ValueError(f"Permission denied reading rules file: {rules_path}: {e}")
         except UnicodeDecodeError as e:
             raise ValueError(f"Rules file must be UTF-8 encoded: {e}")
+        except OSError as e:
+            raise ValueError(f"Cannot read rules file: {e}")
         except Exception as e:
             # BUG FIX: Catch all parsing exceptions, not just UnicodeDecodeError
             # parser.parse() can raise SyntaxError, ValueError, TypeError, etc.
@@ -216,9 +215,14 @@ class NovaGuard:
                     if resolved_path.is_relative_to(allowed_dir):
                         return True
                 except (OSError, ValueError) as e:
-                    # BUG FIX: Log and continue to check other directories
-                    # instead of silently swallowing all errors
-                    logger.debug("Path check failed for %s: %s", allowed_dir, e)
+                    # BUG FIX: Use WARNING level for visibility in production logs
+                    # and include both path and allowed_dir for debugging context
+                    logger.warning(
+                        "Path permission check failed for %s against %s: %s",
+                        resolved_path,
+                        allowed_dir,
+                        e,
+                    )
                     continue
         except Exception as e:
             logger.warning("Unexpected error checking path permissions: %s", e)
@@ -231,7 +235,7 @@ class NovaGuard:
         parser = NovaParser()
         rules = []
         parse_failures = []
-        with open(_BUNDLED_RULES_PATH) as f:
+        with open(_BUNDLED_RULES_PATH, encoding="utf-8") as f:
             content = f.read()
         # Split rule blocks using a linear-time brace-depth scanner
         # instead of a regex with nested quantifiers (avoids ReDoS).
@@ -262,7 +266,16 @@ class NovaGuard:
             pos = m.end()
             while pos < len(content) and depth > 0:
                 ch = content[pos]
-                if ch == "{":
+                if ch == '"' or ch == "'":
+                    quote = ch
+                    pos += 1
+                    while pos < len(content) and content[pos] != quote:
+                        if content[pos] == "\\":
+                            pos += 1  # skip escaped char
+                            if pos >= len(content):
+                                break
+                        pos += 1
+                elif ch == "{":
                     depth += 1
                 elif ch == "}":
                     depth -= 1
@@ -337,9 +350,9 @@ class NovaGuard:
         return {
             "score": score,
             "severity": (
-                "high" if score >= self.severity_high_threshold
-                else "medium" if score >= self.severity_medium_threshold
-                else "low"
+                "high"
+                if score >= self.severity_high_threshold
+                else "medium" if score >= self.severity_medium_threshold else "low"
             ),
             "matched_rules": matched_rules,
             "categories": categories,

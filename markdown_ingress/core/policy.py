@@ -89,11 +89,15 @@ class Policy:
         # Validate custom_pattern_weights values
         for name, weight in self.custom_pattern_weights.items():
             if not 0.0 <= weight <= 1.0:
-                raise ValueError(f"custom_pattern_weights[{name!r}] must be between 0.0 and 1.0, got {weight}")
+                raise ValueError(
+                    f"custom_pattern_weights[{name!r}] must be between 0.0 and 1.0, got {weight}"
+                )
         # Validate custom_patterns weights and check for ReDoS vulnerabilities
         for pattern in self.custom_patterns:
             if not 0.0 <= pattern.weight <= 1.0:
-                raise ValueError(f"Custom pattern {pattern.description!r} weight must be between 0.0 and 1.0, got {pattern.weight}")
+                raise ValueError(
+                    f"Custom pattern {pattern.description!r} weight must be between 0.0 and 1.0, got {pattern.weight}"
+                )
             # Validate regex pattern for ReDoS vulnerabilities
             _validate_regex_pattern(pattern.pattern, pattern.description)
 
@@ -143,7 +147,9 @@ class PolicyEngine:
         Args:
             policy: Policy to use (default: normal)
         """
-        self.policy = copy.deepcopy(policy) if policy is not None else copy.deepcopy(self.POLICIES["normal"])
+        self.policy = (
+            copy.deepcopy(policy) if policy is not None else copy.deepcopy(self.POLICIES["normal"])
+        )
 
     @classmethod
     def from_name(cls, name: str) -> "PolicyEngine":
@@ -157,7 +163,9 @@ class PolicyEngine:
             PolicyEngine instance
         """
         if name not in cls.POLICIES:
-            raise ValueError(f"Unknown policy: {name}. Use 'list_policies()' to see available options.")
+            raise ValueError(
+                f"Unknown policy: {name}. Use 'list_policies()' to see available options."
+            )
         return cls(policy=copy.deepcopy(cls.POLICIES[name]))
 
     @classmethod
@@ -251,6 +259,22 @@ class PolicyEngine:
 
         Returns:
             List of InjectionPattern objects
+
+        Weight Override Behavior:
+            When custom_pattern_weights contains a weight for a pattern description:
+            1. If a default pattern has that description, the weight is applied to it
+            2. If a custom pattern has that description AND no default pattern has it,
+               the weight is applied to the custom pattern
+            3. If both a default and custom pattern have the same description, the
+               weight override applies ONLY to the default pattern (custom gets its
+               original weight from the policy definition)
+
+        Custom Pattern Same Description as Default:
+            If a custom pattern has the same description as a default pattern:
+            - The default pattern appears first with its weight (possibly overridden)
+            - The custom pattern appears after with its original weight from definition
+            - Both patterns will be checked during analysis
+            - This allows users to add more specific patterns alongside defaults
         """
         from markdown_ingress.core.security import SecurityAnalyzer
 
@@ -304,7 +328,12 @@ class PolicyEngine:
             "allow_external_resources": self.policy.allow_external_resources,
             "custom_pattern_weights": dict(self.policy.custom_pattern_weights),
             "custom_patterns": [
-                {"pattern": p.pattern, "weight": p.weight, "description": p.description, "flags": p.flags}
+                {
+                    "pattern": p.pattern,
+                    "weight": p.weight,
+                    "description": p.description,
+                    "flags": p.flags,
+                }
                 for p in self.policy.custom_patterns
             ],
         }

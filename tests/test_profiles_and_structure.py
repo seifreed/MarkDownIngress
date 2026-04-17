@@ -1,13 +1,16 @@
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from markdown_ingress import DomainPolicy, IngestConfig, compare_extractors, ingest
-from markdown_ingress.core.config import Config
 import markdown_ingress.api_server as api_server
+from markdown_ingress import DomainPolicy, IngestConfig, compare_extractors, ingest
 from markdown_ingress.api_server import app
-from markdown_ingress.models import FetchResult
-
+from markdown_ingress.core.config import Config
+from markdown_ingress.core.document_builder import build_policy_engine, process_fetched_content
+from markdown_ingress.core.orchestrator import IngestOrchestrator
+from markdown_ingress.models import FetchResult, SafeDocument
 
 FIXTURE_HTML = Path("tests/fixtures/technical_doc.html").read_text(encoding="utf-8")
 
@@ -95,6 +98,104 @@ def test_domain_policy_output_profile_replaces_base_profile_defaults():
     assert resolved.output_formats == ["markdown", "blocks", "chunks"]
 
 
+def test_domain_policy_output_profile_overrides_explicit_base_profile_fields():
+    config = IngestConfig(
+        mode="fast",
+        strict=False,
+        domain_policies=[
+            DomainPolicy(
+                domain="example.com",
+                output_profile="for_archive",
+            )
+        ],
+    )
+
+    resolved, matched = config.resolve_for_url("https://example.com/page")
+
+    assert matched is not None
+    assert resolved.output_profile == "for_archive"
+    assert resolved.mode == "render"
+    assert resolved.strict is True
+    assert resolved.chunking_strategy == "none"
+    assert resolved.output_formats == ["markdown", "blocks", "metadata", "security"]
+
+
+def test_domain_policy_scalar_override_still_wins_over_domain_output_profile():
+    config = IngestConfig(
+        mode="fast",
+        strict=False,
+        domain_policies=[
+            DomainPolicy(
+                domain="example.com",
+                output_profile="for_archive",
+                mode="fast",
+            )
+        ],
+    )
+
+    resolved, matched = config.resolve_for_url("https://example.com/page")
+
+    assert matched is not None
+    assert resolved.output_profile == "for_archive"
+    assert resolved.mode == "fast"
+    assert resolved.strict is True
+
+
+def test_build_policy_engine_preserves_warning_band_for_conflicting_thresholds():
+    engine = build_policy_engine(
+        "normal",
+        DomainPolicy(
+            domain="example.com",
+            block_threshold=0.2,
+            warn_threshold=0.4,
+        ),
+    )
+
+    assert engine.policy.block_threshold == 0.2
+    assert engine.policy.warn_threshold == 0.19
+    assert engine.get_action(0.19) == "warn"
+    assert engine.get_action(0.2) == "block"
+
+
+def test_build_policy_engine_clamps_warning_to_zero_when_block_is_zero():
+    engine = build_policy_engine(
+        "normal",
+        DomainPolicy(
+            domain="example.com",
+            block_threshold=0.0,
+            warn_threshold=0.1,
+        ),
+    )
+
+    assert engine.policy.block_threshold == 0.0
+    assert engine.policy.warn_threshold == 0.0
+    assert engine.get_action(0.0) == "block"
+
+
+def test_resolve_for_url_does_not_create_phantom_dom_attributes():
+    """Bug fix: DomainPolicy DOM fields must not be set as dynamic IngestConfig attributes."""
+    config = IngestConfig(
+        domain_policies=[
+            DomainPolicy(
+                domain="example.com",
+                allowed_tags=["article", "p"],
+                blocked_tags=["form"],
+                blocked_selectors=[".ads"],
+                unwrap_selectors=["div.wrapper"],
+                mode="fast",
+            )
+        ],
+    )
+    resolved, matched = config.resolve_for_url("https://example.com/page")
+    assert matched is not None
+    assert resolved.mode == "fast"
+    # These DomainPolicy-specific fields must NOT exist on IngestConfig
+    assert not hasattr(resolved, "allowed_tags")
+    assert not hasattr(resolved, "blocked_tags")
+    assert not hasattr(resolved, "blocked_selectors")
+    assert not hasattr(resolved, "unwrap_selectors")
+
+
 def test_output_profile_preserves_explicit_values_even_when_equal_to_defaults():
     rag = IngestConfig(output_profile="rag_chunkable", extract_blocks=False).apply_output_profile()
     search = IngestConfig(output_profile="for_search", mode="auto").apply_output_profile()
@@ -118,6 +219,66 @@ def test_legacy_config_preserves_explicit_default_like_output_overrides():
     assert resolved.extract_blocks is False
 
 
+def test_orchestrator_legacy_overrides_become_explicit(monkeypatch):
+    captured = {}
+
+    class DummyIngestUseCase:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, url, config):
+            captured["config"] = config
+            return SafeDocument(
+                markdown="ok",
+                metadata={},
+                token_estimate=1,
+                content_hash="hash",
+                injection_score=0.0,
+            )
+
+    monkeypatch.setattr("markdown_ingress.application.use_cases.IngestUseCase", DummyIngestUseCase)
+
+    orchestrator = IngestOrchestrator()
+    config = IngestConfig(output_profile="for_archive")
+
+    orchestrator.execute("https://example.com/page", config=config, strict=False)
+
+    runtime_config = captured["config"]
+    assert "strict" in runtime_config.explicit_keys()
+    resolved, _ = runtime_config.resolve_for_url("https://example.com/page")
+    assert resolved.strict is False
+
+
+def test_metadata_tracks_requested_and_emitted_output_formats_separately():
+    config = IngestConfig(
+        mode="fast",
+        extract_blocks=False,
+        extract_metadata=False,
+        include_security_explanation=False,
+    )
+    config.output_formats = ["markdown", "blocks"]
+    document = process_fetched_content(
+        SimpleNamespace(
+            extractor=None,
+            md_converter=None,
+            hasher=None,
+            token_estimator=None,
+            scorer=None,
+            metadata_extractor=None,
+            link_analyzer=None,
+        ),
+        _make_fetch_result(
+            "https://docs.example.com/page",
+            "<html><body><article><h1>Doc</h1><p>Content</p></article></body></html>",
+        ),
+        config,
+    )
+
+    assert document.structured_blocks is None
+    assert document.metadata["output_formats"] == ["markdown", "blocks"]
+    assert document.metadata["emitted_output_formats"] == ["markdown"]
+
+
 def test_markdown_preserves_code_fences_and_tables(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.core.fetcher.Fetcher.fetch_sync",
@@ -137,6 +298,27 @@ def test_compare_extractors_returns_readability_baseline():
     assert result["readability"]["length"] > 0
     assert "trafilatura" in result
     assert "heading_count" in result["readability"]
+
+
+def test_compare_extractors_handles_empty_html():
+    result = compare_extractors("")
+
+    assert "readability" in result
+    assert result["readability"]["available"] is False
+    assert result["readability"]["markdown"] == ""
+
+
+def test_compare_extractors_handles_trafilatura_runtime_failure(monkeypatch):
+    fake_module = SimpleNamespace(
+        extract=lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    monkeypatch.setitem(sys.modules, "trafilatura", fake_module)
+
+    result = compare_extractors(FIXTURE_HTML)
+
+    assert result["trafilatura"]["available"] is False
+    assert result["trafilatura"]["markdown"] == ""
+    assert result["trafilatura"]["notes"] == ["trafilatura failed: RuntimeError: boom"]
 
 
 def test_versioned_api_and_batch_jobs(monkeypatch):
@@ -211,7 +393,11 @@ def test_versioned_api_and_batch_jobs(monkeypatch):
             return stub_job
 
     monkeypatch.setattr(api_server, "_get_job_queue", lambda: StubQueue())
-    monkeypatch.setattr(api_server, "_get_job_record", lambda job_id: stub_job if job_id == stub_job.job_id else None)
+    monkeypatch.setattr(
+        api_server,
+        "_get_job_record",
+        lambda job_id: stub_job if job_id == stub_job.job_id else None,
+    )
 
     accepted = client.post(
         "/api/v1/jobs/batch",

@@ -1,0 +1,90 @@
+name: URL Baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_baseline_limit:
+        description: "Number of dataset URLs to test (0 = full dataset)"
+        required: true
+        default: "1000"
+      python_version:
+        description: "Python version"
+        required: true
+        default: "3.11"
+  schedule:
+    - cron: "0 3 * * 1"
+
+jobs:
+  baseline:
+    name: URL Dataset Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      BASELINE_LIMIT: ${{ github.event.inputs.url_baseline_limit || '1000' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version || '3.11' }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run URL dataset baseline
+        run: |
+          pytest -q -o addopts='' tests/test_url_dataset_baseline.py \
+            --run-url-baseline \
+            --url-baseline-limit "${BASELINE_LIMIT}"
+
+      - name: Locate latest baseline run
+        id: baseline_run
+        run: |
+          latest_run=$(ls -1dt artifacts/url_dataset_baseline/run_* | head -n 1)
+          echo "latest_run=${latest_run}" >> "$GITHUB_OUTPUT"
+          echo "Latest run: ${latest_run}"
+
+      - name: Publish baseline summary
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["SUMMARY_PATH"])
+          data = json.loads(summary_path.read_text(encoding="utf-8"))
+          lines = [
+              "## URL Baseline Summary",
+              "",
+              f"- Dataset: `{data['dataset_url']}`",
+              f"- Requested limit: `{data['requested_limit']}`",
+              f"- Processed: `{data['processed']}`",
+              f"- OK: `{data['ok']}`",
+              f"- Warnings: `{data['warnings']}`",
+              f"- Errors: `{data['errors']}`",
+              "",
+              "### Top error types",
+          ]
+          for key, value in sorted(data["error_types"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
+              lines.append(f"- `{key}`: `{value}`")
+          lines.extend(["", "### Top warning types"])
+          for key, value in sorted(data["warning_types"].items(), key=lambda kv: kv[1], reverse=True)[:10]:
+              lines.append(f"- `{key}`: `{value}`")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
+        env:
+          SUMMARY_PATH: ${{ steps.baseline_run.outputs.latest_run }}/summary.json
+
+      - name: Upload baseline artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: url-baseline-${{ github.run_id }}
+          path: ${{ steps.baseline_run.outputs.latest_run }}
+          retention-days: 14

@@ -3,9 +3,10 @@ Data models for MarkDownIngress
 """
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 _MISSING = object()
 
@@ -14,8 +15,8 @@ class CaseInsensitiveHeaders(dict[str, str]):
     """Dictionary-like header container with case-insensitive string lookups."""
 
     @staticmethod
-    def _normalize_key(key: object) -> object:
-        return key.lower() if isinstance(key, str) else key
+    def _normalize_key(key: str) -> str:
+        return key.lower()
 
     def __init__(self, initial: Mapping[str, str] | None = None, **kwargs: str) -> None:
         super().__init__()
@@ -25,6 +26,8 @@ class CaseInsensitiveHeaders(dict[str, str]):
             self.update(kwargs)
 
     def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
         return super().__contains__(self._normalize_key(key))
 
     def __getitem__(self, key: str) -> str:
@@ -36,7 +39,7 @@ class CaseInsensitiveHeaders(dict[str, str]):
     def __delitem__(self, key: str) -> None:
         super().__delitem__(self._normalize_key(key))
 
-    def get(self, key: str, default: str | None = None) -> str | None:
+    def get(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
         return super().get(self._normalize_key(key), default)
 
     def pop(self, key: str, default: Any = _MISSING) -> Any:
@@ -45,11 +48,16 @@ class CaseInsensitiveHeaders(dict[str, str]):
             return super().pop(normalized)
         return super().pop(normalized, default)
 
-    def setdefault(self, key: str, default: str | None = None) -> str | None:
+    def setdefault(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
         normalized = self._normalize_key(key)
-        return super().setdefault(normalized, default)
+        if normalized in self:
+            return super().__getitem__(normalized)
+        if default is None:
+            return None
+        super().__setitem__(normalized, default)
+        return default
 
-    def update(self, other: Mapping[str, str] | None = None, **kwargs: str) -> None:
+    def update(self, other: Mapping[str, str] | None = None, **kwargs: str) -> None:  # type: ignore[override]
         if other:
             for key, value in other.items():
                 self[key] = value
@@ -88,9 +96,7 @@ class SafeDocument:
                 f"injection_score must be between 0.0 and 1.0, got {self.injection_score}"
             )
         if self.token_estimate < 0:
-            raise ValueError(
-                f"token_estimate must be non-negative, got {self.token_estimate}"
-            )
+            raise ValueError(f"token_estimate must be non-negative, got {self.token_estimate}")
 
 
 @dataclass

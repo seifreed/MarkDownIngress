@@ -79,3 +79,12 @@ def test_extractor_sanitizes_control_characters_before_readability():
     assert "\x00" not in extraction.html
     assert "\x01" not in extraction.html
     assert "Hello" in extraction.text_content
+
+
+def test_markdown_converter_preserves_blank_lines_inside_code_blocks():
+    converter = MarkdownConverter()
+    html = "<pre>line1\n\n\nline2</pre>"
+
+    markdown = converter.convert(html)
+
+    assert "line1\n\n\nline2" in markdown

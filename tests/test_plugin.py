@@ -2,6 +2,7 @@
 Tests for plugin system
 """
 
+import sys
 import tempfile
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from markdown_ingress.core.plugin import Plugin, PluginInfo, PluginLoader
 
 class TestPlugin(Plugin):
     """Test plugin implementation"""
+
     __test__ = False
 
     def __init__(self):
@@ -100,6 +102,74 @@ class MyCustomPlugin(Plugin):
 
             patterns = loader.get_all_patterns()
             assert "custom pattern" in patterns
+
+    def test_load_from_directory_is_deterministic_by_filename(self):
+        """Load plugins from directory in filename order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Path(tmpdir) / "b_plugin.py"
+            second = Path(tmpdir) / "a_plugin.py"
+            first.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class BPlugin(Plugin):
+    def get_patterns(self):
+        return ['pattern-b']
+""".strip())
+            second.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class APlugin(Plugin):
+    def get_patterns(self):
+        return ['pattern-a']
+""".strip())
+
+            loader = PluginLoader()
+            count = loader.load_from_directory(tmpdir)
+
+            assert count == 2
+            assert loader.get_all_patterns() == ["pattern-a", "pattern-b"]
+
+    def test_load_from_directory_ignores_imported_plugin_subclasses(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            helper = Path(tmpdir) / "helper_plugin.py"
+            main = Path(tmpdir) / "main_plugin.py"
+            helper.write_text("""
+from markdown_ingress.core.plugin import Plugin, PluginInfo
+
+
+class ImportedPlugin(Plugin):
+    def __init__(self):
+        super().__init__()
+        self.info = PluginInfo(name="ImportedPlugin", version="1.0.0", description="imported")
+
+    def get_patterns(self):
+        return ["imported-pattern"]
+""".strip())
+            main.write_text("""
+from helper_plugin import ImportedPlugin
+from markdown_ingress.core.plugin import Plugin, PluginInfo
+
+
+class RealPlugin(Plugin):
+    def __init__(self):
+        super().__init__()
+        self.info = PluginInfo(name="RealPlugin", version="1.0.0", description="real")
+
+    def get_patterns(self):
+        return ["real-pattern"]
+""".strip())
+
+            monkeypatch.syspath_prepend(tmpdir)
+            sys.modules.pop("helper_plugin", None)
+
+            loader = PluginLoader()
+            count = loader.load_from_directory(tmpdir)
+
+            assert count == 2
+            assert sorted(loader.plugins) == ["ImportedPlugin", "RealPlugin"]
+            assert loader.get_all_patterns() == ["imported-pattern", "real-pattern"]
 
     def test_plugin_already_loaded_error(self):
         """Loading same plugin twice raises error"""

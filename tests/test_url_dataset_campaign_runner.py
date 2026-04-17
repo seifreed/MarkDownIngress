@@ -6,16 +6,16 @@ import asyncio
 import json
 from pathlib import Path
 
-from markdown_ingress.core.fetcher import UnsupportedContentTypeError
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.core.fetcher import UnsupportedContentTypeError
 from tests.url_dataset_campaign import (
     CampaignScenario,
+    _load_availability_pool,
     availability_pool_path,
     classify_error,
     collect_available_urls,
     diversify_urls_by_host,
     run_campaign,
-    _load_availability_pool,
 )
 
 
@@ -50,14 +50,19 @@ def test_classify_error_maps_playwright_err_failed_to_navigation_failed():
 
 
 def test_classify_error_preserves_non_html_exception_classification():
-    exc = UnsupportedContentTypeError("Unsupported content type for HTML ingestion: application/pdf")
+    exc = UnsupportedContentTypeError(
+        "Unsupported content type for HTML ingestion: application/pdf"
+    )
     assert classify_error(exc) == "dataset_non_html"
 
 
 def test_classify_error_maps_http_status_variants():
     assert classify_error(RuntimeError("Client error '401 Unauthorized'")) == "unauthorized"
     assert classify_error(RuntimeError("Client error '410 Gone'")) == "gone"
-    assert classify_error(RuntimeError("Client error '451 Unavailable For Legal Reasons'")) == "legal_block"
+    assert (
+        classify_error(RuntimeError("Client error '451 Unavailable For Legal Reasons'"))
+        == "legal_block"
+    )
     assert classify_error(RuntimeError("Server error '503 Service Unavailable'")) == "server_error"
 
 
@@ -179,7 +184,9 @@ def test_load_availability_pool_uses_latest_status_per_url(monkeypatch, tmp_path
 def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tests.url_dataset_campaign.output_dir", lambda: tmp_path)
 
-    async def fake_collect_available_urls(*, total_limit, concurrency, progress_callback=None, timeout=5.0):
+    async def fake_collect_available_urls(
+        *, total_limit, concurrency, progress_callback=None, timeout=5.0
+    ):
         urls = [f"https://good.example/{idx}" for idx in range(total_limit)]
         errors = {"available": total_limit}
         if progress_callback is not None:
@@ -191,7 +198,9 @@ def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
             )
         return urls, {}, errors, total_limit
 
-    monkeypatch.setattr("tests.url_dataset_campaign.collect_available_urls", fake_collect_available_urls)
+    monkeypatch.setattr(
+        "tests.url_dataset_campaign.collect_available_urls", fake_collect_available_urls
+    )
 
     async def fake_ingest_async(url: str, config):
         from types import SimpleNamespace
@@ -200,7 +209,12 @@ def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
             flags=[],
             removed_elements={},
             injection_score=0.0,
-            metadata={"mode": "fast", "status_code": 200, "fetch_time_ms": 1.0, "policy_action": "allow"},
+            metadata={
+                "mode": "fast",
+                "status_code": 200,
+                "fetch_time_ms": 1.0,
+                "policy_action": "allow",
+            },
             token_estimate=1,
         )
 

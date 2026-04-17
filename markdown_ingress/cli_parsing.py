@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from markdown_ingress import __version__
-from markdown_ingress.cli_support import load_domain_policies
-from markdown_ingress.core.config import Config, load_config
 from markdown_ingress.api_runtime import UNSET
+from markdown_ingress.cli_support import load_domain_policies
+from markdown_ingress.core.config import Config
 
 
 @dataclass
@@ -68,7 +68,9 @@ def prepare_ingest_params(args, runtime_config: Config | None = None):
     """Prepare parameters for ingest call."""
     if runtime_config is None:
         runtime_config = load_runtime_config(args)
-    runtime_ingest_config = runtime_config.to_ingest_config() if runtime_config is not None else None
+    runtime_ingest_config = (
+        runtime_config.to_ingest_config() if runtime_config is not None else None
+    )
     # Handle strict flag: distinguish between explicit False, explicit True, and not set
     # --strict sets strict=True, --permissive sets strict=False
     # If neither is set, use runtime_config.strict or None (let config resolution handle default)
@@ -158,7 +160,9 @@ def _validate_chunk_overlap(value):
     """Validate chunk overlap argument (shared between parsers)."""
     ivalue = int(value)
     if ivalue < 0 or ivalue > MAX_CHUNK_OVERLAP_CLI:
-        raise argparse.ArgumentTypeError(f"chunk-overlap must be between 0 and {MAX_CHUNK_OVERLAP_CLI}")
+        raise argparse.ArgumentTypeError(
+            f"chunk-overlap must be between 0 and {MAX_CHUNK_OVERLAP_CLI}"
+        )
     return ivalue
 
 
@@ -186,8 +190,12 @@ def add_common_ingest_args(parser):
     )
     # Metadata extraction: --metadata / --no-metadata (mutually exclusive)
     metadata_group = parser.add_mutually_exclusive_group()
-    metadata_group.add_argument("--metadata", action="store_true", help="Enable metadata extraction")
-    metadata_group.add_argument("--no-metadata", action="store_true", help="Disable metadata extraction")
+    metadata_group.add_argument(
+        "--metadata", action="store_true", help="Enable metadata extraction"
+    )
+    metadata_group.add_argument(
+        "--no-metadata", action="store_true", help="Disable metadata extraction"
+    )
     # Link extraction: --links / --no-links (mutually exclusive)
     links_group = parser.add_mutually_exclusive_group()
     links_group.add_argument("--links", action="store_true", help="Enable link extraction")
@@ -250,7 +258,9 @@ def add_common_ingest_args(parser):
     )
     parser.add_argument("--show-blocks", action="store_true", help="Show structured block summary")
     parser.add_argument("--show-chunks", action="store_true", help="Show chunk summary")
-    parser.add_argument("--show-observability", action="store_true", help="Show observability data in rich output")
+    parser.add_argument(
+        "--show-observability", action="store_true", help="Show observability data in rich output"
+    )
 
 
 def create_ingest_parser(subparsers):
@@ -273,8 +283,13 @@ def create_batch_parser(subparsers):
     strict_group.add_argument("--permissive", action="store_true", help="Disable strict mode")
     batch_parser.add_argument("--model", default=None, help="LLM model for token estimation")
     batch_parser.add_argument("--timeout", type=float, default=None, help="Request timeout per URL")
-    batch_parser.add_argument("--concurrent", type=int, default=None, help="Max concurrent requests")
+    batch_parser.add_argument(
+        "--concurrent", type=int, default=None, help="Max concurrent requests"
+    )
     batch_parser.add_argument("--json", action="store_true", help="Save results as JSON")
+    batch_parser.add_argument(
+        "--no-content", action="store_true", help="Hide markdown content in output"
+    )
     batch_parser.add_argument("--output", "-o", help="Output directory (markdown) or file (json)")
     batch_parser.add_argument(
         "--screenshot",
@@ -284,12 +299,18 @@ def create_batch_parser(subparsers):
     )
     # Metadata extraction: --metadata / --no-metadata (mutually exclusive)
     batch_metadata_group = batch_parser.add_mutually_exclusive_group()
-    batch_metadata_group.add_argument("--metadata", action="store_true", help="Enable metadata extraction")
-    batch_metadata_group.add_argument("--no-metadata", action="store_true", help="Disable metadata extraction")
+    batch_metadata_group.add_argument(
+        "--metadata", action="store_true", help="Enable metadata extraction"
+    )
+    batch_metadata_group.add_argument(
+        "--no-metadata", action="store_true", help="Disable metadata extraction"
+    )
     # Link extraction: --links / --no-links (mutually exclusive)
     batch_links_group = batch_parser.add_mutually_exclusive_group()
     batch_links_group.add_argument("--links", action="store_true", help="Enable link extraction")
-    batch_links_group.add_argument("--no-links", action="store_true", help="Disable link extraction")
+    batch_links_group.add_argument(
+        "--no-links", action="store_true", help="Disable link extraction"
+    )
     # Advanced security: --advanced-security / --no-advanced-security (mutually exclusive)
     batch_advanced_sec_group = batch_parser.add_mutually_exclusive_group()
     batch_advanced_sec_group.add_argument(
@@ -338,21 +359,31 @@ def create_batch_parser(subparsers):
         default=None,
         help=f"Chunk overlap in characters (0-{MAX_CHUNK_OVERLAP_CLI})",
     )
-    batch_parser.add_argument("--render-cost-budget", type=int, default=None, help="Render cost budget")
-    batch_parser.add_argument("--domain-policy-file", help="JSON file with one or more domain policies")
+    batch_parser.add_argument(
+        "--render-cost-budget", type=int, default=None, help="Render cost budget"
+    )
+    batch_parser.add_argument(
+        "--domain-policy-file", help="JSON file with one or more domain policies"
+    )
     batch_parser.add_argument(
         "--domain-policy",
         action="append",
         default=[],
         help="Inline JSON domain policy; may be repeated",
     )
-    batch_parser.add_argument("--show-blocks", action="store_true", help="Show structured block summary")
+    batch_parser.add_argument(
+        "--show-blocks", action="store_true", help="Show structured block summary"
+    )
     batch_parser.add_argument("--show-chunks", action="store_true", help="Show chunk summary")
-    batch_parser.add_argument("--show-observability", action="store_true", help="Show observability data in rich output")
+    batch_parser.add_argument(
+        "--show-observability", action="store_true", help="Show observability data in rich output"
+    )
 
 
 def create_compare_parser(subparsers):
-    compare_parser = subparsers.add_parser("compare", help="Compare extractors on a local HTML file")
+    compare_parser = subparsers.add_parser(
+        "compare", help="Compare extractors on a local HTML file"
+    )
     compare_parser.add_argument("file", help="HTML file to compare")
     compare_parser.add_argument("--model", default=None, help="LLM model for token estimation")
     compare_parser.add_argument("--json", action="store_true", help="Output as JSON")
@@ -364,7 +395,11 @@ def create_benchmark_parser(subparsers):
     benchmark_parser.add_argument("--model", default=None, help="LLM model for token estimation")
     benchmark_parser.add_argument("--iterations", type=int, default=3, help="Iterations per URL")
     benchmark_parser.add_argument("--output", "-o", help="Write report to file")
-    benchmark_parser.add_argument("--compare-extractors", action="store_true", help="Run extractor comparison when HTML is available")
+    benchmark_parser.add_argument(
+        "--compare-extractors",
+        action="store_true",
+        help="Run extractor comparison when HTML is available",
+    )
     benchmark_parser.add_argument("--render", action="store_true", help="Force render mode")
     benchmark_parser.add_argument("--fast", action="store_true", help="Force fast mode")
 

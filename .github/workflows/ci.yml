@@ -37,21 +37,18 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev,render,api]"
-    
+        pip install -e ".[dev]"
+
     - name: Install Playwright browsers
       run: playwright install chromium
-      continue-on-error: true
     
     - name: Run ruff (linting)
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       run: ruff check .
-      continue-on-error: true
     
     - name: Run mypy (type checking)
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       run: mypy markdown_ingress
-      continue-on-error: true
     
     - name: Run pytest with coverage
       run: pytest --cov=markdown_ingress --cov-report=term-missing --cov-report=xml
@@ -86,11 +83,9 @@ jobs:
     
     - name: Run bandit security linter
       run: bandit -r markdown_ingress/ -ll
-      continue-on-error: true
-    
+
     - name: Run safety check
       run: safety check
-      continue-on-error: true
 
   build:
     name: Build Distribution
@@ -116,11 +111,19 @@ jobs:
     
     - name: Check package
       run: twine check dist/*
-    
+
+    - name: Smoke test wheel install
+      run: |
+        python -m venv .pkg-smoke
+        . .pkg-smoke/bin/activate
+        python -m pip install --upgrade pip
+        pip install dist/*.whl
+        python -c "import markdown_ingress; print(markdown_ingress.__version__)"
+        markdown-ingress --version
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dist-${{ github.sha }}
         path: dist/
         retention-days: 30
-

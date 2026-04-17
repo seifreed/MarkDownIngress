@@ -2,6 +2,7 @@
 MarkDownIngress - Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines
 """
 
+from markdown_ingress.adapters.extractors.comparison import compare_extractors
 from markdown_ingress.api import (
     generate_security_report,
     ingest,
@@ -10,7 +11,6 @@ from markdown_ingress.api import (
     ingest_many_async,
     retry_ingest,
 )
-from markdown_ingress.adapters.extractors.comparison import compare_extractors
 from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, RenderConfig
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult

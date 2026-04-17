@@ -20,6 +20,7 @@ from .browser_config import (
     TIMEZONES,
     ULTRA_STEALTH_ARGS,
     AdvancedStealthConfig,
+    StealthConfigGenerator,
     get_advanced_context_options,
     get_advanced_stealth_config,
 )
@@ -35,6 +36,8 @@ from .js_injection import (
     STEALTH_JS_INJECTION,
     STEALTH_JS_POST_LOAD,
     inject_stealth,
+    inject_stealth_post_nav,
+    inject_stealth_pre_nav,
 )
 
 # Backward-compatible aliases used by renderer.py legacy imports.
@@ -77,6 +80,7 @@ def get_context_options(config: StealthConfig | None = None) -> dict:
         "timezone_id": config.timezone,
     }
 
+
 __all__ = [
     # Legacy compatibility
     "StealthConfig",
@@ -85,6 +89,7 @@ __all__ = [
     "get_context_options",
     # Config dataclass
     "AdvancedStealthConfig",
+    "StealthConfigGenerator",
     # Constants - Browser config
     "ULTRA_STEALTH_ARGS",
     "ADVANCED_USER_AGENTS",
@@ -102,4 +107,6 @@ __all__ = [
     "get_advanced_context_options",
     # Functions - JavaScript injection
     "inject_stealth",
+    "inject_stealth_pre_nav",
+    "inject_stealth_post_nav",
 ]

@@ -33,7 +33,7 @@ def test_remove_unwanted_tags(html_with_noise):
 
     # Should track some removed tags (readability removes script/style before we see them)
     # So we mainly check that nav/aside/footer are handled
-    assert len(result.removed_tags) > 0 or True  # Readability might already clean them
+    assert isinstance(result.removed_tags, dict)  # Validate return type
 
     # Main content should be present
     assert "Main Article" in result.text_content
@@ -63,3 +63,82 @@ def test_extraction_preserves_structure():
     assert "Title" in result.text_content
     assert "Section 1" in result.text_content
     assert "Section 2" in result.text_content
+
+
+def test_sanitize_dangerous_svg_data_urls_and_srcset():
+    extractor = Extractor()
+    html = """
+    <html>
+    <body>
+        <img
+            src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+            srcset="https://example.com/a.png 1x, data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg> 2x"
+        >
+        <div style="background-image:url(javascript:alert(1))">X</div>
+    </body>
+    </html>
+    """
+
+    result = extractor.extract(html, "https://test.com")
+
+    assert "data:image/svg+xml" not in result.html
+    assert "srcset" not in result.html
+    assert "style=" not in result.html
+    assert "javascript:alert(1)" not in result.html
+
+
+def test_visible_absolute_positioned_content_is_preserved():
+    extractor = Extractor()
+    html = """
+    <html>
+    <body>
+        <div class="not-hidden">Visible via class</div>
+        <div style="position:absolute; top:10px; left:10px">Visible absolute</div>
+        <div style="position:absolute; left:-9999px">Hidden absolute</div>
+        <div style="opacity:0.5">Semi visible</div>
+        <div style="opacity:0">Hidden opacity</div>
+        <div class="hidden">Hidden class</div>
+        <p>Keep me</p>
+    </body>
+    </html>
+    """
+
+    result = extractor.extract(html, "https://test.com")
+
+    assert "Visible via class" in result.text_content
+    assert "Visible absolute" in result.text_content
+    assert "Hidden absolute" not in result.text_content
+    assert "Semi visible" in result.text_content
+    assert "Hidden opacity" not in result.text_content
+    assert "Hidden class" not in result.text_content
+
+
+def test_hidden_styles_with_spacing_are_removed():
+    extractor = Extractor()
+    html = """
+    <html>
+    <body>
+        <div style="display : none">Hidden display</div>
+        <div style="visibility : hidden">Hidden visibility</div>
+        <div style="content-visibility : hidden">Hidden content visibility</div>
+        <div style="clip-path : inset(100%)">Hidden clip path</div>
+        <div style="transform : scale(0)">Hidden transform</div>
+        <div style="left : -9999px">Hidden offset</div>
+        <div style="color : transparent">Hidden color</div>
+        <div style="display:none">Hidden display normal</div>
+        <p>Keep me</p>
+    </body>
+    </html>
+    """
+
+    result = extractor.extract(html, "https://test.com")
+
+    assert "Hidden display" not in result.text_content
+    assert "Hidden visibility" not in result.text_content
+    assert "Hidden content visibility" not in result.text_content
+    assert "Hidden clip path" not in result.text_content
+    assert "Hidden transform" not in result.text_content
+    assert "Hidden offset" not in result.text_content
+    assert "Hidden color" not in result.text_content
+    assert "Hidden display normal" not in result.text_content
+    assert "Keep me" in result.text_content

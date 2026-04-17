@@ -71,7 +71,11 @@ def test_sqlite_job_queue_delivers_real_webhook(tmp_path: Path):
             notifier=HTTPWebhookNotifier(max_retries=2, retry_delay_seconds=0.0),
             allow_local_webhooks=True,  # Allow localhost for testing
         )
-        job = queue.submit(lambda: {"ok": True, "source": "integration"}, webhook_url=webhook_url, start_immediately=True)
+        job = queue.submit(
+            lambda: {"ok": True, "source": "integration"},
+            webhook_url=webhook_url,
+            start_immediately=True,
+        )
         stored = queue.get(job.job_id)
         assert stored is not None
         assert stored.status == "completed"

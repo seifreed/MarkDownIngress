@@ -20,12 +20,14 @@ class BatchProcessor:
 
     def __init__(
         self,
-        mode: Literal["fast", "render", "auto"] = "fast",
+        mode: Literal["fast", "render", "auto"] = "auto",
         strict: bool = True,
         model: str = "gpt-4",
         timeout: float = 30.0,
         max_concurrent: int = 5,
         on_progress: Callable[[int, int, str], None] | None = None,
+        base_config: IngestConfig | None = None,
+        explicit_overrides: frozenset[str] | None = None,
     ):
         self.mode = mode
         self.strict = strict
@@ -33,17 +35,34 @@ class BatchProcessor:
         self.timeout = timeout
         self.max_concurrent = max_concurrent
         self.on_progress = on_progress
+        self._base_config = base_config.clone() if base_config is not None else None
+        self._explicit_overrides = frozenset(explicit_overrides or ())
         self._batch_use_case = BatchIngestUseCase(
             ingest_use_case=IngestUseCase(playwright_available=RENDERER_AVAILABLE)
         )
 
     def _build_config(self) -> IngestConfig:
-        return IngestConfig(
-            mode=self.mode,
-            strict=self.strict,
-            model=self.model,
-            timeout=self.timeout,
-        )
+        if self._base_config is None:
+            return IngestConfig(
+                mode=self.mode,
+                strict=self.strict,
+                model=self.model,
+                timeout=self.timeout,
+            )
+
+        config = self._base_config.clone()
+        explicit_keys = set(config.explicit_keys())
+        if "mode" in self._explicit_overrides:
+            config.mode = self.mode
+        if "strict" in self._explicit_overrides:
+            config.strict = self.strict
+        if "model" in self._explicit_overrides:
+            config.model = self.model
+        if "timeout" in self._explicit_overrides:
+            config.timeout = self.timeout
+        explicit_keys.update(self._explicit_overrides)
+        object.__setattr__(config, "_explicit_keys", frozenset(explicit_keys))
+        return config.validate()
 
     async def process_url(self, url: str) -> SafeDocument:
         """Process a single URL asynchronously through the application layer.
@@ -64,6 +83,8 @@ class BatchProcessor:
 
     async def process_batch_async(self, urls: list[str]) -> BatchResult:
         """Process multiple URLs concurrently while preserving input order."""
+        if self.max_concurrent < 1:
+            raise ValueError("max_concurrent must be >= 1")
         if self._uses_default_process_url():
             return await self._batch_use_case.execute(
                 urls,
@@ -75,19 +96,49 @@ class BatchProcessor:
         total = len(urls)
         documents: list[SafeDocument | None] = [None] * total
         errors: list[BatchErrorItem] = []
+        errors_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(self.max_concurrent)
+        progress_lock = asyncio.Lock()
+        completed = 0
+
+        async def report_completion(url: str) -> None:
+            nonlocal completed
+            if self.on_progress is None:
+                return
+            async with progress_lock:
+                completed += 1
+                self.on_progress(completed, total, url)
 
         async def process_one(index: int, url: str) -> bool:
             async with semaphore:
-                if self.on_progress is not None:
-                    self.on_progress(index + 1, total, url)
                 try:
-                    documents[index] = await self.process_url(url)
+                    document = await self.process_url(url)
+                    if document is None:
+                        raise TypeError("process_url() returned None instead of SafeDocument")
+                    if not isinstance(document, SafeDocument):
+                        raise TypeError(
+                            "process_url() returned "
+                            f"{type(document).__name__} instead of SafeDocument"
+                        )
+                    documents[index] = document
+                    await report_completion(url)
                     return True
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    errors.append(BatchErrorItem(index=index, url=url, error=str(exc)))
+                    import traceback
+
+                    async with errors_lock:
+                        errors.append(
+                            BatchErrorItem(
+                                index=index,
+                                url=url,
+                                error=str(exc),
+                                error_type=type(exc).__name__,
+                                traceback=traceback.format_exc(),
+                            )
+                        )
+                    await report_completion(url)
                     return False
 
         tasks = [asyncio.create_task(process_one(index, url)) for index, url in enumerate(urls)]

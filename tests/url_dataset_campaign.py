@@ -6,19 +6,20 @@ import asyncio
 import json
 import urllib.request
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlsplit
 
+from markdown_ingress import ingest_async
 from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.fetcher import Fetcher, UnsupportedContentTypeError
 from markdown_ingress.core.orchestrator import get_ingest_stats, reset_ingest_stats
 from markdown_ingress.models import SafeDocument
-from markdown_ingress import ingest_async
 
 DATASET_URL = "https://raw.githubusercontent.com/ada-url/url-dataset/refs/heads/main/out.txt"
 REPLACEABLE_ERROR_CLASSES = {
@@ -348,7 +349,10 @@ def classify_error(exc: Exception) -> str:
         return "navigation_failed"
     if "name or service not known" in message or "nodename nor servname" in message:
         return "dataset_invalid_host"
-    if "unsupportedprotocol" in type(exc).__name__.lower() or "request url is missing an 'http://' or 'https://'" in message:
+    if (
+        "unsupportedprotocol" in type(exc).__name__.lower()
+        or "request url is missing an 'http://' or 'https://'" in message
+    ):
         return "dataset_unsupported_protocol"
     if "certificate" in message or "ssl" in message:
         return "ssl"
@@ -427,7 +431,12 @@ async def collect_available_urls(
             selected_count=min(len(available_from_cache), total_limit),
         )
     if len(available_from_cache) >= total_limit:
-        return available_from_cache[:total_limit], dropped_url_types, cached_status_counts, len(cached_statuses)
+        return (
+            available_from_cache[:total_limit],
+            dropped_url_types,
+            cached_status_counts,
+            len(cached_statuses),
+        )
 
     available: list[str] = list(available_from_cache)
     availability_error_types: Counter[str] = Counter(cached_status_counts)
@@ -450,7 +459,7 @@ async def collect_available_urls(
                 return url, classify_error(exc)
 
     for start in range(0, len(unchecked), max(32, concurrency * 2)):
-        batch = unchecked[start:start + max(32, concurrency * 2)]
+        batch = unchecked[start : start + max(32, concurrency * 2)]
         results = await asyncio.gather(*(check_url(url) for url in batch))
         records: list[dict[str, str]] = []
         for url, error_class in results:
@@ -619,7 +628,9 @@ def run_campaign(
             for key, value in summary.get("warning_types", {}).items():
                 campaign_warning_types[key] += int(value)
 
-    def write_progress(current_scenario: str, completed_in_scenario: int, total_in_scenario: int) -> None:
+    def write_progress(
+        current_scenario: str, completed_in_scenario: int, total_in_scenario: int
+    ) -> None:
         payload = {
             "run_dir": str(run_dir),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -675,16 +686,27 @@ def run_campaign(
         warning_types: Counter[str] = Counter()
         error_types: Counter[str] = Counter()
         completed = completed_indexes(warnings_file) | completed_indexes(errors_file)
-        pending = [(index, url) for index, url in enumerate(urls_for_scenario) if index not in completed]
-        scenario_concurrency = max(1, min(concurrency, scenario.max_concurrency or concurrency, batch_size))
+        pending = [
+            (index, url) for index, url in enumerate(urls_for_scenario) if index not in completed
+        ]
+        scenario_concurrency = max(
+            1, min(concurrency, scenario.max_concurrency or concurrency, batch_size)
+        )
         semaphore = asyncio.Semaphore(scenario_concurrency)
 
         existing_summary = load_existing_scenario_summary(scenario)
         if existing_summary is not None:
             counts = existing_summary.get("counts", {})
             scenario_counts.update({key: int(value) for key, value in counts.items()})
-            warning_types.update({key: int(value) for key, value in existing_summary.get("warning_types", {}).items()})
-            error_types.update({key: int(value) for key, value in existing_summary.get("error_types", {}).items()})
+            warning_types.update(
+                {
+                    key: int(value)
+                    for key, value in existing_summary.get("warning_types", {}).items()
+                }
+            )
+            error_types.update(
+                {key: int(value) for key, value in existing_summary.get("error_types", {}).items()}
+            )
         else:
             scenario_counts["processed"] = len(completed)
 
@@ -753,14 +775,16 @@ def run_campaign(
                                 "extract_blocks": config.extract_blocks,
                                 "chunking_strategy": config.chunking_strategy,
                                 "include_observability": config.include_observability,
-                                "domain_policies": [policy.domain for policy in config.domain_policies],
+                                "domain_policies": [
+                                    policy.domain for policy in config.domain_policies
+                                ],
                             },
                         }
                     )
 
         try:
             for start in range(0, len(pending), batch_size):
-                batch = pending[start:start + batch_size]
+                batch = pending[start : start + batch_size]
                 await asyncio.gather(*(process_wrapped(index, url) for index, url in batch))
                 completed_now = len(completed) + min(start + len(batch), len(pending))
                 write_progress(scenario.name, completed_now, len(urls_for_scenario))
@@ -817,7 +841,9 @@ def run_campaign(
         "counts": _counts_payload(campaign_counts),
         "warning_types": dict(campaign_warning_types),
         "error_types": dict(campaign_error_types),
-        "scenario_allocations": {name: len(urls_for_scenario) for name, urls_for_scenario in allocation.items()},
+        "scenario_allocations": {
+            name: len(urls_for_scenario) for name, urls_for_scenario in allocation.items()
+        },
         "scenario_summaries": scenario_summaries,
         "ingest_stats": get_ingest_stats(),
     }

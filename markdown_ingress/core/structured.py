@@ -4,10 +4,7 @@ Structured extraction helpers for block-level and chunk-level outputs.
 
 from __future__ import annotations
 
-import re
-from dataclasses import asdict
-
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
 
 from markdown_ingress.core.hashing import Hasher
 from markdown_ingress.core.tokens import TokenEstimator
@@ -43,21 +40,32 @@ def render_code_fence(code: str, language: str | None = None) -> str:
     return f"{'`' * fence_backticks}{info}{info_suffix}\n{normalized}\n{'`' * fence_backticks}\n"
 
 
-def render_markdown_table(rows: list[list[str]]) -> str:
+def render_markdown_table(rows: list[list[str]], *, has_header: bool = True) -> str:
     """Render a markdown table from normalized rows."""
     if not rows:
         return ""
     width = max(len(row) for row in rows)
     normalized_rows = [row + [""] * (width - len(row)) for row in rows]
-    header = normalized_rows[0]
     divider = ["---"] * width
-    body = normalized_rows[1:]
+    if has_header:
+        header = normalized_rows[0]
+        body = normalized_rows[1:]
+    else:
+        header = [""] * width
+        body = normalized_rows
     lines = [
-        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(_escape_markdown_table_cell(cell) for cell in header) + " |",
         "| " + " | ".join(divider) + " |",
     ]
-    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    lines.extend(
+        "| " + " | ".join(_escape_markdown_table_cell(cell) for cell in row) + " |" for row in body
+    )
     return "\n".join(lines) + "\n"
+
+
+def _escape_markdown_table_cell(cell: str) -> str:
+    """Escape table cell content so pipes and backslashes do not break columns."""
+    return cell.replace("\\", "\\\\").replace("|", "\\|")
 
 
 class HTMLStructureExtractor:
@@ -77,6 +85,7 @@ class HTMLStructureExtractor:
         "ul": ("list", None),
         "ol": ("list", None),
     }
+    CONTAINER_TAGS = {"pre", "table", "ul", "ol", "blockquote", "li", "td", "th"}
 
     def __init__(self, hasher: Hasher | None = None):
         self.hasher = hasher or Hasher()
@@ -93,18 +102,19 @@ class HTMLStructureExtractor:
                 continue
             if element.name not in self.BLOCK_TAGS:
                 continue
-            if element.parent and isinstance(element.parent, Tag) and element.parent.name in {"pre", "table"}:
+            if self._is_within_container(element):
                 continue
 
             block_type, level = self.BLOCK_TAGS[element.name]
             markdown = self._to_markdown_block(element)
             text = self._to_text(element)
+            # Keep empty table/code blocks — they're structurally significant
             if not text.strip() and block_type not in {"table", "code"}:
                 continue
 
             block = StructuredBlock(
                 block_type=block_type,
-                text=text.strip(),
+                text=text if block_type == "code" else text.strip(),
                 markdown=markdown.strip() + "\n",
                 ordinal=ordinal,
                 level=level,
@@ -121,36 +131,88 @@ class HTMLStructureExtractor:
             level = int(element.name[1])
             return f"{'#' * level} {self._to_text(element).strip()}"
         if element.name == "blockquote":
-            lines = [line.strip() for line in self._to_text(element).splitlines() if line.strip()]
-            return "\n".join(f"> {line}" for line in lines)
+            blockquote_lines = [
+                line.strip() for line in self._to_text(element).splitlines() if line.strip()
+            ]
+            return "\n".join(f"> {line}" for line in blockquote_lines)
         if element.name == "pre":
             code = element.get_text("\n", strip=False)
             language = self._detect_code_language(element)
             return render_code_fence(code, language)
         if element.name == "table":
             rows = []
-            for tr in element.find_all("tr"):
-                row = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            first_row_has_th = False
+            for i, tr in enumerate(element.find_all("tr")):
+                cells = tr.find_all(["th", "td"])
+                row = [cell.get_text(" ", strip=True) for cell in cells]
                 if row:
+                    if i == 0 and any(cell.name == "th" for cell in cells):
+                        first_row_has_th = True
                     rows.append(row)
-            return render_markdown_table(rows)
+            return render_markdown_table(rows, has_header=first_row_has_th)
         if element.name in {"ul", "ol"}:
-            ordered = element.name == "ol"
-            lines: list[str] = []
-            for index, item in enumerate(element.find_all("li", recursive=False), start=1):
-                prefix = f"{index}." if ordered else "-"
-                lines.append(f"{prefix} {item.get_text(' ', strip=True)}")
-            return "\n".join(lines)
+            return self._render_list(element)
         return self._to_text(element).strip()
 
     def _to_text(self, element: Tag) -> str:
-        return element.get_text("\n" if element.name == "pre" else " ", strip=True)
+        if element.name == "pre":
+            return element.get_text("\n", strip=False).rstrip("\n")
+        if element.name in {"ul", "ol"}:
+            return self._render_list(element)
+        return element.get_text(" ", strip=True)
+
+    def _render_list(self, element: Tag) -> str:
+        lines: list[str] = []
+        self._append_list_lines(element, lines, depth=0)
+        return "\n".join(lines)
+
+    def _append_list_lines(self, element: Tag, lines: list[str], *, depth: int) -> None:
+        ordered = element.name == "ol"
+        indent = "  " * depth
+        for index, item in enumerate(element.find_all("li", recursive=False), start=1):
+            prefix = f"{index}." if ordered else "-"
+            direct_text, nested_lists = self._list_item_content(item)
+            line = f"{indent}{prefix}"
+            if direct_text:
+                line = f"{line} {direct_text}"
+            lines.append(line)
+            for nested_list in nested_lists:
+                self._append_list_lines(nested_list, lines, depth=depth + 1)
+
+    @staticmethod
+    def _list_item_content(item: Tag) -> tuple[str, list[Tag]]:
+        parts: list[str] = []
+        nested_lists: list[Tag] = []
+
+        def walk(node: PageElement) -> None:
+            if isinstance(node, NavigableString):
+                value = " ".join(str(node).split())
+                if value:
+                    parts.append(value)
+                return
+            if not isinstance(node, Tag):
+                return
+            if node.name in {"ul", "ol"}:
+                nested_lists.append(node)
+                return
+            for child in node.children:
+                walk(child)
+
+        for child in item.children:
+            walk(child)
+        return " ".join(parts), nested_lists
 
     def _detect_code_language(self, element: Tag) -> str | None:
         code = element.find("code")
         if code is None:
             return None
-        classes = code.get("class", [])
+        raw_classes = code.get("class")
+        if raw_classes is None:
+            return None
+        if isinstance(raw_classes, str):
+            classes: list[str] = [raw_classes]
+        else:
+            classes = list(raw_classes)
         for value in classes:
             if value.startswith("language-"):
                 return value.removeprefix("language-")
@@ -168,6 +230,19 @@ class HTMLStructureExtractor:
         if block_type == "code":
             metadata["language"] = self._detect_code_language(element)
         return metadata
+
+    def _is_within_container(self, element: Tag) -> bool:
+        """Return whether a block tag is nested inside a container we already serialize.
+
+        We emit aggregate blocks for containers like lists, tables, quotes, and code
+        blocks, so nested paragraphs/headings inside them would otherwise be duplicated.
+        """
+        parent = element.parent
+        while isinstance(parent, Tag):
+            if parent.name in self.CONTAINER_TAGS:
+                return True
+            parent = parent.parent
+        return False
 
 
 class ChunkBuilder:
@@ -207,7 +282,6 @@ class ChunkBuilder:
         groups = self._group_blocks(blocks, strategy, chunk_size)
         chunks: list[DocumentChunk] = []
         cursor = 0
-        _CHUNK_SEPARATOR = "\n\n"
 
         for index, group in enumerate(groups):
             # Build text without strip to preserve character offsets
@@ -218,9 +292,6 @@ class ChunkBuilder:
             structural_source = "\n".join(block.structural_hash for block in group)
             structural_hash = self.hasher.hash_content(structural_source)
 
-            # Account for inter-chunk separator in char offsets
-            if index > 0:
-                cursor += len(_CHUNK_SEPARATOR)
             char_start = cursor
             char_end = cursor + len(text)
 
@@ -245,25 +316,37 @@ class ChunkBuilder:
 
         # Apply chunk overlap by prepending text from previous chunk
         if chunk_overlap > 0 and len(chunks) > 1:
+            # Snapshot original texts before mutation to prevent overlap compounding:
+            # without this, chunk[i]'s overlap would include the overlap already
+            # prepended to chunk[i-1], causing cascading contamination.
+            original_texts = [chunk.text for chunk in chunks]
             for i in range(1, len(chunks)):
                 prev_chunk = chunks[i - 1]
                 curr_chunk = chunks[i]
 
-                # Get the last `chunk_overlap` characters from previous chunk
-                overlap_text = prev_chunk.text[-chunk_overlap:] if len(prev_chunk.text) > chunk_overlap else prev_chunk.text
+                # Get the last `chunk_overlap` characters from previous chunk's ORIGINAL text
+                prev_original = original_texts[i - 1]
+                overlap_text = (
+                    prev_original[-chunk_overlap:]
+                    if len(prev_original) > chunk_overlap
+                    else prev_original
+                )
 
                 # Prepend overlap to current chunk's text (for retrieval context)
                 # Note: We keep the original markdown - overlap is for retrieval context only
                 # Track the overlap prefix length for downstream processing
                 overlap_prefix_len = len(overlap_text) + len("\n\n---\n\n")
-                # Store original offsets before modification
+                # Store original offsets and text length before modification
                 curr_chunk.metadata["original_char_start"] = curr_chunk.char_start
                 curr_chunk.metadata["original_char_end"] = curr_chunk.char_end
+                original_text_len = len(curr_chunk.text)
                 curr_chunk.text = overlap_text + "\n\n---\n\n" + curr_chunk.text
                 curr_chunk.metadata["overlap_from"] = prev_chunk.chunk_id
                 curr_chunk.metadata["overlap_prefix_len"] = overlap_prefix_len
-                curr_chunk.metadata["emitted_char_start"] = 0
-                curr_chunk.metadata["emitted_char_end"] = len(curr_chunk.text)
+                curr_chunk.metadata["text_includes_overlap"] = True
+                curr_chunk.metadata["emitted_char_start"] = overlap_prefix_len
+                curr_chunk.metadata["emitted_char_end"] = overlap_prefix_len + original_text_len
+                curr_chunk.token_estimate = self.token_estimator.estimate(curr_chunk.text)
 
         return chunks
 
@@ -276,12 +359,19 @@ class ChunkBuilder:
         if strategy == "heading":
             groups: list[list[StructuredBlock]] = []
             current: list[StructuredBlock] = []
+            current_len = 0
             for block in blocks:
-                if block.block_type == "heading" and current:
+                block_len = len(block.text) if block.text else len(block.markdown)
+                added_len = block_len + (2 if current else 0)
+                if current and (
+                    block.block_type == "heading" or current_len + added_len > chunk_size
+                ):
                     groups.append(current)
                     current = [block]
+                    current_len = block_len
                 else:
                     current.append(block)
+                    current_len += added_len
             if current:
                 groups.append(current)
             return groups
@@ -290,14 +380,15 @@ class ChunkBuilder:
         current = []
         current_len = 0
         for block in blocks:
-            block_len = len(block.text) or len(block.markdown)
-            if current and current_len + block_len > chunk_size:
+            block_len = len(block.text) if block.text else len(block.markdown)
+            added_len = block_len + (2 if current else 0)  # account for "\n\n" join separator
+            if current and current_len + added_len > chunk_size:
                 groups.append(current)
                 current = [block]
                 current_len = block_len
             else:
                 current.append(block)
-                current_len += block_len
+                current_len += added_len
         if current:
             groups.append(current)
         return groups

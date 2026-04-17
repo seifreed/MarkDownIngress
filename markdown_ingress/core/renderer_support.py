@@ -2,19 +2,36 @@
 
 from __future__ import annotations
 
+import logging
 import time
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.models import FetchResult
 
+logger = logging.getLogger(__name__)
+_SCREENSHOT_UNSET: Final = object()
+
 # Lazy import for stealth injection
 try:
-    from markdown_ingress.core.stealth.js_injection import inject_stealth
+    from markdown_ingress.core.stealth.js_injection import (
+        inject_stealth_post_nav,
+        inject_stealth_pre_nav,
+    )
 
     STEALTH_INJECT_AVAILABLE = True
 except ImportError:  # pragma: no cover
     STEALTH_INJECT_AVAILABLE = False  # pragma: no cover
+
+
+async def _close_async_resource(resource: Any | None, label: str) -> None:
+    """Close an async Playwright resource without masking earlier failures."""
+    if resource is None:
+        return
+    try:
+        await resource.close()
+    except Exception as exc:  # pragma: no cover - defensive cleanup path
+        logger.warning("Failed to close %s cleanly: %s", label, exc)
 
 
 def build_renderer_config(
@@ -34,7 +51,7 @@ def build_renderer_config(
     block_media: bool | None = None,
     block_ads: bool | None = None,
     block_trackers: bool | None = None,
-    screenshot: bool | str | None = None,
+    screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
 ) -> RenderConfig:
     """Normalize init inputs into a concrete RenderConfig."""
     if config is None:
@@ -52,12 +69,12 @@ def build_renderer_config(
             block_media=block_media if block_media is not None else True,
             block_ads=block_ads if block_ads is not None else True,
             block_trackers=block_trackers if block_trackers is not None else True,
-            screenshot=screenshot,
+            screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
         )
 
     from dataclasses import replace
 
-    overrides: dict[str, object] = {}
+    overrides: dict[str, Any] = {}
     if timeout is not None:
         overrides["timeout"] = timeout
     if wait_until is not None:
@@ -84,12 +101,14 @@ def build_renderer_config(
         overrides["block_ads"] = block_ads
     if block_trackers is not None:
         overrides["block_trackers"] = block_trackers
-    if screenshot is not None:
+    if screenshot is not _SCREENSHOT_UNSET:
         overrides["screenshot"] = screenshot
     return replace(config, **overrides) if overrides else config
 
 
-async def execute_render_session(renderer, url: str, timeout_ms: int, *, smart_wait: bool = False) -> FetchResult:
+async def execute_render_session(
+    renderer, url: str, timeout_ms: int, *, smart_wait: bool = False
+) -> FetchResult:
     """Run a single Playwright browser session using renderer-bound helpers."""
     try:
         from playwright.async_api import async_playwright
@@ -100,24 +119,32 @@ async def execute_render_session(renderer, url: str, timeout_ms: int, *, smart_w
         )
 
     start_time = time.perf_counter()
+    browser = None
+    context = None
+    page = None
     async with async_playwright() as playwright:
         browser_args = renderer._prepare_browser_args()
         launch_options = renderer._prepare_launch_options(browser_args)
         browser = await playwright.chromium.launch(**cast(dict[str, Any], launch_options))
-        context = None
         try:
             context_options = renderer._prepare_context_options()
             context = await browser.new_context(**context_options)
             page = await context.new_page()
-            # Inject stealth scripts if enabled and available (before navigation)
+            # Inject stealth scripts if enabled and available
             if renderer.stealth and STEALTH_INJECT_AVAILABLE:
-                await inject_stealth(page)
+                await inject_stealth_pre_nav(page)
             blocker = await renderer._setup_resource_blocking(page)
             response = await renderer._navigate_page(page, url, timeout_ms)
+            if renderer.stealth and STEALTH_INJECT_AVAILABLE:
+                await inject_stealth_post_nav(page)
             max_wait = min(8 if smart_wait else 6, max(2, timeout_ms // 1000))
             await renderer._wait_for_content(page, max_wait=max_wait)
             html = await renderer._extract_page_content(page)
-            screenshot_path = await renderer._capture_screenshot(page)
+            try:
+                screenshot_path = await renderer._capture_screenshot(page)
+            except Exception as e:
+                logger.warning("Screenshot capture failed, continuing without: %s", e)
+                screenshot_path = None
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             metadata = renderer._build_metadata(screenshot_path, blocker)
@@ -134,9 +161,8 @@ async def execute_render_session(renderer, url: str, timeout_ms: int, *, smart_w
                 metadata=metadata,
             )
         finally:
-            # Explicitly close page before context for clean resource cleanup
-            if 'page' in locals():
-                await page.close()
-            if context is not None:
-                await context.close()
-            await browser.close()
+            # Close each resource independently so one failure does not mask
+            # or skip the remaining cleanup steps.
+            await _close_async_resource(page, "page")
+            await _close_async_resource(context, "browser context")
+            await _close_async_resource(browser, "browser")

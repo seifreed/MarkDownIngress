@@ -1,20 +1,17 @@
 """Ingestion orchestration entrypoint for the MarkDownIngress pipeline."""
 
 import time
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from markdown_ingress.adapters.rendering.playwright_renderer import (
     PLAYWRIGHT_AVAILABLE,
+)
+from markdown_ingress.adapters.rendering.playwright_renderer import (
     PlaywrightRenderer as Renderer,
 )
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
-from markdown_ingress.core.document_builder import build_policy_engine, process_fetched_content
+from markdown_ingress.core.document_builder import process_fetched_content
 from markdown_ingress.core.hashing import Hasher
-from markdown_ingress.core.ingest_stats import (
-    record_stage_timing,
-    reset_ingest_stats as _reset_ingest_stats,
-    snapshot_ingest_stats,
-)
 from markdown_ingress.core.inflight import (
     InFlightRegistry,
     acquire_inflight,
@@ -24,6 +21,13 @@ from markdown_ingress.core.inflight import (
     make_request_key,
     release_inflight,
 )
+from markdown_ingress.core.ingest_stats import (
+    record_stage_timing,
+    snapshot_ingest_stats,
+)
+from markdown_ingress.core.ingest_stats import (
+    reset_ingest_stats as _reset_ingest_stats,
+)
 from markdown_ingress.core.interfaces import IExtractor, INormalizer
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 from markdown_ingress.core.markdown import MarkdownConverter
@@ -31,6 +35,8 @@ from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.scoring import Scorer
 from markdown_ingress.core.tokens import TokenEstimator
 from markdown_ingress.models import FetchResult, SafeDocument
+
+_SCREENSHOT_UNSET: Final = object()
 
 
 def get_ingest_stats() -> dict[str, Any]:
@@ -104,7 +110,7 @@ class IngestOrchestrator:
         stealth: bool | None = None,
         disable_http2: bool | None = None,
         extreme_mode: bool | None = None,
-        screenshot: bool | str | None = None,
+        screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
         extract_metadata: bool | None = None,
         extract_links: bool | None = None,
         advanced_security: bool | None = None,
@@ -142,7 +148,7 @@ class IngestOrchestrator:
                 stealth=stealth if stealth is not None else False,
                 disable_http2=disable_http2 if disable_http2 is not None else False,
                 extreme_mode=extreme_mode if extreme_mode is not None else False,
-                screenshot=screenshot,
+                screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
                 extract_metadata=extract_metadata if extract_metadata is not None else True,
                 extract_links=extract_links if extract_links is not None else True,
                 advanced_security=advanced_security if advanced_security is not None else False,
@@ -150,31 +156,45 @@ class IngestOrchestrator:
             )
         else:
             config = config.clone()
+            explicit_keys: set[str] = set(config.explicit_keys())
             # Config provided - override with any explicit parameters
             if mode is not None:
                 config.mode = mode
+                explicit_keys.add("mode")
             if strict is not None:
                 config.strict = strict
+                explicit_keys.add("strict")
             if model is not None:
                 config.model = model
+                explicit_keys.add("model")
             if timeout is not None:
                 config.timeout = timeout
+                explicit_keys.add("timeout")
             if stealth is not None:
                 config.stealth = stealth
+                explicit_keys.add("stealth")
             if disable_http2 is not None:
                 config.disable_http2 = disable_http2
+                explicit_keys.add("disable_http2")
             if extreme_mode is not None:
                 config.extreme_mode = extreme_mode
-            if screenshot is not None:
+                explicit_keys.add("extreme_mode")
+            if screenshot is not _SCREENSHOT_UNSET:
                 config.screenshot = screenshot
+                explicit_keys.add("screenshot")
             if extract_metadata is not None:
                 config.extract_metadata = extract_metadata
+                explicit_keys.add("extract_metadata")
             if extract_links is not None:
                 config.extract_links = extract_links
+                explicit_keys.add("extract_links")
             if advanced_security is not None:
                 config.advanced_security = advanced_security
+                explicit_keys.add("advanced_security")
             if use_llm is not None:
                 config.use_llm = use_llm
+                explicit_keys.add("use_llm")
+            object.__setattr__(config, "_explicit_keys", frozenset(explicit_keys))
             config.validate()
 
         from markdown_ingress.application.use_cases import IngestUseCase

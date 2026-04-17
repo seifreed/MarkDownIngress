@@ -25,14 +25,12 @@ def local_test_server():
                 return
 
             if self.path == "/js":
-                self._send_html(
-                    """
+                self._send_html("""
                     <html><body>
                     <div id="status">before</div>
                     <script>document.getElementById("status").textContent="js-executed";</script>
                     </body></html>
-                    """
-                )
+                    """)
                 return
 
             if self.path == "/delay":

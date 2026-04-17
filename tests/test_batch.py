@@ -2,14 +2,18 @@
 
 import asyncio
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+import markdown_ingress.api as public_api
+from markdown_ingress import ingest_async, ingest_many, ingest_many_async
+from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUseCase
-from markdown_ingress import ingest_async, ingest_many, ingest_many_async
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.core.config import Config
 from markdown_ingress.core.inflight import InFlightRegistry
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.models import FetchResult, SafeDocument
@@ -60,6 +64,39 @@ async def test_batch_processor_basic(local_servers):
     assert result.success_rate == 100.0
 
 
+def test_batch_processor_defaults_to_auto_mode():
+    assert BatchProcessor().mode == "auto"
+
+
+def test_batch_processor_preserves_base_config_without_explicit_overrides():
+    base = IngestConfig(mode="render", strict=False, model="custom", timeout=99.0)
+
+    processor = BatchProcessor(base_config=base)
+    config = processor._build_config()
+
+    assert config.mode == "render"
+    assert config.strict is False
+    assert config.model == "custom"
+    assert config.timeout == 99.0
+
+
+def test_batch_processor_applies_only_explicit_overrides_on_base_config():
+    base = IngestConfig(mode="render", strict=False, model="custom", timeout=99.0)
+
+    processor = BatchProcessor(
+        mode="fast",
+        timeout=10.0,
+        base_config=base,
+        explicit_overrides=frozenset({"mode", "timeout"}),
+    )
+    config = processor._build_config()
+
+    assert config.mode == "fast"
+    assert config.strict is False
+    assert config.model == "custom"
+    assert config.timeout == 10.0
+
+
 def test_batch_processor_sync(local_servers):
     """Test synchronous batch processing"""
     urls = [local_servers[0]]
@@ -98,6 +135,143 @@ async def test_batch_with_errors(local_servers):
 
 
 @pytest.mark.asyncio
+async def test_batch_processor_custom_process_url_none_is_counted_as_failure():
+    class NoneBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            return None
+
+    processor = NoneBatchProcessor(mode="fast", timeout=5.0)
+    result = await processor.process_batch_async(["https://example.com"])
+
+    assert result.total == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert result.documents == [None]
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://example.com"
+    assert result.errors[0].error_type == "TypeError"
+    assert "returned None instead of SafeDocument" in result.errors[0].error
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_custom_process_url_invalid_type_is_counted_as_failure():
+    class InvalidBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            return {"not": "doc"}
+
+    processor = InvalidBatchProcessor(mode="fast", timeout=5.0)
+    result = await processor.process_batch_async(["https://example.com"])
+
+    assert result.total == 1
+    assert result.successful == 0
+    assert result.failed == 1
+    assert result.documents == [None]
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://example.com"
+    assert result.errors[0].error_type == "TypeError"
+    assert "returned dict instead of SafeDocument" in result.errors[0].error
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_custom_process_url_rejects_zero_concurrency():
+    class ValidBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            return SafeDocument(
+                markdown="ok",
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash="sha256:x",
+            )
+
+    processor = ValidBatchProcessor(max_concurrent=0)
+
+    with pytest.raises(ValueError, match="max_concurrent must be >= 1"):
+        await processor.process_batch_async(["https://example.com"])
+
+
+def test_ingest_continues_when_cache_backend_fails():
+    class BoomCache:
+        def get(self, key):
+            raise RuntimeError("cache down")
+
+        def set(self, key, document, ttl=None):
+            raise RuntimeError("cache down")
+
+        def delete(self, key):
+            pass
+
+        def clear(self):
+            pass
+
+        def exists(self, key):
+            return False
+
+    class FakeFetcher:
+        def fetch_sync(self, url):
+            return FetchResult(
+                html="<html><body><main>Hello batch</main></body></html>",
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+    use_case = IngestUseCase(fetcher_factory=lambda config: FakeFetcher())
+    config = IngestConfig(
+        mode="fast", cache=BoomCache(), extract_metadata=False, extract_links=False
+    )
+
+    doc = use_case.execute("https://unit.test/cache-fail", config)
+
+    assert doc.metadata["cache_hit"] is False
+    assert "Hello batch" in doc.markdown
+
+
+def test_ingest_recovers_from_corrupt_cache_entry():
+    class CorruptCache:
+        def __init__(self):
+            self.deleted_keys: list[str] = []
+
+        def get(self, key):
+            return "corrupt"
+
+        def set(self, key, document, ttl=None):
+            pass
+
+        def delete(self, key):
+            self.deleted_keys.append(key)
+
+        def clear(self):
+            pass
+
+        def exists(self, key):
+            return False
+
+    class FakeFetcher:
+        def fetch_sync(self, url):
+            return FetchResult(
+                html="<html><body><main>Hello recovered cache</main></body></html>",
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+    cache = CorruptCache()
+    use_case = IngestUseCase(fetcher_factory=lambda config: FakeFetcher())
+    config = IngestConfig(mode="fast", cache=cache, extract_metadata=False, extract_links=False)
+
+    doc = use_case.execute("https://unit.test/cache-corrupt", config)
+
+    assert doc.metadata["cache_hit"] is False
+    assert "Hello recovered cache" in doc.markdown
+    assert len(cache.deleted_keys) == 1
+
+
+@pytest.mark.asyncio
 async def test_batch_falls_back_to_local_execution_for_custom_fetcher(monkeypatch):
     class FakeFetcher:
         def fetch_sync(self, url):
@@ -133,6 +307,102 @@ async def test_batch_falls_back_to_local_execution_for_custom_fetcher(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_batch_continues_when_cache_backend_fails():
+    class BoomCache:
+        def get(self, key):
+            raise RuntimeError("cache down")
+
+        def set(self, key, document, ttl=None):
+            raise RuntimeError("cache down")
+
+        def delete(self, key):
+            pass
+
+        def clear(self):
+            pass
+
+        def exists(self, key):
+            return False
+
+    class FakeFetcher:
+        def fetch_sync(self, url):
+            return FetchResult(
+                html="<html><body><main>Hello batch</main></body></html>",
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+    use_case = IngestUseCase(fetcher_factory=lambda config: FakeFetcher())
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+    config = IngestConfig(
+        mode="fast", cache=BoomCache(), extract_metadata=False, extract_links=False
+    )
+
+    result = await batch_use_case.execute(
+        ["https://unit.test/cache-fail"],
+        lambda: config,
+        max_concurrent=1,
+    )
+
+    assert result.successful == 1
+    assert result.failed == 0
+    assert result.documents[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_batch_recovers_from_corrupt_cache_entry():
+    class CorruptCache:
+        def __init__(self):
+            self.deleted_keys: list[str] = []
+
+        def get(self, key):
+            return "corrupt"
+
+        def set(self, key, document, ttl=None):
+            pass
+
+        def delete(self, key):
+            self.deleted_keys.append(key)
+
+        def clear(self):
+            pass
+
+        def exists(self, key):
+            return False
+
+    class FakeFetcher:
+        def fetch_sync(self, url):
+            return FetchResult(
+                html="<html><body><main>Hello repaired batch cache</main></body></html>",
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+    cache = CorruptCache()
+    use_case = IngestUseCase(fetcher_factory=lambda config: FakeFetcher())
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+    config = IngestConfig(mode="fast", cache=cache, extract_metadata=False, extract_links=False)
+
+    result = await batch_use_case.execute(
+        ["https://unit.test/cache-corrupt"],
+        lambda: config,
+        max_concurrent=1,
+    )
+
+    assert result.successful == 1
+    assert result.failed == 0
+    assert result.documents[0] is not None
+    assert "Hello repaired batch cache" in result.documents[0].markdown
+    assert len(cache.deleted_keys) == 1
+
+
+@pytest.mark.asyncio
 async def test_batch_falls_back_to_local_execution_when_main_is_not_importable(monkeypatch):
     batch_use_case = BatchIngestUseCase(ingest_use_case=IngestUseCase(playwright_available=False))
     local_calls = {"count": 0}
@@ -148,7 +418,9 @@ async def test_batch_falls_back_to_local_execution_when_main_is_not_importable(m
         )
 
     async def fail_if_isolated(_prepared):
-        raise AssertionError("batch should not use subprocess isolation without importable __main__")
+        raise AssertionError(
+            "batch should not use subprocess isolation without importable __main__"
+        )
 
     monkeypatch.setattr(BatchIngestUseCase, "_main_module_file", staticmethod(lambda: None))
     monkeypatch.setattr(batch_use_case, "_execute_item_in_process", fake_local)
@@ -166,9 +438,7 @@ async def test_batch_falls_back_to_local_execution_when_main_is_not_importable(m
 
 
 def test_uses_default_runtime_dependencies_rejects_injected_inflight_registry():
-    use_case = IngestUseCase(
-        orchestrator=IngestOrchestrator(inflight_registry=InFlightRegistry())
-    )
+    use_case = IngestUseCase(orchestrator=IngestOrchestrator(inflight_registry=InFlightRegistry()))
 
     assert use_case.uses_default_runtime_dependencies() is False
 
@@ -243,6 +513,74 @@ def test_batch_progress_callback(local_servers):
     assert result.successful == 2
 
 
+@pytest.mark.asyncio
+async def test_custom_batch_progress_callback_reports_completed_items():
+    progress_calls = []
+
+    def on_progress(current, total, url):
+        progress_calls.append((current, total, url, time.perf_counter()))
+
+    class SlowBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            await asyncio.sleep(0.1 if url.endswith("first") else 0.2)
+            return SafeDocument(
+                markdown=url,
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash=f"hash-{url}",
+            )
+
+    started_at = time.perf_counter()
+    processor = SlowBatchProcessor(mode="fast", timeout=5.0, on_progress=on_progress)
+    result = await processor.process_batch_async(
+        ["https://example.com/first", "https://example.com/second"]
+    )
+
+    assert result.successful == 2
+    assert [call[0] for call in progress_calls] == [1, 2]
+    assert progress_calls[0][3] - started_at >= 0.08
+    assert progress_calls[1][3] - started_at >= 0.18
+
+
+@pytest.mark.asyncio
+async def test_default_batch_use_case_progress_reports_completed_items(monkeypatch):
+    progress_calls = []
+
+    def on_progress(current, total, url):
+        progress_calls.append((current, total, url, time.perf_counter()))
+
+    class SlowIngestUseCase:
+        orchestrator = IngestOrchestrator()
+
+        def execute(self, url: str, config):
+            time.sleep(0.1 if url.endswith("first") else 0.2)
+            return SafeDocument(
+                markdown=url,
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash=f"hash-{url}",
+            )
+
+        def uses_default_runtime_dependencies(self):
+            return False
+
+    started_at = time.perf_counter()
+    use_case = BatchIngestUseCase(ingest_use_case=SlowIngestUseCase())
+    result = await use_case.execute(
+        ["https://example.com/first", "https://example.com/second"],
+        config_builder=lambda: IngestConfig(mode="fast"),
+        max_concurrent=2,
+        on_progress=on_progress,
+    )
+
+    assert result.successful == 2
+    assert [call[0] for call in progress_calls] == [1, 2]
+    assert progress_calls[0][3] - started_at >= 0.08
+    assert progress_calls[1][3] - started_at >= 0.18
+
+
 def test_batch_result_stats():
     """Test BatchResult statistics"""
     result = BatchResult(total=10, successful=7, failed=3)
@@ -268,11 +606,13 @@ async def test_batch_preserves_url_order_under_concurrency(monkeypatch):
 
         delay = 0.05 if "slow" in url else 0.001
         await asyncio.sleep(delay)
-        return type(
-            "Doc",
-            (),
-            {"markdown": url, "token_estimate": 1, "injection_score": 0.0, "content_hash": "sha256:x", "metadata": {}},
-        )()
+        return SafeDocument(
+            markdown=url,
+            metadata={"url": url},
+            token_estimate=1,
+            injection_score=0.0,
+            content_hash="sha256:x",
+        )
 
     monkeypatch.setattr(processor, "process_url", fake_process_url)
 
@@ -335,3 +675,141 @@ async def test_public_ingest_many_async_handles_failures(local_servers):
     assert result.documents[0] is not None
     assert result.documents[1] is None
     assert any(item.url == "http://127.0.0.1:1" for item in result.errors)
+
+
+def test_public_ingest_many_sync_uses_file_config_batch_settings(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_ingest_many_sync_impl(
+        urls,
+        *,
+        playwright_available,
+        max_concurrent,
+        on_progress,
+        **runtime_kwargs,
+    ):
+        captured["urls"] = list(urls)
+        captured["max_concurrent"] = max_concurrent
+        captured["timeout"] = runtime_kwargs.get("timeout")
+        return "ok"
+
+    monkeypatch.setattr(public_api, "ingest_many_sync_impl", fake_ingest_many_sync_impl)
+
+    result = ingest_many(
+        ["https://example.com"],
+        config=Config(batch_max_concurrent=17, batch_timeout=42.0),
+    )
+
+    assert result == "ok"
+    assert captured == {
+        "urls": ["https://example.com"],
+        "max_concurrent": 17,
+        "timeout": 42.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_public_ingest_many_async_uses_file_config_batch_settings(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_ingest_many_async_impl(
+        urls,
+        *,
+        playwright_available,
+        max_concurrent,
+        on_progress,
+        **runtime_kwargs,
+    ):
+        captured["urls"] = list(urls)
+        captured["max_concurrent"] = max_concurrent
+        captured["timeout"] = runtime_kwargs.get("timeout")
+        return "ok"
+
+    monkeypatch.setattr(public_api, "ingest_many_async_impl", fake_ingest_many_async_impl)
+
+    result = await ingest_many_async(
+        ["https://example.com"],
+        config=Config(batch_max_concurrent=17, batch_timeout=42.0),
+    )
+
+    assert result == "ok"
+    assert captured == {
+        "urls": ["https://example.com"],
+        "max_concurrent": 17,
+        "timeout": 42.0,
+    }
+
+
+def test_public_ingest_many_sync_explicit_args_override_file_config_batch_settings(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_ingest_many_sync_impl(
+        urls,
+        *,
+        playwright_available,
+        max_concurrent,
+        on_progress,
+        **runtime_kwargs,
+    ):
+        captured["max_concurrent"] = max_concurrent
+        captured["timeout"] = runtime_kwargs.get("timeout")
+        return "ok"
+
+    monkeypatch.setattr(public_api, "ingest_many_sync_impl", fake_ingest_many_sync_impl)
+
+    result = ingest_many(
+        ["https://example.com"],
+        config=Config(batch_max_concurrent=17, batch_timeout=42.0),
+        timeout=9.0,
+        max_concurrent=3,
+    )
+
+    assert result == "ok"
+    assert captured == {"max_concurrent": 3, "timeout": 9.0}
+
+
+@pytest.mark.asyncio
+async def test_public_ingest_many_async_explicit_args_override_file_config_batch_settings(
+    monkeypatch,
+):
+    captured: dict[str, object] = {}
+
+    async def fake_ingest_many_async_impl(
+        urls,
+        *,
+        playwright_available,
+        max_concurrent,
+        on_progress,
+        **runtime_kwargs,
+    ):
+        captured["max_concurrent"] = max_concurrent
+        captured["timeout"] = runtime_kwargs.get("timeout")
+        return "ok"
+
+    monkeypatch.setattr(public_api, "ingest_many_async_impl", fake_ingest_many_async_impl)
+
+    result = await ingest_many_async(
+        ["https://example.com"],
+        config=Config(batch_max_concurrent=17, batch_timeout=42.0),
+        timeout=9.0,
+        max_concurrent=3,
+    )
+
+    assert result == "ok"
+    assert captured == {"max_concurrent": 3, "timeout": 9.0}
+
+
+def test_resolve_batch_api_options_uses_batch_settings_from_converted_runtime_config():
+    runtime_config = Config(
+        batch_max_concurrent=9,
+        batch_timeout=12.0,
+    ).to_ingest_config()
+
+    resolved_timeout, resolved_max_concurrent = resolve_batch_api_options(
+        runtime_config,
+        timeout=UNSET,
+        max_concurrent=UNSET,
+    )
+
+    assert resolved_timeout == 12.0
+    assert resolved_max_concurrent == 9

@@ -2,16 +2,20 @@
 
 import asyncio
 import copy
+import gc
 import threading
 import time
+import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from markdown_ingress import (
     BatchProcessor,
+    Benchmark,
     Config,
     IngestConfig,
     MemoryCache,
@@ -29,11 +33,12 @@ from markdown_ingress.application.use_cases import (
     _looks_like_auth_interstitial,
 )
 from markdown_ingress.config_models import DomainPolicy
+from markdown_ingress.core.document_builder import process_fetched_content
 from markdown_ingress.core.fetcher import UnsupportedContentTypeError
 from markdown_ingress.core.inflight import InFlightRegistry
+from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.models import FetchResult
-from markdown_ingress.models import SafeDocument
+from markdown_ingress.models import FetchResult, SafeDocument
 
 
 def _make_fetch_result(url: str, html: str) -> FetchResult:
@@ -46,6 +51,17 @@ def _make_fetch_result(url: str, html: str) -> FetchResult:
         timing_ms=1.0,
         metadata={},
     )
+
+
+def _fetcher_resource_warning_messages(
+    recorded_warnings: list[warnings.WarningMessage],
+) -> list[str]:
+    return [
+        str(warning.message)
+        for warning in recorded_warnings
+        if issubclass(warning.category, ResourceWarning)
+        and "Fetcher was not properly closed" in str(warning.message)
+    ]
 
 
 def _start_counting_html_server(
@@ -105,6 +121,112 @@ def test_ingest_uses_cache(monkeypatch):
     assert doc2.metadata["cache_hit"] is True
 
 
+def test_ingest_closes_fetcher_clients_after_success():
+    server, base_url, _handler = _start_counting_html_server(
+        b"<html><body><article><h1>Close</h1><p>cleanup</p></article></body></html>"
+    )
+    try:
+        gc.collect()
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always", ResourceWarning)
+            doc = ingest(
+                f"{base_url}/",
+                config=IngestConfig(mode="fast", allow_local_urls=True),
+            )
+            gc.collect()
+
+        assert doc.metadata["cache_hit"] is False
+        assert _fetcher_resource_warning_messages(recorded) == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ingest_cache_distinguishes_fetcher_user_agent():
+    cache = MemoryCache()
+    calls = {"count": 0}
+
+    class FakeFetcher:
+        def __init__(self, user_agent: str):
+            self.user_agent = user_agent
+
+        def fetch_sync(self, url: str):
+            calls["count"] += 1
+            html = f"<html><body><article><h1>{self.user_agent}</h1></article></body></html>"
+            return _make_fetch_result(url, html)
+
+    def fake_fetcher_factory(config):
+        return FakeFetcher(getattr(config, "fetcher_user_agent", "unknown"))
+
+    use_case = IngestUseCase(fetcher_factory=fake_fetcher_factory, playwright_available=False)
+    config = IngestConfig(mode="fast", cache=cache)
+
+    setattr(config, "fetcher_user_agent", "UA-1")
+    doc1 = use_case.execute("https://unit.test/cache-ua", config)
+
+    setattr(config, "fetcher_user_agent", "UA-2")
+    doc2 = use_case.execute("https://unit.test/cache-ua", config)
+
+    assert calls["count"] == 2
+    assert doc1.metadata["cache_hit"] is False
+    assert doc2.metadata["cache_hit"] is False
+    assert "UA-1" in doc1.markdown
+    assert "UA-2" in doc2.markdown
+
+
+def test_redirected_content_uses_final_url_for_relative_links_and_metadata():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/start/":
+                self.send_response(302)
+                self.send_header("Location", "/content/")
+                self.end_headers()
+                return
+
+            html = (
+                b'<html><head><link rel="canonical" href="page.html"></head>'
+                b'<body><a href="page.html">rel</a></body></html>'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.end_headers()
+            self.wfile.write(html)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        doc = ingest(
+            f"{base_url}/start/",
+            config=IngestConfig(mode="fast", allow_local_urls=True),
+            timeout=10.0,
+        )
+
+        assert doc.metadata["final_url"] == f"{base_url}/content/"
+        assert doc.links["internal"] == [f"{base_url}/content/page.html"]
+        assert doc.enriched_metadata["canonical_url"] == f"{base_url}/content/page.html"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_process_fetched_content_normalizes_hostname_metadata():
+    fetch_result = _make_fetch_result(
+        "http://example.com./page",
+        "<html><body><article><p>hello world</p></article></body></html>",
+    )
+
+    doc = process_fetched_content(IngestOrchestrator(), fetch_result, IngestConfig(mode="fast"))
+
+    assert doc.metadata["hostname"] == "example.com"
+
+
 def test_ingest_cache_distinguishes_effective_output_profiles(monkeypatch):
     cache = MemoryCache()
     calls = {"count": 0}
@@ -116,7 +238,9 @@ def test_ingest_cache_distinguishes_effective_output_profiles(monkeypatch):
 
     monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
 
-    default_doc = ingest("https://unit.test/cache-profile", mode="fast", cache=cache, output_profile="default")
+    default_doc = ingest(
+        "https://unit.test/cache-profile", mode="fast", cache=cache, output_profile="default"
+    )
     rag_doc = ingest(
         "https://unit.test/cache-profile",
         mode="fast",
@@ -151,6 +275,47 @@ def test_ingest_applies_policy_action(monkeypatch):
     assert exc_info.value.document.metadata["policy"] == "paranoid"
     assert exc_info.value.document.metadata["policy_action"] == "block"
     assert "policy_block" in exc_info.value.document.flags
+
+
+def test_ingest_uses_security_engine_recommendation_for_policy_action(monkeypatch):
+    def fake_fetch_sync(self, url: str):
+        return _make_fetch_result(
+            url,
+            "<html><body><article><p>Short safe content.</p></article></body></html>",
+        )
+
+    def fake_analyze(self, markdown, metadata, *, block_threshold=0.7, warn_threshold=0.4):
+        return {
+            "injection_score": 0.35,
+            "basic_score": 0.35,
+            "nova_score": 0.0,
+            "nova_details": {},
+            "flags": [],
+            "scan_method": "basic",
+            "nova_available": True,
+            "nova_used": False,
+            "advanced_security_available": True,
+            "pattern_matches": [],
+            "imperative_density": 0.0,
+            "explanation": {
+                "scan_method": "basic",
+                "recommendation": "warn",
+                "summary": "stubbed",
+                "triggers": [],
+                "hidden_content_detected": False,
+            },
+        }
+
+    monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.core.document_builder.SecurityEngine.analyze", fake_analyze
+    )
+
+    doc = ingest("https://unit.test/policy-warning", mode="fast", strict=True)
+
+    assert doc.metadata["policy_action"] == "warn"
+    assert doc.security_explanation is not None
+    assert doc.security_explanation["recommendation"] == "warn"
 
 
 def test_ingest_respects_language_and_security_explanation_flags(monkeypatch):
@@ -200,15 +365,13 @@ def test_ingest_loads_plugin_patterns(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
 
     plugin_file = tmp_path / "security_plugin.py"
-    plugin_file.write_text(
-        """
+    plugin_file.write_text("""
 from markdown_ingress.core.plugin import Plugin
 
 class LeakPlugin(Plugin):
     def get_patterns(self):
         return [r"internal\\s+leak\\s+marker"]
-"""
-    )
+""")
 
     doc = ingest(
         "https://unit.test/plugins",
@@ -218,6 +381,72 @@ class LeakPlugin(Plugin):
 
     assert doc.metadata["plugins_loaded"] >= 1
     assert doc.metadata["custom_patterns_count"] >= 1
+
+
+def test_ingest_cache_invalidates_when_plugin_file_changes(monkeypatch, tmp_path: Path):
+    def fake_fetch_sync(self, url: str):
+        html = "<html><body><article><p>beta_marker beta_extra_marker</p></article></body></html>"
+        return _make_fetch_result(url, html)
+
+    monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+
+    plugin_file = tmp_path / "versioned_plugin.py"
+    plugin_file.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class VersionedPlugin(Plugin):
+    def get_patterns(self):
+        return [r"alpha_marker"]
+""".strip())
+
+    cache = MemoryCache()
+    first = ingest(
+        "https://unit.test/versioned-plugin",
+        mode="fast",
+        cache=cache,
+        plugin_dirs=[str(tmp_path)],
+    )
+    assert first.metadata["cache_hit"] is False
+    assert first.metadata["custom_patterns_count"] == 1
+    assert len(first.metadata["pattern_matches"]) == 0
+
+    plugin_file.write_text("""
+from markdown_ingress.core.plugin import Plugin
+
+
+class VersionedPlugin(Plugin):
+    def get_patterns(self):
+        return [r"beta_marker", r"unused_marker"]
+""".strip())
+
+    second = ingest(
+        "https://unit.test/versioned-plugin",
+        mode="fast",
+        cache=cache,
+        plugin_dirs=[str(tmp_path)],
+    )
+    assert second.metadata["cache_hit"] is False
+    assert second.metadata["custom_patterns_count"] == 2
+    assert len(second.metadata["pattern_matches"]) == 1
+
+
+def test_ingest_failure_without_plugin_dirs_does_not_reference_plugin_loader(monkeypatch):
+    def fake_fetch_sync(self, url: str):
+        html = "<html><body><article><p>safe content</p></article></body></html>"
+        return _make_fetch_result(url, html)
+
+    monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+
+    def raise_in_analyzer(self, *_args, **_kwargs):
+        raise RuntimeError("forced analyzer failure")
+
+    monkeypatch.setattr(
+        "markdown_ingress.core.security.SecurityAnalyzer.analyze", raise_in_analyzer
+    )
+
+    with pytest.raises(RuntimeError, match="forced analyzer failure"):
+        ingest("https://unit.test/unbound-plugin-loader", mode="fast")
 
 
 def test_custom_patterns_flow_into_pattern_matches_and_explanation(monkeypatch):
@@ -237,7 +466,9 @@ def test_custom_patterns_flow_into_pattern_matches_and_explanation(monkeypatch):
     assert "injection_patterns_detected:1" in doc.flags
     assert any(match["pattern"] == "custom_pattern_1" for match in doc.metadata["pattern_matches"])
     assert doc.security_explanation is not None
-    assert any(trigger["name"] == "custom_pattern_1" for trigger in doc.security_explanation["triggers"])
+    assert any(
+        trigger["name"] == "custom_pattern_1" for trigger in doc.security_explanation["triggers"]
+    )
 
 
 def test_ingest_unloads_plugins_when_processing_fails(monkeypatch, tmp_path: Path):
@@ -249,8 +480,7 @@ def test_ingest_unloads_plugins_when_processing_fails(monkeypatch, tmp_path: Pat
 
     unload_marker = tmp_path / "unloaded.txt"
     plugin_file = tmp_path / "failing_plugin.py"
-    plugin_file.write_text(
-        f"""
+    plugin_file.write_text(f"""
 from pathlib import Path
 
 from markdown_ingress.core.plugin import Plugin
@@ -262,8 +492,7 @@ class FailingPlugin(Plugin):
 
     def on_unload(self):
         Path({str(unload_marker)!r}).write_text("unloaded")
-"""
-    )
+""")
 
     with pytest.raises(ValueError):
         ingest(
@@ -450,12 +679,45 @@ def test_inflight_release_keeps_entry_visible_until_followers_are_notified(monke
     assert release_thread.is_alive() is False
 
 
+def test_inflight_registry_periodic_cleanup_can_restart_after_stop():
+    registry = InFlightRegistry()
+    try:
+        registry.start_periodic_cleanup(interval_seconds=0.5)
+        first_thread = registry._cleanup_thread
+        assert first_thread is not None
+        assert first_thread.is_alive()
+
+        registry.stop_periodic_cleanup()
+
+        registry.start_periodic_cleanup(interval_seconds=0.5)
+        second_thread = registry._cleanup_thread
+        assert second_thread is not None
+        assert second_thread is not first_thread
+        time.sleep(0.05)
+        assert second_thread.is_alive()
+    finally:
+        registry.stop_periodic_cleanup()
+
+
+def test_inflight_registry_replaces_dead_entry_after_leader_timeout():
+    registry = InFlightRegistry()
+    assert registry.acquire("timeout-request") is None
+    stale_entry = registry._requests["timeout-request"]
+    stale_entry.leader_active = False
+
+    assert registry.acquire("timeout-request") is None
+    replacement_entry = registry._requests["timeout-request"]
+
+    assert replacement_entry is not stale_entry
+    assert replacement_entry.leader_active is True
+    assert replacement_entry.done is False
+
+
 def test_ingest_many_async_cancellation_terminates_workers(tmp_path: Path):
     started_path = tmp_path / "worker-started.txt"
     completed_path = tmp_path / "worker-completed.txt"
     plugin_file = tmp_path / "slow_side_effect_plugin.py"
-    plugin_file.write_text(
-        f"""
+    plugin_file.write_text(f"""
 import time
 from pathlib import Path
 
@@ -468,8 +730,7 @@ class SlowSideEffectPlugin(Plugin):
         time.sleep(1.0)
         Path({str(completed_path)!r}).write_text("completed")
         return []
-"""
-    )
+""")
 
     html = b"<html><body><article><p>slow page</p></article></body></html>"
     server, base_url, _handler = _start_counting_html_server(html)
@@ -575,7 +836,9 @@ def test_batch_processor_cancellation_only_cancels_wait():
 
     async def run_and_cancel():
         processor = SlowBatchProcessor(max_concurrent=1)
-        task = asyncio.create_task(processor.process_batch_async(["https://unit.test/cancel-batch"]))
+        task = asyncio.create_task(
+            processor.process_batch_async(["https://unit.test/cancel-batch"])
+        )
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -707,7 +970,9 @@ def test_process_level_ingest_stats_track_errors():
 
 def test_ingest_rejects_non_html_content_type(monkeypatch):
     def fake_fetch_sync(self, url: str):
-        raise UnsupportedContentTypeError("Unsupported content type for HTML ingestion: application/pdf")
+        raise UnsupportedContentTypeError(
+            "Unsupported content type for HTML ingestion: application/pdf"
+        )
 
     monkeypatch.setattr("markdown_ingress.core.fetcher.Fetcher.fetch_sync", fake_fetch_sync)
 
@@ -776,7 +1041,9 @@ def test_render_mode_rejects_known_download_urls_before_playwright():
     use_case.renderer_factory = lambda config: FakeRenderer()
 
     with pytest.raises(UnsupportedContentTypeError, match="non-HTML resource"):
-        use_case.execute("https://unit.test/files/guide.pdf", IngestConfig(mode="render", timeout=3.0))
+        use_case.execute(
+            "https://unit.test/files/guide.pdf", IngestConfig(mode="render", timeout=3.0)
+        )
 
     assert calls["renderer"] == 0
 
@@ -804,6 +1071,226 @@ def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
     assert doc.metadata["mode"] == "fast"
     assert "render_failed_fast_degraded_fallback" in doc.metadata["operational_flags"]
     assert doc.metadata["fetch_metadata"]["degraded_render_fallback"] is True
+
+
+def test_render_mode_degraded_fallback_closes_fetcher_clients():
+    server, base_url, _handler = _start_counting_html_server(
+        b"<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>"
+    )
+    try:
+        use_case = IngestUseCase(playwright_available=True)
+
+        class FakeRenderer:
+            def render_sync(self, url: str):
+                raise RuntimeError(
+                    "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                )
+
+        use_case.renderer_factory = lambda config: FakeRenderer()
+
+        gc.collect()
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always", ResourceWarning)
+            doc = use_case.execute(
+                f"{base_url}/",
+                IngestConfig(mode="render", timeout=3.0),
+            )
+            gc.collect()
+
+        assert doc.metadata["mode"] == "fast"
+        assert doc.metadata["fetch_metadata"]["degraded_render_fallback"] is True
+        assert _fetcher_resource_warning_messages(recorded) == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path):
+    screenshot_path = tmp_path / "explicit.png"
+    use_case = IngestUseCase(playwright_available=True)
+
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            if isinstance(self.config.screenshot, str):
+                Path(self.config.screenshot).write_bytes(b"fake screenshot bytes")
+            raise RuntimeError(
+                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+            )
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
+            )
+
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+
+    doc = use_case.execute(
+        "https://unit.test/explicit-screenshot",
+        IngestConfig(
+            mode="render",
+            timeout=3.0,
+            screenshot=str(screenshot_path),
+            extract_metadata=False,
+            extract_links=False,
+        ),
+    )
+
+    assert doc.metadata["mode"] == "fast"
+    assert screenshot_path.exists()
+
+
+def test_auto_mode_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path):
+    screenshot_path = tmp_path / "auto-explicit.png"
+    use_case = IngestUseCase(playwright_available=True)
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
+            )
+
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            if isinstance(self.config.screenshot, str):
+                Path(self.config.screenshot).write_bytes(b"fake screenshot bytes")
+            raise RuntimeError(
+                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+            )
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+
+    doc = use_case.execute(
+        "https://unit.test/auto-explicit-screenshot",
+        IngestConfig(
+            mode="auto",
+            timeout=3.0,
+            auto_render_threshold=1_000_000,
+            screenshot=str(screenshot_path),
+            extract_metadata=False,
+            extract_links=False,
+        ),
+    )
+
+    assert doc.metadata["mode"] == "fast"
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert doc.metadata["auto_mode_reason"] == "render_fallback"
+    assert "render_failed_fast_degraded_fallback" in doc.metadata["operational_flags"]
+    assert screenshot_path.exists()
+
+
+def test_benchmark_compare_extractors_closes_fetcher_clients(monkeypatch):
+    server, base_url, _handler = _start_counting_html_server(
+        b"<html><body><article><h1>Benchmark</h1><p>fetcher</p></article></body></html>"
+    )
+    fake_doc = SimpleNamespace(
+        metadata={
+            "token_savings": {},
+            "original_size_bytes": 1024,
+            "cleaned_size_bytes": 512,
+            "risk_level": "unknown",
+        },
+        token_estimate=128,
+        markdown="# benchmark\n",
+        injection_score=0.0,
+    )
+
+    def fake_ingest(*args, **kwargs):
+        return fake_doc
+
+    def fake_compare_extractors(html: str, model: str):
+        return {"html_len": len(html), "model": model}
+
+    monkeypatch.setattr("markdown_ingress.core.benchmark.ingest", fake_ingest)
+    monkeypatch.setattr(
+        "markdown_ingress.core.benchmark.compare_extractors", fake_compare_extractors
+    )
+
+    try:
+        benchmark = Benchmark(model="gpt-4")
+        gc.collect()
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always", ResourceWarning)
+            result = benchmark.run_single(
+                f"{base_url}/",
+                mode="fast",
+                iterations=1,
+                compare_extractors_enabled=True,
+            )
+            gc.collect()
+
+        assert result.extractor_comparison == {
+            "html_len": len(
+                b"<html><body><article><h1>Benchmark</h1><p>fetcher</p></article></body></html>"
+            ),
+            "model": "gpt-4",
+        }
+        assert _fetcher_resource_warning_messages(recorded) == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_auto_mode_discards_temp_screenshot_when_fast_wins(tmp_path: Path):
+    use_case = IngestUseCase(playwright_available=True)
+    captured = {}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fast</h1><p>"
+                + ("content " * 20)
+                + "</p></article></body></html>",
+            )
+
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+            captured["path"] = config.screenshot
+
+        def render_sync(self, url: str):
+            screenshot_path = self.config.screenshot
+            if isinstance(screenshot_path, str):
+                Path(screenshot_path).write_bytes(b"temporary screenshot bytes")
+            result = _make_fetch_result(
+                url,
+                "<html><body><article><p>tiny</p></article></body></html>",
+            )
+            result.metadata["screenshot_path"] = screenshot_path
+            result.metadata["screenshot_temp"] = True
+            return result
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+
+    doc = use_case.execute(
+        "https://unit.test/auto-temp-screenshot",
+        IngestConfig(
+            mode="auto",
+            timeout=3.0,
+            auto_render_threshold=1_000_000,
+            screenshot=True,
+            extract_metadata=False,
+            extract_links=False,
+        ),
+    )
+
+    assert doc.metadata["mode"] == "fast"
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert doc.metadata.get("auto_mode_reason") is None
+    assert isinstance(captured["path"], str)
+    assert not Path(captured["path"]).exists()
 
 
 @pytest.mark.asyncio
@@ -995,7 +1482,7 @@ def test_domain_policy_applies_profile_thresholds_and_notes(monkeypatch, rich_ar
     doc = exc_info.value.document
     assert doc is not None
     assert doc.metadata["output_profile"] == "llm_safe"
-    assert doc.metadata["output_formats"] == ["markdown", "blocks", "security"]
+    assert doc.metadata["output_formats"] == ["markdown", "blocks", "security", "chunks"]
     assert doc.metadata["policy_action"] == "block"
     assert "policy_block" in doc.flags
     assert doc.structured_blocks is not None
@@ -1006,7 +1493,7 @@ def test_domain_policy_applies_profile_thresholds_and_notes(monkeypatch, rich_ar
     }
 
 
-def test_auto_mode_render_budget_is_cumulative_across_attempts():
+def test_auto_mode_render_budget_allows_fast_probe_before_render():
     class FakeFetcher:
         def fetch_sync(self, url: str):
             return _make_fetch_result(url, "<html><body><article><p>x</p></article></body></html>")
@@ -1015,7 +1502,9 @@ def test_auto_mode_render_budget_is_cumulative_across_attempts():
         def render_sync(self, url: str):
             return _make_fetch_result(
                 url,
-                "<html><body><article><h1>Rendered</h1><p>" + ("content " * 200) + "</p></article></body></html>",
+                "<html><body><article><h1>Rendered</h1><p>"
+                + ("content " * 200)
+                + "</p></article></body></html>",
             )
 
     use_case = IngestUseCase(
@@ -1024,11 +1513,13 @@ def test_auto_mode_render_budget_is_cumulative_across_attempts():
         playwright_available=True,
     )
 
-    with pytest.raises(RuntimeError, match="Render cost budget exceeded"):
-        use_case.execute(
-            "https://unit.test/budget-auto",
-            IngestConfig(mode="auto", render_cost_budget=5, auto_render_threshold=1000),
-        )
+    doc = use_case.execute(
+        "https://unit.test/budget-auto",
+        IngestConfig(mode="auto", render_cost_budget=5, auto_render_threshold=1000),
+    )
+
+    assert doc.metadata["mode"] == "render"
+    assert doc.metadata["auto_mode_used"] == "render"
 
 
 def test_generate_security_report_includes_explanation_and_observability(

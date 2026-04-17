@@ -7,6 +7,8 @@ from urllib.parse import urljoin, urlparse
 
 from selectolax.parser import HTMLParser
 
+from markdown_ingress.core.ssrf import normalize_hostname
+
 
 class LinkAnalyzer:
     """Extract and analyze links from HTML documents"""
@@ -35,9 +37,23 @@ class LinkAnalyzer:
         """
         parser = HTMLParser(html)
 
+        def _resolve_effective_base_url() -> str:
+            base_tag = parser.css_first("base[href]")
+            if not base_tag:
+                return base_url
+            href = (base_tag.attributes.get("href") or "").strip()
+            if not href:
+                return base_url
+            candidate = urljoin(base_url, href)
+            parsed = urlparse(candidate)
+            if parsed.scheme in {"http", "https"} and parsed.hostname:
+                return candidate
+            return base_url
+
         # Parse base URL
         base_parsed = urlparse(base_url)
-        base_domain = (base_parsed.hostname or "").lower()
+        base_domain = normalize_hostname(base_parsed.hostname or "")
+        effective_base_url = _resolve_effective_base_url()
 
         internal_links: list[str] = []
         external_links: list[str] = []
@@ -71,12 +87,12 @@ class LinkAnalyzer:
                 continue
 
             # Resolve relative URLs
-            absolute_url = urljoin(base_url, href)
+            absolute_url = urljoin(effective_base_url, href)
             parsed_url = urlparse(absolute_url)
-            link_domain = (parsed_url.hostname or "").lower()
+            link_domain = normalize_hostname(parsed_url.hostname or "")
 
             # Skip invalid URLs
-            if not link_domain or not parsed_url.scheme.startswith("http"):
+            if not link_domain or parsed_url.scheme not in {"http", "https"}:
                 continue
 
             # Classify as internal or external
@@ -92,9 +108,9 @@ class LinkAnalyzer:
 
         # Recompute domain counts from deduplicated external links so they
         # are consistent with the external_links list.
-        domain_counts = {}
+        domain_counts: dict[str, int] = {}
         for url in external_links:
-            domain = (urlparse(url).hostname or "").lower()
+            domain = normalize_hostname(urlparse(url).hostname or "")
             domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
         total = len(internal_links) + len(external_links) + len(anchor_links)

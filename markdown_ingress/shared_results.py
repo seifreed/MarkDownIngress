@@ -9,11 +9,17 @@ from markdown_ingress.models import SafeDocument
 
 @dataclass
 class BatchErrorItem:
-    """A batch failure bound to the original input position."""
+    """A batch failure bound to the original input position.
+
+    BUG FIX: Added error_type and traceback fields to preserve exception context
+    for debugging. Previously only the error message was preserved.
+    """
 
     index: int
     url: str
     error: str
+    error_type: str = ""  # BUG FIX: Exception class name for type-aware error handling
+    traceback: str = ""  # BUG FIX: Stack trace for debugging
 
 
 @dataclass
@@ -30,8 +36,7 @@ class BatchResult:
         """Normalize legacy dict-style errors into the positional error list contract."""
         if isinstance(self.errors, dict):
             self.errors = [
-                BatchErrorItem(index=i, url=url, error=error)
-                for i, (url, error) in enumerate(self.errors.items())
+                BatchErrorItem(index=-1, url=url, error=error) for url, error in self.errors.items()
             ]
         normalized: list[BatchErrorItem] = []
         for item in self.errors:

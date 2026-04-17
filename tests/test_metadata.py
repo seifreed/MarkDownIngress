@@ -78,6 +78,21 @@ def test_extract_language_from_html():
     assert metadata["language"] == "en"
 
 
+def test_extract_language_from_content_language_list_uses_primary_language():
+    """Comma-separated content-language lists should return the primary language."""
+    html = """
+    <html>
+    <head>
+        <meta http-equiv="content-language" content="en,fr">
+    </head>
+    <body>Content with enough words to trigger language detection fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback.</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com")
+    assert metadata["language"] == "en"
+
+
 def test_extract_description():
     """Test extracting description"""
     html = """
@@ -138,6 +153,95 @@ def test_extract_canonical_url():
     assert metadata["canonical_url"] == "https://example.com/canonical"
 
 
+def test_extract_canonical_url_accepts_tokenized_rel_values():
+    html = """
+    <html>
+    <head>
+        <link rel="canonical alternate" href="https://example.com/canonical">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://example.com/canonical"
+
+
+def test_extract_canonical_url_uses_base_href_for_relative_urls():
+    html = """
+    <html>
+    <head>
+        <base href="https://cdn.example.com/sub/">
+        <link rel="canonical" href="article">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://cdn.example.com/sub/article"
+
+
+def test_extract_og_url_uses_base_href_for_relative_urls():
+    html = """
+    <html>
+    <head>
+        <base href="https://cdn.example.com/sub/">
+        <meta property="og:url" content="article">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://cdn.example.com/sub/article"
+
+
+def test_extract_canonical_url_rejects_non_http_scheme():
+    """Canonical URLs must stay on http/https; invalid schemes fall back to the page URL."""
+    html = """
+    <html>
+    <head>
+        <link rel="canonical" href="javascript:alert(1)">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://example.com/page"
+
+
+def test_extract_canonical_url_skips_invalid_candidates_until_valid_one():
+    html = """
+    <html>
+    <head>
+        <link rel="canonical" href="javascript:alert(1)">
+        <link rel="canonical alternate" href="https://example.com/good">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://example.com/good"
+
+
+def test_extract_canonical_url_skips_empty_candidate_until_valid_one():
+    html = """
+    <html>
+    <head>
+        <link rel="canonical" href="">
+        <link rel="canonical alternate" href="https://example.com/good">
+    </head>
+    <body>Content</body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com/page")
+    assert metadata["canonical_url"] == "https://example.com/good"
+
+
 def test_extract_site_name():
     """Test extracting site name"""
     html = """
@@ -186,6 +290,31 @@ def test_detect_content_type_documentation():
     extractor = MetadataExtractor()
     metadata = extractor.extract(html, "https://example.com")
     assert metadata["content_type"] == "documentation"
+
+
+def test_detect_content_type_ignores_partial_comment_and_api_doc_classes():
+    """Partial class names should not promote arbitrary pages to forum/documentation."""
+    extractor = MetadataExtractor()
+
+    forum_like_html = """
+    <html>
+    <body>
+        <div class="not-comment">Release notes</div>
+        <p>Plain documentation content.</p>
+    </body>
+    </html>
+    """
+    doc_like_html = """
+    <html>
+    <body>
+        <div class="not-api-doc">Release notes</div>
+        <p>Plain documentation content.</p>
+    </body>
+    </html>
+    """
+
+    assert extractor.extract(forum_like_html, "https://example.com")["content_type"] == "webpage"
+    assert extractor.extract(doc_like_html, "https://example.com")["content_type"] == "webpage"
 
 
 def test_detect_content_type_ecommerce():

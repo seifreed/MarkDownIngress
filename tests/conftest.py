@@ -82,7 +82,10 @@ def pytest_collection_modifyitems(config, items):
     skip_baseline = pytest.mark.skip(
         reason="requires --run-url-baseline/--run-url-campaign or MDI_RUN_URL_BASELINE=1"
     )
-    if os.environ.get("MDI_RUN_URL_BASELINE") == "1" or os.environ.get("MDI_RUN_URL_CAMPAIGN") == "1":
+    if (
+        os.environ.get("MDI_RUN_URL_BASELINE") == "1"
+        or os.environ.get("MDI_RUN_URL_CAMPAIGN") == "1"
+    ):
         return
 
     for item in items:
