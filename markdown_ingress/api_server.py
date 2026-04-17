@@ -4,15 +4,15 @@ FastAPI server for MarkDownIngress.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
 import threading
+from collections import deque
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -24,7 +24,6 @@ from markdown_ingress.adapters.jobs.sqlite_job_queue import (
 )
 from markdown_ingress.api import generate_security_report, ingest, ingest_many, retry_ingest
 from markdown_ingress.api_server_handlers import (
-    build_root_payload,
     handle_batch_status,
     handle_batch_submit,
     handle_extractor_comparison,
@@ -64,7 +63,9 @@ def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
         _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
         return default
     if value < minimum:
-        _logger.warning("Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default)
+        _logger.warning(
+            "Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default
+        )
         return default
     return value
 
@@ -82,7 +83,9 @@ def _read_bool_env(name: str, default: bool = False) -> bool:
     return default
 
 
-def _read_optional_float_env(name: str, *, minimum: float = 0.0, exclusive_minimum: bool = False) -> float | None:
+def _read_optional_float_env(
+    name: str, *, minimum: float = 0.0, exclusive_minimum: bool = False
+) -> float | None:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return None
@@ -94,9 +97,55 @@ def _read_optional_float_env(name: str, *, minimum: float = 0.0, exclusive_minim
     is_invalid = value < minimum or (exclusive_minimum and value == minimum)
     if is_invalid:
         comparator = ">" if exclusive_minimum else ">="
-        _logger.warning("Invalid value for %s=%r. Expected %s %s. Disabling optional setting.", name, raw, comparator, minimum)
+        _logger.warning(
+            "Invalid value for %s=%r. Expected %s %s. Disabling optional setting.",
+            name,
+            raw,
+            comparator,
+            minimum,
+        )
         return None
     return value
+
+
+def _parse_iso_datetime_utc(value: str) -> datetime | None:
+    """Parse an ISO timestamp and normalize naive values to UTC.
+
+    Legacy rows in the job database may omit timezone information. For retention
+    and lease comparisons we interpret those values as UTC instead of crashing on
+    aware/naive comparisons.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _legacy_unknown_ttl_expires_at(
+    completed_at: str | None, legacy_expires_at: str | None
+) -> datetime | None:
+    """Return the effective expiry for a legacy completed job.
+
+    When an explicit ``legacy_expires_at`` exists, it is authoritative.
+    Older rows may lack both ``ttl_seconds`` and ``legacy_expires_at``. In that
+    case the queue layer preserves them with ``LEGACY_UNKNOWN_TTL_SECONDS``
+    from completion time, so the API needs to use the same derived window when
+    deciding whether the row is still visible.
+    """
+    if legacy_expires_at:
+        expires_dt = _parse_iso_datetime_utc(legacy_expires_at)
+        if expires_dt is not None:
+            return expires_dt
+        return None
+    if completed_at is None:
+        return None
+    completed_dt = _parse_iso_datetime_utc(completed_at)
+    if completed_dt is None:
+        return None
+    return completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)
 
 
 _RAW_API_KEY = os.getenv("MDI_API_KEY")
@@ -107,19 +156,108 @@ JOB_DB_PATH = os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3"
 JOB_WORKERS = _read_positive_int_env("MDI_API_JOB_WORKERS", 2)
 MAX_QUEUED_JOBS = _read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100)
 JOB_WEBHOOK_MAX_RETRIES = _read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2)
-_job_webhook_retry_delay = _read_optional_float_env("MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0)
-JOB_WEBHOOK_RETRY_DELAY_SECONDS = 0.25 if _job_webhook_retry_delay is None else _job_webhook_retry_delay
-JOB_EXECUTION_TIMEOUT_SECONDS = _read_optional_float_env("MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True)
+_job_webhook_retry_delay = _read_optional_float_env(
+    "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
+)
+JOB_WEBHOOK_RETRY_DELAY_SECONDS = (
+    0.25 if _job_webhook_retry_delay is None else _job_webhook_retry_delay
+)
+JOB_EXECUTION_TIMEOUT_SECONDS = _read_optional_float_env(
+    "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
+)
 ALLOW_LOCAL_WEBHOOKS = _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
 
 # Rate limiting configuration
 RATE_LIMIT_REQUESTS = _read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100)
 RATE_LIMIT_WINDOW_SECONDS = _read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60)
-_request_counts: dict[str, list[float]] = {}
+# BUG FIX: Use deque with maxlen to prevent unbounded growth per client
+# Each client can have at most 2x rate limit requests worth of timestamps
+_RATE_LIMIT_MAX_TIMESTAMPS_PER_CLIENT = RATE_LIMIT_REQUESTS * 2
+_request_counts: dict[str, deque] = {}  # type: ignore[var-annotated]
 _rate_limit_lock = threading.Lock()
 _rate_limit_cleanup_counter = 0  # Counter for periodic cleanup
 _RATE_LIMIT_CLEANUP_THRESHOLD = 1000  # Cleanup every N requests
-_RATE_LIMIT_MAX_CLIENTS = 10000  # BUG FIX: Max clients before forced cleanup (memory leak prevention)
+_RATE_LIMIT_MAX_CLIENTS = 10000  # Max clients before forced cleanup (memory leak prevention)
+
+
+def _detect_multiworker_environment() -> bool:
+    """Detect if running in a multi-worker deployment environment.
+
+    Returns:
+        True if multiple worker processes are configured, False otherwise.
+    """
+    # Gunicorn and Uvicorn use worker-count environment variables.
+    # Invalid values should degrade gracefully instead of crashing import.
+    for env_name in ("GUNICORN_WORKERS", "UVICORN_WORKERS"):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        try:
+            if int(raw) > 1:
+                return True
+        except ValueError:
+            _logger.warning(
+                "Invalid integer for %s=%r. Assuming single-worker deployment.", env_name, raw
+            )
+    return False
+
+
+# BUG FIX: Warn about per-worker rate limiting in multi-worker deployments
+if _detect_multiworker_environment():
+    _logger.warning(
+        "Rate limiting is per-worker in multi-worker deployments. "
+        "Each worker process maintains separate rate limit state. "
+        "Consider using Redis-backed rate limiting for production deployments."
+    )
+
+
+_RATE_LIMIT_BACKEND = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
+_RATE_LIMIT_REDIS_URL = os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
+_RATE_LIMIT_REDIS_PREFIX = os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:")
+_rate_limit_redis_client: Any | None = None
+
+
+def _get_redis_rate_limit_client():
+    """Lazily initialise the Redis client for distributed rate limiting (S9)."""
+    global _rate_limit_redis_client
+    if _rate_limit_redis_client is not None:
+        return _rate_limit_redis_client
+    try:
+        import redis  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError(
+            "MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package. "
+            "Install with: pip install redis"
+        ) from exc
+    client = redis.Redis.from_url(_RATE_LIMIT_REDIS_URL, decode_responses=True)
+    try:
+        client.ping()
+    except Exception as exc:  # pragma: no cover — depends on env
+        raise RuntimeError(
+            f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}"
+        ) from exc
+    _rate_limit_redis_client = client
+    return client
+
+
+def _check_rate_limit_redis(client_id: str) -> tuple[bool, int]:
+    """Fixed-window rate limit backed by Redis (S9).
+
+    Uses INCR + EXPIRE in a pipeline. The key lives for the remainder of the
+    window; once it expires the counter resets, avoiding sliding-window cost.
+    """
+    redis_client = _get_redis_rate_limit_client()
+    key = f"{_RATE_LIMIT_REDIS_PREFIX}{client_id}"
+    pipe = redis_client.pipeline()
+    pipe.incr(key, 1)
+    pipe.ttl(key)
+    count, ttl = pipe.execute()
+    if ttl is None or ttl < 0:
+        redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+        ttl = RATE_LIMIT_WINDOW_SECONDS
+    if int(count) > RATE_LIMIT_REQUESTS:
+        return False, max(1, int(ttl))
+    return True, 0
 
 
 def _check_rate_limit(client_id: str) -> tuple[bool, int]:
@@ -132,73 +270,88 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         Tuple of (is_allowed, retry_after_seconds)
     """
     import time
+
+    if _RATE_LIMIT_BACKEND == "redis":
+        return _check_rate_limit_redis(client_id)
+
     global _rate_limit_cleanup_counter
     now = time.time()
     with _rate_limit_lock:
-        if client_id not in _request_counts:
-            _request_counts[client_id] = []
-        requests = _request_counts[client_id]
-        # Remove old requests outside the window
-        _request_counts[client_id] = [t for t in requests if now - t < RATE_LIMIT_WINDOW_SECONDS]
-        if len(_request_counts[client_id]) >= RATE_LIMIT_REQUESTS:
-            # Calculate retry-after
-            oldest = min(_request_counts[client_id])
-            retry_after = int(RATE_LIMIT_WINDOW_SECONDS - (now - oldest)) + 1
-            return False, retry_after
-        _request_counts[client_id].append(now)
-
-        # Periodic cleanup of empty client entries to prevent memory leak
+        # Periodic cleanup of stale client entries to prevent memory leak
         _rate_limit_cleanup_counter += 1
         if _rate_limit_cleanup_counter >= _RATE_LIMIT_CLEANUP_THRESHOLD:
             _rate_limit_cleanup_counter = 0
-            # Remove clients with all timestamps outside the window (stale clients)
             stale_clients = [
-                cid for cid, reqs in _request_counts.items()
+                cid
+                for cid, reqs in _request_counts.items()
                 if all(now - t >= RATE_LIMIT_WINDOW_SECONDS for t in reqs)
             ]
             for cid in stale_clients:
                 del _request_counts[cid]
 
-        # BUG FIX: Size-based cleanup to prevent unbounded memory growth
-        # When client count exceeds max, remove oldest half
+        # Size-based cleanup before rate limit check to prevent unbounded memory growth
         if len(_request_counts) > _RATE_LIMIT_MAX_CLIENTS:
-            # Sort clients by oldest request timestamp and remove oldest half
             client_ages = [
-                (cid, min(reqs) if reqs else float('inf'))
-                for cid, reqs in _request_counts.items()
+                (cid, max(reqs) if reqs else float("-inf")) for cid, reqs in _request_counts.items()
             ]
-            client_ages.sort(key=lambda x: x[1])  # Oldest first
-            # Remove oldest half of clients
-            for cid, _ in client_ages[:len(client_ages) // 2]:
+            client_ages.sort(key=lambda x: x[1])  # Least recently active first
+            for cid, _ in client_ages[: len(client_ages) - _RATE_LIMIT_MAX_CLIENTS]:
                 del _request_counts[cid]
 
+        if client_id not in _request_counts:
+            # No maxlen: rely solely on explicit window-expiry cleanup to avoid
+            # auto-eviction silently dropping timestamps still within the window.
+            _request_counts[client_id] = deque()
+        requests = _request_counts[client_id]
+        while requests and now - requests[0] >= RATE_LIMIT_WINDOW_SECONDS:
+            requests.popleft()
+        # Hard cap to prevent adversarial unbounded growth (well above normal rate limit)
+        if len(requests) > RATE_LIMIT_REQUESTS * 3:
+            requests.clear()
+
+        if len(requests) >= RATE_LIMIT_REQUESTS:
+            # Calculate retry-after
+            oldest = requests[0]
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - oldest)) + 1)
+            return False, retry_after
+        requests.append(now)
+
         return True, 0
+
 
 app = FastAPI(
     title="MarkDownIngress API",
     description="Deterministic Web → Markdown Engine for LLM Pipelines",
     version=API_VERSION,
 )
+
+
 # BUG FIX #5: Use functions to get current state instead of caching at module level.
 # This prevents stale references during module reload.
 def _get_previous_watchdog_thread():
     """Get the previous watchdog thread from globals, avoiding stale references."""
-    return globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD") or globals().get("_JOB_QUEUE_WATCHDOG_THREAD")
+    prev = globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD")
+    return prev if prev is not None else globals().get("_JOB_QUEUE_WATCHDOG_THREAD")
 
 
 def _get_previous_watchdog_stop():
     """Get the previous watchdog stop event from globals, avoiding stale references."""
-    return globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP") or globals().get("_JOB_QUEUE_WATCHDOG_STOP")
+    prev = globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP")
+    return prev if prev is not None else globals().get("_JOB_QUEUE_WATCHDOG_STOP")
 
 
 def _get_previous_repair_thread():
     """Get the previous repair thread from globals, avoiding stale references."""
-    return globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_THREAD") or globals().get("_JOB_QUEUE_REPAIR_THREAD")
+    prev = globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_THREAD")
+    return prev if prev is not None else globals().get("_JOB_QUEUE_REPAIR_THREAD")
 
 
 def _get_previous_repair_stop():
     """Get the previous repair stop event from globals, avoiding stale references."""
-    return globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_STOP") or globals().get("_JOB_QUEUE_REPAIR_STOP")
+    prev = globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_STOP")
+    return prev if prev is not None else globals().get("_JOB_QUEUE_REPAIR_STOP")
+
+
 _JOB_QUEUE_LOCK = threading.RLock()
 _JOB_QUEUE_INIT_LOCK = threading.Lock()  # Protects lazy job queue initialization
 _JOB_QUEUE_BUILD_LOCK = threading.Lock()
@@ -228,7 +381,9 @@ class _ExternalOwnerJobQueue:
     def _raise_backend_read_error(self, exc: sqlite3.Error) -> None:
         message = str(exc).lower()
         if isinstance(exc, sqlite3.OperationalError) and ("locked" in message or "busy" in message):
-            raise RuntimeError("Job queue backend is temporarily unavailable because the current owner is busy")
+            raise RuntimeError(
+                "Job queue backend is temporarily unavailable because the current owner is busy"
+            )
         self.state = "backend_error"
         raise RuntimeError(f"Job queue backend read failed: {exc}")
 
@@ -243,7 +398,9 @@ class _ExternalOwnerJobQueue:
     def submit(self, *args, **kwargs):
         if self.state == "backend_error":
             raise RuntimeError("Job queue backend read failed: external owner backend is unhealthy")
-        raise RuntimeError("Job queue is unavailable because the DB is owned by another active instance")
+        raise RuntimeError(
+            "Job queue is unavailable because the DB is owned by another active instance"
+        )
 
     def pending_count(self, *, cleanup_expired: bool = True) -> int:
         row = None
@@ -256,6 +413,37 @@ class _ExternalOwnerJobQueue:
             self._raise_backend_read_error(exc)
         return int(row[0]) if row else 0
 
+    @staticmethod
+    def _row_is_expired(row: sqlite3.Row) -> bool:
+        if row["status"] in {"queued", "running"}:
+            return False
+
+        def _parse(value: str | None) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                parsed = datetime.fromisoformat(value)
+            except (TypeError, ValueError):
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
+
+        now_dt = datetime.now(UTC)
+        ttl_seconds = row["ttl_seconds"]
+        completed_at = _parse(row["completed_at"])
+        legacy_expires_at = _parse(row["legacy_expires_at"])
+
+        if ttl_seconds is not None:
+            if completed_at is None:
+                return True
+            return completed_at + timedelta(seconds=int(ttl_seconds)) <= now_dt
+        if legacy_expires_at is not None:
+            return legacy_expires_at <= now_dt
+        if completed_at is None:
+            return True
+        return completed_at + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt
+
     def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
         try:
             with closing(self._connect()) as conn:
@@ -264,13 +452,15 @@ class _ExternalOwnerJobQueue:
             self._raise_backend_read_error(exc)
         if row is None:
             return None
+        if cleanup_expired and self._row_is_expired(row):
+            return None
         return JobRecord(
             job_id=row["job_id"],
             status=row["status"],
             created_at=row["created_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
-            result=json.loads(row["result_json"]) if row["result_json"] else None,
+            result=PersistentJobQueue._safe_json_loads(row["result_json"]),
             error=row["error"],
             webhook_url=row["webhook_url"],
             ttl_seconds=row["ttl_seconds"],
@@ -311,9 +501,9 @@ def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
     """
     if queue is None:
         return
-    if getattr(queue, "state", None) == "external_owner":
-        return
     with _JOB_QUEUE_LOCK:
+        if getattr(queue, "state", None) == "external_owner":
+            return
         if any(existing is queue for existing in _JOB_QUEUE_HISTORY):
             return
         queue_db_path = getattr(queue, "db_path", None)
@@ -333,16 +523,16 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         return True
     try:
         with closing(connect()) as conn:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT status, completed_at, ttl_seconds, legacy_expires_at
                 FROM jobs
-                """
-            ).fetchall()
+                """).fetchall()
     except sqlite3.Error as exc:
         raise _TransientLegacyQueueReadError(str(exc)) from exc
-    except Exception:
-        raise _TransientLegacyQueueReadError("legacy queue inspection failed")
+    except (AttributeError, TypeError, KeyError) as exc:
+        raise _TransientLegacyQueueReadError(
+            f"legacy queue inspection failed: {exc}"
+        ) from exc
     now = datetime.now(UTC)
     for row in rows:
         status = row["status"] if isinstance(row, sqlite3.Row) else row[0]
@@ -351,25 +541,17 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         legacy_expires_at = row["legacy_expires_at"] if isinstance(row, sqlite3.Row) else row[3]
         if status in {"queued", "running"}:
             return True
-        if not completed_at:
-            continue
         if ttl_seconds is None:
-            try:
-                datetime.fromisoformat(completed_at)
-            except ValueError:
-                continue
-            if not legacy_expires_at:
-                continue
-            try:
-                expires_dt = datetime.fromisoformat(legacy_expires_at)
-            except ValueError:
+            expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
+            if expires_dt is None:
                 continue
             if now <= expires_dt:
                 return True
             continue
-        try:
-            completed_dt = datetime.fromisoformat(completed_at)
-        except ValueError:
+        if not completed_at:
+            continue
+        completed_dt = _parse_iso_datetime_utc(completed_at)
+        if completed_dt is None:
             continue  # skip corrupt row, don't abort entire queue
         if (now - completed_dt).total_seconds() <= int(ttl_seconds):
             return True
@@ -418,26 +600,33 @@ def _read_job_from_queue(queue, job_id: str):
     try:
         return queue.get(job_id, cleanup_expired=False)
     except TypeError:
-        return queue.get(job_id)
+        try:
+            return queue.get(job_id)
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"Job queue backend read failed: {exc}") from exc
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Job queue backend read failed: {exc}") from exc
 
 
 def _job_record_within_api_ttl(job) -> bool:
+    status = getattr(job, "status", None)
     completed_at = getattr(job, "completed_at", None)
-    if completed_at is None:
+    if status in {"queued", "running"}:
         return True
-    try:
-        completed_dt = datetime.fromisoformat(completed_at)
-    except ValueError:
-        return False
-    ttl_seconds = getattr(job, "ttl_seconds", None)
+    ttl_seconds = cast(int | None, getattr(job, "ttl_seconds", None))
     if ttl_seconds is None:
-        legacy_expires_at = getattr(job, "legacy_expires_at", None)
-        if not legacy_expires_at:
+        expires_dt = _legacy_unknown_ttl_expires_at(
+            completed_at,
+            getattr(job, "legacy_expires_at", None),
+        )
+        if expires_dt is None:
             return False
-        try:
-            return datetime.now(UTC) <= datetime.fromisoformat(legacy_expires_at)
-        except ValueError:
-            return False
+        return datetime.now(UTC) <= expires_dt
+    if completed_at is None:
+        return False
+    completed_dt = _parse_iso_datetime_utc(completed_at)
+    if completed_dt is None:
+        return False
     age_seconds = (datetime.now(UTC) - completed_dt).total_seconds()
     return age_seconds <= ttl_seconds
 
@@ -469,9 +658,10 @@ def _build_replacement_queue_or_current(expected_queue):
         # Previously caught all Exception including MemoryError, KeyboardInterrupt, etc.
         # Only catch database/file errors that indicate transient backend issues.
         except (sqlite3.Error, OSError):
-            if getattr(expected_queue, "state", None) in {"backend_error", "external_owner"}:
-                expected_queue.state = "backend_error"
-                return expected_queue
+            with _JOB_QUEUE_LOCK:
+                if getattr(expected_queue, "state", None) in {"backend_error", "external_owner"}:
+                    expected_queue.state = "backend_error"
+                    return expected_queue
             raise
         if _replace_job_queue_if_current(expected_queue, replacement_queue):
             return replacement_queue
@@ -493,9 +683,8 @@ def _is_owner_process_alive(owner_pid: int) -> bool:
 
 
 def _is_stale_heartbeat(heartbeat_at: str) -> bool:
-    try:
-        heartbeat_dt = datetime.fromisoformat(heartbeat_at)
-    except ValueError:
+    heartbeat_dt = _parse_iso_datetime_utc(heartbeat_at)
+    if heartbeat_dt is None:
         return True
     age_seconds = (datetime.now(UTC) - heartbeat_dt).total_seconds()
     return age_seconds > _QUEUE_LEASE_TIMEOUT_SECONDS
@@ -519,9 +708,10 @@ def _external_owner_backend_still_owned(queue) -> bool:
         raise RuntimeError(f"Job queue backend read failed during repair: {exc}")
     if row is None:
         return False
-    owner_pid = int(row["owner_pid"])
     heartbeat_at = row["heartbeat_at"]
-    return _is_owner_process_alive(owner_pid) and not _is_stale_heartbeat(heartbeat_at)
+    # A fresh heartbeat is the authoritative lease signal.
+    # Missing or dead PID metadata should not override a still-valid lease.
+    return not _is_stale_heartbeat(heartbeat_at)
 
 
 def _start_job_queue_repair_loop() -> None:
@@ -529,10 +719,15 @@ def _start_job_queue_repair_loop() -> None:
 
     def repair_loop() -> None:
         global JOB_QUEUE, _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-        assert stop_event is not None
+        if stop_event is None:
+            return
         while not stop_event.wait(0.0):
             with _JOB_QUEUE_LOCK:
                 queue = JOB_QUEUE
+                if queue is None:
+                    _JOB_QUEUE_REPAIR_THREAD = None
+                    _JOB_QUEUE_REPAIR_STOP = None
+                    return
                 state = getattr(queue, "state", None)
                 if state not in _RECOVERABLE_QUEUE_STATES:
                     _JOB_QUEUE_REPAIR_THREAD = None
@@ -543,6 +738,7 @@ def _start_job_queue_repair_loop() -> None:
             except RuntimeError as e:
                 _logger.debug("Failed to close queue for repair: %s", e)
             else:
+                # Queue closed successfully — attempt recovery based on state.
                 if state == "external_owner":
                     try:
                         backend_still_owned = _external_owner_backend_still_owned(queue)
@@ -552,26 +748,18 @@ def _start_job_queue_repair_loop() -> None:
                         if backend_still_owned:
                             stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
                             continue
-                if state == "backend_error":
-                    stop_event.wait(_BACKEND_ERROR_REPAIR_RETRY_SECONDS)
-                else:
-                    if state == "external_owner":
-                        replacement_queue = _build_replacement_queue_or_current(queue)
-                        if replacement_queue is not queue:
-                            _JOB_QUEUE_REPAIR_THREAD = None
-                            _JOB_QUEUE_REPAIR_STOP = None
-                            return
-                        stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
-                        continue
+                # Try building a replacement queue.
                 replacement_queue = _build_replacement_queue_or_current(queue)
                 if replacement_queue is not queue:
                     _JOB_QUEUE_REPAIR_THREAD = None
                     _JOB_QUEUE_REPAIR_STOP = None
                     return
-                if state == "backend_error" and replacement_queue is queue:
+                # Backend error with no replacement possible — give up.
+                if state == "backend_error":
                     _JOB_QUEUE_REPAIR_THREAD = None
                     _JOB_QUEUE_REPAIR_STOP = None
                     return
+            # Wait before retrying based on the current state.
             if state == "external_owner":
                 stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
             elif state == "backend_error":
@@ -611,7 +799,8 @@ def _start_job_queue_watchdog() -> None:
     global _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
 
     def watchdog_loop() -> None:
-        assert stop_event is not None
+        if stop_event is None:
+            return
         while not stop_event.wait(0.5):
             _job_queue_watchdog_tick()
 
@@ -642,12 +831,24 @@ def _init_job_queue(previous_queue=None):
 
     # BUG FIX #5: Use getter functions instead of cached module-level variables.
     # This prevents issues with stale references during module reload.
-    _stop_control_thread("Previous job queue repair thread", _get_previous_repair_thread(), _get_previous_repair_stop())
-    _stop_control_thread("Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP)
+    _stop_control_thread(
+        "Previous job queue repair thread",
+        _get_previous_repair_thread(),
+        _get_previous_repair_stop(),
+    )
+    _stop_control_thread(
+        "Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
+    )
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
-    _stop_control_thread("Previous job queue watchdog thread", _get_previous_watchdog_thread(), _get_previous_watchdog_stop())
-    _stop_control_thread("Job queue watchdog thread", _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP)
+    _stop_control_thread(
+        "Previous job queue watchdog thread",
+        _get_previous_watchdog_thread(),
+        _get_previous_watchdog_stop(),
+    )
+    _stop_control_thread(
+        "Job queue watchdog thread", _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
+    )
     _JOB_QUEUE_WATCHDOG_STOP = None
     _JOB_QUEUE_WATCHDOG_THREAD = None
     if previous_queue is not None:
@@ -682,14 +883,16 @@ def _ensure_job_queue_initialized():
     allowing the server to start and serve endpoints that don't require the job queue.
     """
     global JOB_QUEUE, _job_queue_initialized
-    if _job_queue_initialized and JOB_QUEUE is not None:
+    if _job_queue_initialized:
         return
     with _JOB_QUEUE_INIT_LOCK:
         # Double-check after acquiring lock to prevent race condition
-        if _job_queue_initialized and JOB_QUEUE is not None:
+        if _job_queue_initialized:
             return
         if JOB_QUEUE is not None:
             _job_queue_initialized = True
+            _maybe_start_job_queue_repair()
+            _start_job_queue_watchdog()
             return
         try:
             JOB_QUEUE = _init_job_queue(globals().get("JOB_QUEUE"))
@@ -702,6 +905,7 @@ def _ensure_job_queue_initialized():
             # ValueError: configuration errors
             # RuntimeError: initialization failures
             # ImportError: missing dependencies
+            _job_queue_initialized = True  # Prevent repeated retries
             _logger.error("Failed to initialize job queue: %s", e)
             # JOB_QUEUE remains None; endpoints will handle unavailable queue
 
@@ -735,15 +939,21 @@ def _get_job_queue():
         # Re-check state under lock after repair failure
         with _JOB_QUEUE_LOCK:
             if getattr(queue_to_repair, "state", None) in _RECOVERABLE_QUEUE_STATES:
-                # JOB_QUEUE may have changed, return current value
-                return JOB_QUEUE
+                current = JOB_QUEUE
+                if current is None:
+                    raise RuntimeError("Job queue is unavailable")
+                return current
         raise
     # Pass the queue we attempted to repair, rebuild will handle TOCTOU internally
     return _build_replacement_queue_or_current(queue_to_repair)
 
 
 def _get_job_record(job_id: str):
-    queue = _get_job_queue()
+    try:
+        queue = _get_job_queue()
+    except RuntimeError:
+        # Queue unavailable — treat as "job not found" so caller gets 404
+        return None
     unavailable_error: RuntimeError | None = None
     try:
         job = _read_job_from_queue(queue, job_id)
@@ -775,11 +985,14 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         if queue_obj is None:
             return None
         try:
-            return queue_obj.pending_count(cleanup_expired=False)
-        except RuntimeError:
+            return cast(int, queue_obj.pending_count(cleanup_expired=False))
+        except (RuntimeError, sqlite3.Error):
             return None
         except TypeError:
-            return queue_obj.pending_count()
+            try:
+                return cast(int, queue_obj.pending_count())
+            except (RuntimeError, sqlite3.Error):
+                return None
 
     def count_unknown_ttl_jobs(queue_obj) -> int:
         connect = getattr(queue_obj, "_connect", None)
@@ -787,30 +1000,21 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
             return 0
         try:
             with closing(connect()) as conn:
-                rows = conn.execute(
-                    """
+                rows = conn.execute("""
                     SELECT completed_at, legacy_expires_at
                     FROM jobs
-                    WHERE completed_at IS NOT NULL AND ttl_seconds IS NULL
-                    """
-                ).fetchall()
+                    WHERE ttl_seconds IS NULL
+                    """).fetchall()
         except Exception as exc:
-            _logger.debug("Error counting unknown TTL jobs: %s", exc)
+            _logger.warning("Error counting unknown TTL jobs: %s", exc, exc_info=True)
             return 0
         count = 0
         now = datetime.now(UTC)
         for row in rows:
             completed_at = row["completed_at"] if isinstance(row, sqlite3.Row) else row[0]
             legacy_expires_at = row["legacy_expires_at"] if isinstance(row, sqlite3.Row) else row[1]
-            try:
-                datetime.fromisoformat(completed_at)
-            except (TypeError, ValueError):
-                continue
-            if not legacy_expires_at:
-                continue
-            try:
-                expires_dt = datetime.fromisoformat(legacy_expires_at)
-            except ValueError:
+            expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
+            if expires_dt is None:
                 continue
             if now <= expires_dt:
                 count += 1
@@ -829,7 +1033,9 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
     legacy_pending = 0
     legacy_unknown_ttl_jobs = 0
     legacy_db_paths: list[str] = []
-    seen_db_paths = {str(getattr(current_queue, "db_path", JOB_DB_PATH))}
+    seen_db_paths = set()
+    if current_queue is not None:
+        seen_db_paths.add(str(getattr(current_queue, "db_path", JOB_DB_PATH)))
     pending_unknown = current_pending is None
     current_unknown_ttl_jobs = count_unknown_ttl_jobs(current_queue)
     for legacy_queue in history:
@@ -853,7 +1059,9 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         "current_max_queued_jobs": current_max_queued_jobs,
         "current_pending": current_pending,
         "legacy_pending": legacy_pending,
-        "pending_visible_total": None if pending_unknown else current_pending + legacy_pending,
+        "pending_visible_total": (
+            None if pending_unknown or current_pending is None else current_pending + legacy_pending
+        ),
         "legacy_visible_queues": len(legacy_db_paths),
         "legacy_db_paths": legacy_db_paths,
         "pending_unknown": pending_unknown,
@@ -868,20 +1076,60 @@ def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     """Enforce API key auth when configured.
 
     Uses secrets.compare_digest for constant-time comparison to prevent timing attacks.
+    Returns an identical "Unauthorized" detail for both missing and wrong keys so
+    callers cannot enumerate whether a key is configured or simply incorrect.
     """
     import secrets
+
     if API_KEY_CONFIG_ERROR:
         raise HTTPException(status_code=500, detail="Server API key configuration is invalid")
     if OPTIONAL_API_KEY is None:
         return
-    if x_api_key is None or not secrets.compare_digest(x_api_key, OPTIONAL_API_KEY):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    # Normalise None to an empty string so compare_digest runs in both branches
+    # (both wrong result + identical error message = no enumeration vector).
+    provided = x_api_key if x_api_key is not None else ""
+    if not secrets.compare_digest(provided, OPTIONAL_API_KEY):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _is_valid_ip(value: str) -> bool:
+    """Return True if the string parses as a valid IPv4/IPv6 address."""
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _rate_limit_client_id(request: Request, x_api_key: str | None) -> str:
     import hashlib
+
     if OPTIONAL_API_KEY is not None and x_api_key is not None:
         return hashlib.sha256(x_api_key.encode()).hexdigest()[:16]
+    # Support X-Forwarded-For / X-Real-IP when behind trusted proxies
+    trusted_proxies = os.getenv("MDI_TRUSTED_PROXY_IPS", "").strip()
+    if trusted_proxies and request.client is not None and request.client.host:
+        trusted_set = {ip.strip() for ip in trusted_proxies.split(",") if ip.strip()}
+        if request.client.host in trusted_set:
+            # Use X-Real-IP first, then rightmost untrusted IP from X-Forwarded-For.
+            # Each header value MUST parse as a valid IP; otherwise an attacker
+            # could send arbitrary strings to bypass per-IP rate-limit buckets.
+            real_ip = request.headers.get("x-real-ip")
+            if real_ip:
+                candidate = real_ip.strip()
+                if _is_valid_ip(candidate):
+                    return f"ip:{candidate}"
+            xff = request.headers.get("x-forwarded-for")
+            if xff:
+                parts = [p.strip() for p in xff.split(",")]
+                # Rightmost untrusted IP (walk right-to-left, skip trusted)
+                for part in reversed(parts):
+                    if part in trusted_set:
+                        continue
+                    if _is_valid_ip(part):
+                        return f"ip:{part}"
     if request.client is not None and request.client.host:
         return f"ip:{request.client.host}"
     return "anonymous:unknown"
@@ -902,30 +1150,47 @@ def _require_rate_limit(request: Request, x_api_key: str | None = Header(default
             headers={"Retry-After": str(retry_after)},
         )
 
+
 def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
     """Compatibility wrapper exposing extractor comparison at module scope."""
     return CompareExtractorsUseCase().execute(html, model=model)
 
 
-@app.post("/api/v1/ingest", response_model=IngestResponse, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.post(
+    "/api/v1/ingest",
+    response_model=IngestResponse,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def ingest_endpoint(request: IngestRequest):
     """Ingest a single URL and return structured markdown plus optional blocks/chunks."""
     return await handle_ingest(request, ingest)
 
 
-@app.post("/api/v1/ingest/retry", response_model=IngestResponse, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.post(
+    "/api/v1/ingest/retry",
+    response_model=IngestResponse,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def retry_ingest_endpoint(request: RetryIngestRequest):
     """Ingest with automatic retry logic and timeout escalation."""
     return await handle_retry_ingest(request, retry_ingest)
 
 
-@app.post("/api/v1/ingest/batch", response_model=BatchIngestResponse, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.post(
+    "/api/v1/ingest/batch",
+    response_model=BatchIngestResponse,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def batch_ingest_endpoint(request: BatchIngestRequest):
     """Process a batch synchronously for simple clients."""
     return await handle_sync_batch(request, ingest_many)
 
 
-@app.post("/api/v1/jobs/batch", response_model=BatchJobAccepted, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.post(
+    "/api/v1/jobs/batch",
+    response_model=BatchJobAccepted,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def batch_job_submit(request: BatchIngestRequest):
     """Queue a batch ingestion job and return a polling handle."""
     job_queue = _get_job_queue()
@@ -937,13 +1202,21 @@ async def batch_job_submit(request: BatchIngestRequest):
     )
 
 
-@app.get("/api/v1/jobs/{job_id}", response_model=BatchJobResponse, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.get(
+    "/api/v1/jobs/{job_id}",
+    response_model=BatchJobResponse,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def batch_job_status(job_id: str):
     """Poll an async batch job."""
     return await handle_batch_status(job_id, _get_job_record)
 
 
-@app.post("/api/v1/security/report", response_model=SecurityReportResponse, dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)])
+@app.post(
+    "/api/v1/security/report",
+    response_model=SecurityReportResponse,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+)
 async def security_report_endpoint(request: IngestRequest):
     """Generate a detailed security report."""
     return await handle_security_report(request, generate_security_report)
@@ -975,12 +1248,13 @@ async def stats_endpoint():
     }
     jobs_payload = payload["job_queue"]
     jobs_payload["current_state"] = snapshot["current_state"]
-    jobs_payload["current_db_path"] = snapshot["current_db_path"]
+    # Only expose the basename — full filesystem paths are sensitive.
+    jobs_payload["current_db_name"] = Path(snapshot["current_db_path"]).name
     jobs_payload["current_pending"] = snapshot["current_pending"]
     jobs_payload["legacy_pending"] = snapshot["legacy_pending"]
     jobs_payload["pending_visible_total"] = snapshot["pending_visible_total"]
     jobs_payload["legacy_visible_queues"] = snapshot["legacy_visible_queues"]
-    jobs_payload["legacy_db_paths"] = snapshot["legacy_db_paths"]
+    jobs_payload["legacy_db_count"] = len(snapshot["legacy_db_paths"])
     jobs_payload["repair_in_progress"] = snapshot["repair_in_progress"]
     jobs_payload["current_unknown_ttl_jobs"] = snapshot["current_unknown_ttl_jobs"]
     jobs_payload["legacy_unknown_ttl_jobs"] = snapshot["legacy_unknown_ttl_jobs"]
@@ -994,7 +1268,18 @@ async def stats_endpoint():
 
 @app.get("/api/v1/health")
 async def health():
-    """Health check endpoint."""
+    """Public health check endpoint — does NOT expose internal paths/state."""
+    snapshot = _snapshot_job_subsystem(start_repair=False)
+    return {
+        "status": snapshot["status"],
+        "version": API_VERSION,
+        "service": "MarkDownIngress API",
+    }
+
+
+@app.get("/api/v1/health/detailed", dependencies=[Depends(_require_api_key)])
+async def health_detailed():
+    """Authenticated health check with full job-queue observability."""
     snapshot = _snapshot_job_subsystem(start_repair=False)
     return {
         "status": snapshot["status"],
@@ -1017,8 +1302,8 @@ async def health():
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
-    return build_root_payload(API_VERSION)
+    """Public root endpoint — minimal metadata only."""
+    return {"name": "markdown-ingress", "version": API_VERSION, "docs": "/docs"}
 
 
 # Compatibility aliases for existing clients/tests.
@@ -1064,7 +1349,8 @@ app.add_api_route("/health", health, methods=["GET"])
 
 def main():
     """Run the server."""
-    uvicorn.run("markdown_ingress.api_server:app", host="0.0.0.0", port=8000, reload=False)
+    host = os.getenv("MDI_HOST") or "127.0.0.1"
+    uvicorn.run("markdown_ingress.api_server:app", host=host, port=8000, reload=False)
 
 
 if __name__ == "__main__":

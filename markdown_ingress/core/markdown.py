@@ -44,10 +44,13 @@ class MarkdownConverter:
 
         # Normalize the markdown content
         markdown = self.normalizer.normalize(markdown)
-        markdown = self._restore_placeholders(markdown, placeholders)
 
         # Clean up markdown artifacts
         markdown = self._clean_markdown(markdown)
+        markdown = self._restore_placeholders(markdown, placeholders)
+
+        if not markdown.endswith("\n"):
+            markdown += "\n"
 
         return markdown
 
@@ -62,13 +65,21 @@ class MarkdownConverter:
             link["href"] = normalized_href
 
         for index, pre in enumerate(soup.find_all("pre"), start=1):
-            code = pre.get_text("\n", strip=False)
+            code = pre.get_text(strip=False)
             language = None
             code_tag = pre.find("code")
             if code_tag:
-                for class_name in code_tag.get("class", []):
-                    if class_name.startswith("language-"):
-                        language = class_name.removeprefix("language-")
+                raw_classes = code_tag.get("class")
+                if isinstance(raw_classes, str):
+                    classes: list[str] = [raw_classes]
+                else:
+                    classes = list(raw_classes or [])
+                for _pfx in ("language-", "lang-", "highlight-"):
+                    for class_name in classes:
+                        if class_name.startswith(_pfx):
+                            language = class_name[len(_pfx):]
+                            break
+                    if language:
                         break
             token = f"\x00MDI_CODE_{uuid.uuid4().hex}\x00"
             # Don't strip - preserve the full code block structure including trailing newline
@@ -81,12 +92,16 @@ class MarkdownConverter:
 
         for index, table in enumerate(soup.find_all("table"), start=1):
             rows = []
-            for tr in table.find_all("tr"):
-                row = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            first_row_has_th = False
+            for i, tr in enumerate(table.find_all("tr")):
+                cells = tr.find_all(["th", "td"])
+                row = [cell.get_text(" ", strip=True) for cell in cells]
                 if row:
+                    if i == 0 and any(cell.name == "th" for cell in cells):
+                        first_row_has_th = True
                     rows.append(row)
             token = f"\x00MDI_TABLE_{uuid.uuid4().hex}\x00"
-            placeholders[token] = render_markdown_table(rows).strip()
+            placeholders[token] = render_markdown_table(rows, has_header=first_row_has_th).strip()
             table.replace_with(token)
 
         return str(soup), placeholders
@@ -121,7 +136,9 @@ class MarkdownConverter:
         # Ensure consistent list spacing
         # No blank lines within list items (repeat until stable)
         prev = None
-        while prev != markdown:
+        for _ in range(50):
+            if prev == markdown:
+                break
             prev = markdown
             markdown = re.sub(r"(\n[-*+]\s.+)\n\n(\s*[-*+]\s)", r"\1\n\2", markdown)
 

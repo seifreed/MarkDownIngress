@@ -6,14 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime
-from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
-
-import re
-
-logger = logging.getLogger(__name__)
 
 from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
 from markdown_ingress.api_runtime import UNSET, build_runtime_config
@@ -26,34 +19,15 @@ from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
+from markdown_ingress.reporting import (
+    persist_report_for_document as _persist_report_for_document,
+)
+from markdown_ingress.reporting import (
+    persist_security_report as _persist_security_report,
+)
 from markdown_ingress.shared_results import BatchResult
 
-
-def _report_filename(report: SecurityReport) -> str:
-    """Build a stable, human-readable JSON filename for an auto-saved report."""
-    timestamp = datetime.fromisoformat(report.timestamp.replace("Z", "+00:00")).strftime("%Y%m%dT%H%M%SZ")
-    hostname = (urlsplit(report.url).hostname or "report").lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", hostname).strip("-") or "report"
-    return f"{timestamp}-{slug}.json"
-
-
-def _persist_security_report(report: SecurityReport, reports_dir: str) -> Path:
-    """Persist a generated security report JSON to the configured reports directory."""
-    directory = Path(reports_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / _report_filename(report)
-    if target.exists():
-        stem = target.stem
-        suffix = target.suffix
-        counter = 2
-        while True:
-            candidate = directory / f"{stem}-{counter}{suffix}"
-            if not candidate.exists():
-                target = candidate
-                break
-            counter += 1
-    report.save(str(target))
-    return target
+logger = logging.getLogger(__name__)
 
 
 def ingest_resolved(
@@ -63,7 +37,11 @@ def ingest_resolved(
     playwright_available: bool = PLAYWRIGHT_AVAILABLE,
 ) -> SafeDocument:
     """Execute ingestion using a fully resolved runtime config."""
-    return IngestUseCase(playwright_available=playwright_available).execute(url, config)
+    use_case = IngestUseCase(playwright_available=playwright_available)
+    try:
+        return use_case.execute(url, config)
+    finally:
+        use_case.close()
 
 
 def build_runtime_kwargs(
@@ -71,6 +49,7 @@ def build_runtime_kwargs(
     config: IngestConfig | FileConfig | None = None,
     mode: Literal["fast", "render", "auto"] | None = None,
     strict: bool | None = None,
+    allow_local_urls=UNSET,
     model: str | None = None,
     timeout: float | None = None,
     auto_render_threshold: int | None = None,
@@ -87,7 +66,9 @@ def build_runtime_kwargs(
     policy_name: str | None = None,
     custom_patterns: list[str] | None = None,
     plugin_dirs: list[str] | None = None,
+    output_format: Literal["text", "json", "markdown"] | None = None,
     output_profile: str | None = None,
+    output_formats: list[str] | None = None,
     extract_blocks: bool | None = None,
     chunking_strategy: Literal["none", "heading", "size"] | None = None,
     chunk_size: int | None = None,
@@ -96,7 +77,13 @@ def build_runtime_kwargs(
     normalize_multilingual: bool | None = None,
     include_security_explanation: bool | None = None,
     include_observability: bool | None = None,
-    render_cost_budget: int | None = None,
+    save_reports: bool | None = None,
+    reports_dir: str | None = None,
+    fetcher_user_agent: str | None = None,
+    domain_request_interval: float | None = None,
+    circuit_breaker_threshold: int | None = None,
+    circuit_breaker_open_seconds: float | None = None,
+    render_cost_budget=UNSET,
     domain_policies: list[dict] | list[DomainPolicy] | None = None,
 ) -> dict:
     """Collect the full public runtime config argument set into one dict."""
@@ -104,6 +91,7 @@ def build_runtime_kwargs(
         "config": config,
         "mode": mode,
         "strict": strict,
+        "allow_local_urls": allow_local_urls,
         "model": model,
         "timeout": timeout,
         "auto_render_threshold": auto_render_threshold,
@@ -120,7 +108,9 @@ def build_runtime_kwargs(
         "policy_name": policy_name,
         "custom_patterns": custom_patterns,
         "plugin_dirs": plugin_dirs,
+        "output_format": output_format,
         "output_profile": output_profile,
+        "output_formats": output_formats,
         "extract_blocks": extract_blocks,
         "chunking_strategy": chunking_strategy,
         "chunk_size": chunk_size,
@@ -129,15 +119,37 @@ def build_runtime_kwargs(
         "normalize_multilingual": normalize_multilingual,
         "include_security_explanation": include_security_explanation,
         "include_observability": include_observability,
+        "save_reports": save_reports,
+        "reports_dir": reports_dir,
+        "fetcher_user_agent": fetcher_user_agent,
+        "domain_request_interval": domain_request_interval,
+        "circuit_breaker_threshold": circuit_breaker_threshold,
+        "circuit_breaker_open_seconds": circuit_breaker_open_seconds,
         "render_cost_budget": render_cost_budget,
         "domain_policies": domain_policies,
     }
 
 
-def ingest_impl(url: str, *, playwright_available: bool = PLAYWRIGHT_AVAILABLE, **runtime_kwargs) -> SafeDocument:
+def ingest_impl(
+    url: str, *, playwright_available: bool = PLAYWRIGHT_AVAILABLE, **runtime_kwargs
+) -> SafeDocument:
     """Shared implementation for the synchronous ingest facade."""
     runtime_config = build_runtime_config(**runtime_kwargs)
-    return ingest_resolved(url, runtime_config, playwright_available=playwright_available)
+    try:
+        doc = ingest_resolved(url, runtime_config, playwright_available=playwright_available)
+    except PolicyBlockedError as exc:
+        if runtime_config.save_reports and exc.document is not None:
+            try:
+                _persist_report_for_document(exc.document, runtime_config.reports_dir)
+            except OSError as persist_exc:
+                logger.warning("Failed to persist security report for %s: %s", url, persist_exc)
+        raise
+    if runtime_config.save_reports:
+        try:
+            _persist_report_for_document(doc, runtime_config.reports_dir)
+        except OSError as exc:
+            logger.warning("Failed to persist security report for %s: %s", url, exc)
+    return doc
 
 
 async def ingest_async_impl(
@@ -152,12 +164,34 @@ async def ingest_async_impl(
     already dispatched to the background thread.
     """
     runtime_config = build_runtime_config(**runtime_kwargs)
-    return await asyncio.to_thread(
-        ingest_resolved,
-        url,
-        runtime_config,
-        playwright_available=playwright_available,
-    )
+    try:
+        doc = await asyncio.to_thread(
+            ingest_resolved,
+            url,
+            runtime_config,
+            playwright_available=playwright_available,
+        )
+    except PolicyBlockedError as exc:
+        if runtime_config.save_reports and exc.document is not None:
+            try:
+                await asyncio.to_thread(
+                    _persist_report_for_document,
+                    exc.document,
+                    runtime_config.reports_dir,
+                )
+            except OSError as persist_exc:
+                logger.warning("Failed to persist security report for %s: %s", url, persist_exc)
+        raise
+    if runtime_config.save_reports:
+        try:
+            await asyncio.to_thread(
+                _persist_report_for_document,
+                doc,
+                runtime_config.reports_dir,
+            )
+        except OSError as exc:
+            logger.warning("Failed to persist security report for %s: %s", url, exc)
+    return doc
 
 
 async def ingest_many_async_impl(
@@ -173,15 +207,36 @@ async def ingest_many_async_impl(
         raise ValueError("max_concurrent must be >= 1")
 
     url_list = list(urls)
-    batch_use_case = BatchIngestUseCase(
-        ingest_use_case=IngestUseCase(playwright_available=playwright_available)
-    )
-    return await batch_use_case.execute(
-        url_list,
-        config_builder=lambda: build_runtime_config(**runtime_kwargs),
-        max_concurrent=max_concurrent,
-        on_progress=on_progress,
-    )
+    runtime_config = build_runtime_config(**runtime_kwargs)
+    use_case = IngestUseCase(playwright_available=playwright_available)
+    try:
+        batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+        result = await batch_use_case.execute(
+            url_list,
+            config_builder=runtime_config.clone,
+            max_concurrent=max_concurrent,
+            on_progress=on_progress,
+        )
+        if runtime_config.save_reports:
+            for index, doc in enumerate(result.documents):
+                if doc is None:
+                    continue
+                try:
+                    await asyncio.to_thread(
+                        _persist_report_for_document,
+                        doc,
+                        runtime_config.reports_dir,
+                    )
+                except OSError as exc:
+                    target_url = url_list[index] if index < len(url_list) else "<unknown>"
+                    logger.warning(
+                        "Failed to persist security report for %s: %s",
+                        target_url,
+                        exc,
+                    )
+        return result
+    finally:
+        use_case.close()
 
 
 def ingest_many_sync_impl(
@@ -206,13 +261,16 @@ def ingest_many_sync_impl(
             )
         )
 
-    raise RuntimeError("ingest_many() cannot run inside an active event loop; use ingest_many_async() instead")
+    raise RuntimeError(
+        "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
+    )
 
 
 def retry_ingest_impl(
     url: str,
     mode: Literal["fast", "render", "auto"] = "auto",
     strict: bool = True,
+    allow_local_urls=UNSET,
     model: str = "gpt-4",
     max_retries: int = 3,
     enable_stealth: bool = True,
@@ -241,12 +299,15 @@ def retry_ingest_impl(
             use_extreme = attempt == max_retries - 1
             if attempt > 0:
                 logger.info("Retry attempt %d/%d for %s", attempt + 1, max_retries, url)
-                logger.info("Timeout: %ss, Stealth: %s, Extreme: %s", timeout, use_stealth, use_extreme)
+                logger.info(
+                    "Timeout: %ss, Stealth: %s, Extreme: %s", timeout, use_stealth, use_extreme
+                )
 
             doc = public_ingest(
                 url,
                 mode=mode,
                 strict=strict,
+                allow_local_urls=allow_local_urls,
                 model=model,
                 timeout=timeout,
                 stealth=use_stealth,
@@ -262,7 +323,7 @@ def retry_ingest_impl(
         except Exception as exc:
             last_exception = exc
             error_type = type(exc).__name__
-            is_retryable = not isinstance(exc, PolicyBlockedError) and isinstance(
+            if not isinstance(exc, PolicyBlockedError) and isinstance(
                 exc,
                 (
                     TimeoutError,
@@ -270,9 +331,12 @@ def retry_ingest_impl(
                     httpx.ConnectError,
                     httpx.NetworkError,
                 ),
-            )
-            if isinstance(exc, httpx.HTTPStatusError):
+            ):
+                is_retryable = True
+            elif isinstance(exc, httpx.HTTPStatusError) and not isinstance(exc, PolicyBlockedError):
                 is_retryable = exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+            else:
+                is_retryable = False
             if not is_retryable:
                 retryable_error_names = (
                     "ConnectTimeout",
@@ -280,7 +344,7 @@ def retry_ingest_impl(
                     "ConnectionError",
                     "TargetClosedError",
                 )
-                is_retryable = any(name in error_type for name in retryable_error_names)
+                is_retryable = any(error_type.startswith(name) for name in retryable_error_names)
             if attempt < max_retries - 1:
                 if is_retryable:
                     wait_time = 2**attempt
@@ -302,9 +366,13 @@ def retry_ingest_impl(
 def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     """Generate a detailed security report through the dedicated use case."""
     config = build_runtime_config(**runtime_kwargs)
-    report = GenerateSecurityReportUseCase(
-        ingest_use_case=IngestUseCase(playwright_available=PLAYWRIGHT_AVAILABLE)
-    ).execute(url, config)
+    use_case = IngestUseCase(playwright_available=PLAYWRIGHT_AVAILABLE)
+    try:
+        report = GenerateSecurityReportUseCase(
+            ingest_use_case=use_case
+        ).execute(url, config)
+    finally:
+        use_case.close()
     if config.save_reports:
         _persist_security_report(report, config.reports_dir)
     return report

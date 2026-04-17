@@ -12,14 +12,69 @@ from dataclasses import MISSING, dataclass, field, fields, replace
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from markdown_ingress.core.ssrf import normalize_domain_pattern
+
 _logger = logging.getLogger(__name__)
 
 # Valid values for RenderConfig.wait_until
 VALID_WAIT_UNTIL = ("networkidle", "load", "domcontentloaded")
 VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
+VALID_OUTPUT_REPRESENTATIONS = ("markdown", "blocks", "chunks", "metadata", "security")
+VALID_POLICY_NAMES = ("permissive", "normal", "strict", "paranoid", "moderate")
+VALID_OUTPUT_PROFILES = ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive")
 
 
-def _collect_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], frozenset[str]]:
+def _validate_output_representations(value: list[str]) -> list[str]:
+    """Validate requested document output representations."""
+    if not isinstance(value, list):
+        raise ValueError(
+            "output_formats must be a non-empty list of supported format strings, "
+            f"got {type(value).__name__}"
+        )
+    if not value:
+        raise ValueError("output_formats must be a non-empty list of supported format strings")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"output_formats[{index}] must be a string, got {type(item).__name__}")
+        if item not in VALID_OUTPUT_REPRESENTATIONS:
+            raise ValueError(
+                "Invalid output_formats entry "
+                f"'{item}'. Must be one of: {', '.join(VALID_OUTPUT_REPRESENTATIONS)}"
+            )
+        normalized.append(item)
+    return normalized
+
+
+def _validate_output_profile_name(value: str | None) -> str | None:
+    """Validate a named output profile."""
+    if value is None:
+        return None
+    if value not in VALID_OUTPUT_PROFILES:
+        raise ValueError(
+            f"Unknown output profile '{value}'. "
+            f"Valid profiles: {', '.join(VALID_OUTPUT_PROFILES)}"
+        )
+    return value
+
+
+def _validate_optional_string_list(field_name: str, value: list[str] | None) -> list[str] | None:
+    """Validate optional list[str] fields used by domain-specific rules."""
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
+        normalized.append(item)
+    return normalized
+
+
+def _collect_init_values(
+    cls, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[dict[str, Any], frozenset[str]]:
     """Resolve dataclass-style init arguments while preserving explicit keys."""
     init_fields = [config_field for config_field in fields(cls) if config_field.init]
     if len(args) > len(init_fields):
@@ -35,7 +90,9 @@ def _collect_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, Any]) -> 
     for index, config_field in enumerate(init_fields):
         if index < len(args):
             if config_field.name in remaining_kwargs:
-                raise TypeError(f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'")
+                raise TypeError(
+                    f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'"
+                )
             values[config_field.name] = args[index]
             explicit.add(config_field.name)
             continue
@@ -53,11 +110,15 @@ def _collect_init_values(cls, args: tuple[Any, ...], kwargs: dict[str, Any]) -> 
             values[config_field.name] = config_field.default_factory()
             continue
 
-        raise TypeError(f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'")
+        raise TypeError(
+            f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'"
+        )
 
     if remaining_kwargs:
         unexpected = next(iter(remaining_kwargs))
-        raise TypeError(f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'")
+        raise TypeError(
+            f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'"
+        )
 
     return values, frozenset(explicit)
 
@@ -138,31 +199,72 @@ class DomainPolicy:
     extract_metadata: bool | None = None
     extract_links: bool | None = None
     output_profile: str | None = None
-    allowed_tags: list[str] = field(default_factory=list)
-    blocked_tags: list[str] = field(default_factory=list)
-    blocked_selectors: list[str] = field(default_factory=list)
-    unwrap_selectors: list[str] = field(default_factory=list)
+    allowed_tags: list[str] | None = None
+    blocked_tags: list[str] | None = None
+    blocked_selectors: list[str] | None = None
+    unwrap_selectors: list[str] | None = None
     notes: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         if not self.domain or not self.domain.strip():
             raise ValueError("DomainPolicy.domain cannot be empty")
+        _validate_output_profile_name(self.output_profile)
+        self.allowed_tags = _validate_optional_string_list("allowed_tags", self.allowed_tags)
+        self.blocked_tags = _validate_optional_string_list("blocked_tags", self.blocked_tags)
+        self.blocked_selectors = _validate_optional_string_list(
+            "blocked_selectors", self.blocked_selectors
+        )
+        self.unwrap_selectors = _validate_optional_string_list(
+            "unwrap_selectors", self.unwrap_selectors
+        )
+        if self.policy_name is not None and self.policy_name not in VALID_POLICY_NAMES:
+            raise ValueError(
+                f"Invalid policy_name '{self.policy_name}'. "
+                f"Must be one of: {', '.join(VALID_POLICY_NAMES)}"
+            )
+        if self.block_threshold is not None and not 0.0 <= self.block_threshold <= 1.0:
+            raise ValueError(
+                f"DomainPolicy.block_threshold must be between 0.0 and 1.0, got {self.block_threshold}"
+            )
+        if self.warn_threshold is not None and not 0.0 <= self.warn_threshold <= 1.0:
+            raise ValueError(
+                f"DomainPolicy.warn_threshold must be between 0.0 and 1.0, got {self.warn_threshold}"
+            )
+        if self.timeout is not None and self.timeout <= 0.0:
+            raise ValueError(f"DomainPolicy.timeout must be > 0.0, got {self.timeout}")
+        if self.auto_render_threshold is not None and self.auto_render_threshold < 1:
+            raise ValueError(
+                "DomainPolicy.auto_render_threshold must be >= 1, "
+                f"got {self.auto_render_threshold}"
+            )
+        if self.request_interval is not None and self.request_interval < 0.0:
+            raise ValueError(
+                "DomainPolicy.request_interval must be >= 0.0, " f"got {self.request_interval}"
+            )
+        if self.render_cost_budget is not None and self.render_cost_budget < 1:
+            raise ValueError(
+                "DomainPolicy.render_cost_budget must be >= 1 when provided, "
+                f"got {self.render_cost_budget}"
+            )
 
     def matches(self, url: str) -> bool:
         """Return whether this policy applies to the URL hostname.
 
         Uses ``urlsplit().hostname`` which strips port numbers automatically,
         so policies match regardless of the port in the URL.
+
+        Also strips port from the domain field if present (e.g., "example.com:8080"
+        becomes "example.com") to ensure consistent matching.
         """
         # urlsplit().hostname returns lowercase and strips port; may be None
-        host = (urlsplit(url).hostname or "").lower()
-        normalized = self.domain.lower().lstrip(".")
-        if not normalized or not host:
+        host = normalize_domain_pattern(urlsplit(url).hostname or "")
+        domain_normalized = normalize_domain_pattern(self.domain)
+        if not domain_normalized or not host:
             return False
         if self.include_subdomains:
-            return host == normalized or host.endswith(f".{normalized}")
-        return host == normalized
+            return host == domain_normalized or host.endswith(f".{domain_normalized}")
+        return host == domain_normalized
 
 
 @dataclass(init=False)
@@ -222,7 +324,7 @@ class IngestConfig:
 
     # Integration parameters
     cache: object | None = None
-    """Optional cache backend implementing get/set"""
+    """Optional cache backend or opaque cache identity object"""
 
     cache_ttl: int | None = None
     """Optional TTL override when writing to cache"""
@@ -285,10 +387,21 @@ class IngestConfig:
     """How long a domain circuit stays open before probing again"""
 
     render_cost_budget: int | None = None
-    """Optional per-request render budget in abstract cost units"""
+    """Optional per-request render budget in abstract cost units.
+    Auto mode may consume up to 5 units including the fast probe before render."""
 
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     """Requested output representations, e.g. ['markdown', 'blocks', 'chunks']"""
+
+    fetcher_user_agent: str = ""
+    """Per-request HTTP user agent selected by auto-mode for cache/inflight dedup consistency"""
+
+    # Batch processing parameters
+    batch_timeout: float = 30.0
+    """Timeout for batch ingest operations in seconds"""
+
+    batch_max_concurrent: int = 5
+    """Maximum concurrent requests in batch mode"""
 
     _explicit_keys: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
@@ -296,10 +409,14 @@ class IngestConfig:
         values, explicit = _collect_init_values(type(self), args, kwargs)
         for key, value in values.items():
             setattr(self, key, value)
+        # Normalize "moderate" → "normal" before freezing _explicit_keys so
+        # that downstream profile application sees the canonical value.
+        if self.policy_name == "moderate":
+            self.policy_name = "normal"
         self.__post_init__()
         object.__setattr__(self, "_explicit_keys", explicit)
 
-    def validate(self) -> "IngestConfig":
+    def validate(self) -> IngestConfig:
         """Validate the current config state after construction or mutation."""
         valid_modes = ("fast", "render", "auto")
         if self.mode not in valid_modes:
@@ -307,12 +424,15 @@ class IngestConfig:
                 f"Invalid mode '{self.mode}'. Must be one of: {', '.join(valid_modes)}"
             )
 
-        valid_policies = ("permissive", "normal", "strict", "paranoid", "moderate")
-        if self.policy_name not in valid_policies:
+        if self.fetcher_user_agent and ("\r" in self.fetcher_user_agent or "\n" in self.fetcher_user_agent):
+            raise ValueError("fetcher_user_agent must not contain CR or LF characters")
+
+        if self.policy_name not in VALID_POLICY_NAMES:
             raise ValueError(
-                f"Invalid policy_name '{self.policy_name}'. Must be one of: {', '.join(valid_policies)}"
+                f"Invalid policy_name '{self.policy_name}'. Must be one of: {', '.join(VALID_POLICY_NAMES)}"
             )
-        # Normalize "moderate" to "normal" for policy engine compatibility
+        # Normalize "moderate" → "normal" here too, not just in __init__,
+        # because resolve_for_url applies overrides via setattr bypassing __init__.
         if self.policy_name == "moderate":
             self.policy_name = "normal"
 
@@ -326,9 +446,30 @@ class IngestConfig:
             raise ValueError(
                 f"Invalid output_format '{self.output_format}'. Must be one of: {', '.join(VALID_OUTPUT_FORMATS)}"
             )
+        _validate_output_profile_name(self.output_profile)
+        self.output_formats = _validate_output_representations(self.output_formats)
 
         if not self.reports_dir or not self.reports_dir.strip():
             raise ValueError("reports_dir cannot be empty")
+
+        if self.timeout <= 0.0:
+            raise ValueError(f"timeout must be > 0.0, got {self.timeout}")
+
+        if self.auto_render_threshold < 1:
+            raise ValueError(
+                "auto_render_threshold must be >= 1, " f"got {self.auto_render_threshold}"
+            )
+
+        if self.render_cost_budget is not None and self.render_cost_budget < 1:
+            raise ValueError(
+                "render_cost_budget must be >= 1 when provided, " f"got {self.render_cost_budget}"
+            )
+
+        if self.cache_ttl is not None and self.cache_ttl <= 0:
+            raise ValueError(f"cache_ttl must be positive when provided, got {self.cache_ttl}")
+
+        if isinstance(self.cache, bool):
+            raise ValueError("cache must be a cache backend object or None, got bool")
 
         if self.chunk_overlap < 0:
             raise ValueError(f"chunk_overlap must be >= 0, got {self.chunk_overlap}")
@@ -336,10 +477,10 @@ class IngestConfig:
         if self.chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {self.chunk_size}")
 
-        # Validate chunk_overlap < chunk_size (but allow edge case where they're equal for no overlap)
-        if self.chunk_overlap > self.chunk_size:
+        # chunk_overlap must be strictly less than chunk_size to ensure forward progress
+        if self.chunk_overlap >= self.chunk_size:
             raise ValueError(
-                f"chunk_overlap ({self.chunk_overlap}) cannot exceed chunk_size ({self.chunk_size})"
+                f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
             )
 
         if self.domain_request_interval < 0.0:
@@ -358,9 +499,15 @@ class IngestConfig:
                 f"got {self.circuit_breaker_open_seconds}"
             )
 
+        if self.batch_max_concurrent < 1:
+            raise ValueError(f"batch_max_concurrent must be >= 1, got {self.batch_max_concurrent}")
+
+        if self.batch_timeout <= 0.0:
+            raise ValueError(f"batch_timeout must be > 0.0, got {self.batch_timeout}")
+
         return self
 
-    def clone(self) -> "IngestConfig":
+    def clone(self) -> IngestConfig:
         """Return a deep runtime-safe copy."""
         field_names = {config_field.name for config_field in fields(self) if config_field.init}
         base = {name: getattr(self, name) for name in field_names}
@@ -370,10 +517,14 @@ class IngestConfig:
             domain_policies=[
                 replace(
                     dp,
-                    allowed_tags=list(dp.allowed_tags),
-                    blocked_tags=list(dp.blocked_tags),
-                    blocked_selectors=list(dp.blocked_selectors),
-                    unwrap_selectors=list(dp.unwrap_selectors),
+                    allowed_tags=list(dp.allowed_tags) if dp.allowed_tags is not None else None,
+                    blocked_tags=list(dp.blocked_tags) if dp.blocked_tags is not None else None,
+                    blocked_selectors=(
+                        list(dp.blocked_selectors) if dp.blocked_selectors is not None else None
+                    ),
+                    unwrap_selectors=(
+                        list(dp.unwrap_selectors) if dp.unwrap_selectors is not None else None
+                    ),
                 )
                 for dp in self.domain_policies
             ],
@@ -453,18 +604,21 @@ class IngestConfig:
     @classmethod
     def is_known_profile(cls, profile: str) -> bool:
         """Check if a profile name is recognized."""
-        return profile in ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive")
+        return profile in VALID_OUTPUT_PROFILES
 
-    def apply_output_profile(self) -> "IngestConfig":
+    def apply_output_profile(self) -> IngestConfig:
         """Apply preset defaults to a cloned config, preserving explicit overrides."""
         resolved = self.clone()
         explicit = resolved.explicit_keys()
         object.__setattr__(resolved, "_explicit_keys", explicit)
         defaults = self.output_profile_defaults(resolved.output_profile)
 
-        # Check if profile is unknown (not in the known profiles list)
+        # Reject unknown profiles to prevent silent misconfiguration
         if not self.is_known_profile(resolved.output_profile):
-            _logger.warning("Unknown output profile '%s'. Using default settings.", resolved.output_profile)
+            raise ValueError(
+                f"Unknown output profile '{resolved.output_profile}'. "
+                f"Valid profiles: {', '.join(VALID_OUTPUT_PROFILES)}"
+            )
 
         fresh = IngestConfig()
         # Reset any non-explicit profile-managed fields back to dataclass defaults
@@ -483,7 +637,7 @@ class IngestConfig:
             setattr(resolved, key, copy.deepcopy(value))
         return resolved
 
-    def resolve_for_url(self, url: str) -> tuple["IngestConfig", DomainPolicy | None]:
+    def resolve_for_url(self, url: str) -> tuple[IngestConfig, DomainPolicy | None]:
         """Apply output profile and the first matching domain policy."""
         resolved = self.apply_output_profile()
         matched: DomainPolicy | None = None
@@ -496,6 +650,15 @@ class IngestConfig:
 
         if matched.output_profile:
             resolved.output_profile = matched.output_profile
+            # A domain-level output_profile is a true override of profile-managed
+            # defaults, even when the base config made those fields explicit.
+            # Scalar overrides on the DomainPolicy itself are applied afterwards.
+            domain_profile_defaults = self.output_profile_defaults(matched.output_profile)
+            domain_explicit = {
+                key for key in resolved.explicit_keys() if key not in domain_profile_defaults
+            }
+            domain_explicit.add("output_profile")
+            object.__setattr__(resolved, "_explicit_keys", frozenset(domain_explicit))
             resolved = resolved.apply_output_profile()
         for key in (
             "mode",
@@ -508,10 +671,6 @@ class IngestConfig:
             "extract_metadata",
             "extract_links",
             "render_cost_budget",
-            "allowed_tags",
-            "blocked_tags",
-            "blocked_selectors",
-            "unwrap_selectors",
         ):
             value = getattr(matched, key)
             if value is not None:

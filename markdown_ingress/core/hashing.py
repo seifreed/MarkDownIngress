@@ -68,7 +68,9 @@ class Hasher:
         for line in lines:
             list_match = re.match(r"^(\s*)[-*+]\s", line)
             if list_match:
-                depth = len(list_match.group(1)) // 2
+                # Normalize list indentation into coarse 4-space buckets so
+                # superficial whitespace differences do not change structure.
+                depth = len(list_match.group(1).expandtabs(4)) // 4
                 if not in_list or depth != list_depth:
                     structural_elements.append(f"LIST:{depth}")
                     in_list = True
@@ -77,12 +79,28 @@ class Hasher:
                 in_list = False
 
         # Extract code block presence (not content)
-        code_blocks = len(re.findall(r"^```", markdown, re.MULTILINE))
-        if code_blocks > 0:
-            structural_elements.append(f"CODE_BLOCKS:{code_blocks // 2}")
+        # Track open/close state to handle unbalanced fences correctly.
+        # Match both backtick and tilde fences per CommonMark spec.
+        code_block_count = 0
+        open_fence_len = 0
+        open_fence_char = ""
+        for fence_match in re.finditer(r"^(`{3,}|~{3,})", markdown, re.MULTILINE):
+            fence_str = fence_match.group(1)
+            fence_char = fence_str[0]
+            fence_len = len(fence_str)
+            if open_fence_len == 0:
+                open_fence_len = fence_len
+                open_fence_char = fence_char
+            elif fence_char == open_fence_char and fence_len >= open_fence_len:
+                code_block_count += 1
+                open_fence_len = 0
+                open_fence_char = ""
+        # Do NOT count unclosed fences — CommonMark treats them as literal text, not code blocks.
+        if code_block_count > 0:
+            structural_elements.append(f"CODE_BLOCKS:{code_block_count}")
 
         # Extract link count (structure indicator)
-        links = len(re.findall(r"\[([^\]]+)\]\(([^)]+)\)", markdown))
+        links = len(re.findall(r"(?<!\!)\[([^\]]+)\]\(([^()]*(?:\([^()]*\))*[^()]*)\)", markdown))
         if links > 0:
             structural_elements.append(f"LINKS:{links}")
 
@@ -91,6 +109,6 @@ class Hasher:
 
         # If no structure found, fall back to content hash
         if not structural_content:
-            structural_content = markdown[:200]  # First 200 chars
+            structural_content = markdown[:200]
 
         return self.hash_content(structural_content)
