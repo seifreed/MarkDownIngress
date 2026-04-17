@@ -19,13 +19,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from markdown_ingress.adapters.extractors.comparison import compare_extractors
-from markdown_ingress.adapters.rendering.playwright_renderer import (
-    PLAYWRIGHT_AVAILABLE,
-    PlaywrightRenderer,
-)
 from markdown_ingress.config_models import IngestConfig, RenderConfig
 from markdown_ingress.core.cache import Cache
+from markdown_ingress.core.renderer import PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE
 from markdown_ingress.core.fetcher import (
     DomainCircuitOpenError,
     Fetcher,
@@ -40,6 +36,23 @@ from markdown_ingress.core.ingest_stats import (
     record_stage_timing,
 )
 from markdown_ingress.core.interfaces import IFetcher, IRenderer
+from markdown_ingress.core.metadata_keys import (
+    AUTO_MODE_REASON,
+    AUTO_MODE_USED,
+    CACHE_HIT,
+    COST_UNITS_USED,
+    DEGRADED_REASON,
+    DEGRADED_RENDER_FALLBACK,
+    EFFECTIVE_MODE,
+    FAST_MODE_TOKENS,
+    FETCH_METADATA,
+    INFLIGHT_DEDUPLICATED,
+    INFLIGHT_SHARED_COUNT,
+    OPERATIONAL_FLAGS,
+    RENDER_COST_BUDGET,
+    REQUESTED_MODE,
+    SCREENSHOT_TEMP,
+)
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
@@ -215,8 +228,6 @@ def _copy_batch_exception(exc: Exception) -> Exception:
     3. No-arg constructor with args set (works for exceptions with custom init)
     4. RuntimeError fallback (guaranteed to work)
 
-    BUG FIX: Preserves exception cause chain for debugging.
-    BUG FIX: Preserves custom attributes (e.g. PolicyBlockedError.document).
     """
     try:
         return copy.deepcopy(exc)
@@ -224,7 +235,6 @@ def _copy_batch_exception(exc: Exception) -> Exception:
         try:
             # Try single-arg constructor (most common case)
             new_exc = type(exc)(str(exc))
-            # BUG FIX: Preserve cause chain for debugging
             new_exc.__cause__ = exc
             new_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
             if hasattr(exc, "__notes__"):
@@ -236,7 +246,6 @@ def _copy_batch_exception(exc: Exception) -> Exception:
                 # Try no-arg constructor and set args manually
                 new_exc = type(exc)()
                 new_exc.args = (str(exc),)
-                # BUG FIX: Preserve cause chain for debugging
                 new_exc.__cause__ = exc
                 new_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
                 if hasattr(exc, "__notes__"):
@@ -246,7 +255,6 @@ def _copy_batch_exception(exc: Exception) -> Exception:
             except Exception:
                 # Last resort: preserve type name in RuntimeError
                 runtime_exc = RuntimeError(f"{type(exc).__name__}: {exc}")
-                # BUG FIX: Preserve cause chain for debugging
                 runtime_exc.__cause__ = exc
                 runtime_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
                 if hasattr(exc, "__notes__"):
@@ -340,6 +348,7 @@ class IngestUseCase:
 
     @staticmethod
     def _default_renderer_factory(config: RenderConfig) -> IRenderer:
+        from markdown_ingress.adapters.rendering.playwright_renderer import PlaywrightRenderer
         return PlaywrightRenderer(config=config)
 
     @staticmethod
@@ -485,7 +494,7 @@ class IngestUseCase:
                     try:
                         cached_copy = self.orchestrator.clone_cached_document(cached)
                         bump_ingest_stat("cache_hits")
-                        cached_copy.metadata["requested_mode"] = requested_mode
+                        cached_copy.metadata[REQUESTED_MODE] = requested_mode
                         record_mode_result(requested_mode, success=True)
                         return cached_copy
                     except Exception as exc:
@@ -505,9 +514,9 @@ class IngestUseCase:
                 shared = cast(
                     SafeDocument, self.orchestrator.await_inflight(in_flight, request_key)
                 )
-                shared.metadata["inflight_deduplicated"] = True
-                shared.metadata.setdefault("cache_hit", False)
-                shared.metadata["requested_mode"] = requested_mode
+                shared.metadata[INFLIGHT_DEDUPLICATED] = True
+                shared.metadata.setdefault(CACHE_HIT, False)
+                shared.metadata[REQUESTED_MODE] = requested_mode
                 record_mode_result(requested_mode, success=True)
                 return shared
             leader_slot_acquired = True
@@ -531,9 +540,9 @@ class IngestUseCase:
         finally:
             record_mode_timing(requested_mode, (time.perf_counter() - started_at) * 1000.0)
 
-        document.metadata["requested_mode"] = requested_mode
+        document.metadata[REQUESTED_MODE] = requested_mode
         shared_count = self.orchestrator.release_inflight(request_key, document=document)
-        document.metadata["inflight_shared_count"] = shared_count
+        document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
         # Note: record_mode_result already called for cache hits and inflight followers above
         record_mode_result(requested_mode, success=True)
         return document
@@ -565,9 +574,9 @@ class IngestUseCase:
                     exc,
                     exc_info=True,
                 )
-        document.metadata["cache_hit"] = False
-        document.metadata["inflight_deduplicated"] = False
-        document.metadata["inflight_shared_count"] = 0
+        document.metadata[CACHE_HIT] = False
+        document.metadata[INFLIGHT_DEDUPLICATED] = False
+        document.metadata[INFLIGHT_SHARED_COUNT] = 0
         return document
 
     def _execute_auto(
@@ -598,8 +607,8 @@ class IngestUseCase:
             render_doc = self._execute_explicit_mode(
                 url, render_config, matched_domain_policy, budget_state
             )
-            render_doc.metadata["auto_mode_used"] = "render"
-            render_doc.metadata["auto_mode_reason"] = "fast_failed"
+            render_doc.metadata[AUTO_MODE_USED] = "render"
+            render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
             return render_doc
 
         if (
@@ -608,7 +617,7 @@ class IngestUseCase:
             or _looks_like_auth_interstitial(url)
             or _looks_like_non_html_resource(url)
         ):
-            fast_doc.metadata["auto_mode_used"] = "fast"
+            fast_doc.metadata[AUTO_MODE_USED] = "fast"
             return fast_doc
 
         render_config = config.clone()
@@ -623,42 +632,45 @@ class IngestUseCase:
             _logger.warning(
                 "auto mode: render attempt failed, falling back to fast result. Error: %s", exc
             )
-            fast_doc.metadata["auto_mode_used"] = "fast"
-            fast_doc.metadata["auto_mode_reason"] = "render_fallback"
+            fast_doc.metadata[AUTO_MODE_USED] = "fast"
+            fast_doc.metadata[AUTO_MODE_REASON] = "render_fallback"
             return fast_doc
-        render_fetch_metadata = render_doc.metadata.get("fetch_metadata", {})
-        render_attempt_degraded = bool(render_fetch_metadata.get("degraded_render_fallback"))
+        return self._select_auto_mode_winner(fast_doc, render_doc)
+
+    @staticmethod
+    def _select_auto_mode_winner(fast_doc: SafeDocument, render_doc: SafeDocument) -> SafeDocument:
+        """Pick the better result between fast and render docs based on token improvement."""
+        render_fetch_metadata = render_doc.metadata.get(FETCH_METADATA, {})
+        render_attempt_degraded = bool(render_fetch_metadata.get(DEGRADED_RENDER_FALLBACK))
         improvement_threshold = max(1, int(fast_doc.token_estimate * _AUTO_RENDER_MIN_IMPROVEMENT))
         if render_attempt_degraded:
             if render_doc.token_estimate >= fast_doc.token_estimate + improvement_threshold:
-                render_doc.metadata["auto_mode_used"] = "render"
-                render_doc.metadata["auto_mode_reason"] = "degraded_render"
-                render_doc.metadata["fast_mode_tokens"] = fast_doc.token_estimate
+                render_doc.metadata[AUTO_MODE_USED] = "render"
+                render_doc.metadata[AUTO_MODE_REASON] = "degraded_render"
+                render_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
                 return render_doc
-            existing_flags = list(fast_doc.metadata.get("operational_flags", []))
-            for flag in render_doc.metadata.get("operational_flags", []):
+            existing_flags = list(fast_doc.metadata.get(OPERATIONAL_FLAGS, []))
+            for flag in render_doc.metadata.get(OPERATIONAL_FLAGS, []):
                 if flag not in existing_flags:
                     existing_flags.append(flag)
-            fast_doc.metadata["operational_flags"] = existing_flags
-            fast_doc.metadata["auto_mode_used"] = "fast"
-            fast_doc.metadata["auto_mode_reason"] = "render_fallback"
+            fast_doc.metadata[OPERATIONAL_FLAGS] = existing_flags
+            fast_doc.metadata[AUTO_MODE_USED] = "fast"
+            fast_doc.metadata[AUTO_MODE_REASON] = "render_fallback"
             return fast_doc
         if render_doc.token_estimate >= fast_doc.token_estimate + improvement_threshold:
-            render_doc.metadata["auto_mode_used"] = "render"
-            render_doc.metadata["fast_mode_tokens"] = fast_doc.token_estimate
-            # Clean up fast_doc's temporary screenshot since we're returning render_doc.
-            fast_fetch_metadata = fast_doc.metadata.get("fetch_metadata", {})
-            if fast_fetch_metadata.get("screenshot_temp"):
+            render_doc.metadata[AUTO_MODE_USED] = "render"
+            render_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
+            fast_fetch_metadata = fast_doc.metadata.get(FETCH_METADATA, {})
+            if fast_fetch_metadata.get(SCREENSHOT_TEMP):
                 from markdown_ingress.core.renderer import Renderer
 
                 Renderer.cleanup_screenshot(fast_fetch_metadata.get("screenshot_path"))
             return render_doc
-        if render_fetch_metadata.get("screenshot_temp"):
+        if render_fetch_metadata.get(SCREENSHOT_TEMP):
             from markdown_ingress.core.renderer import Renderer
 
             Renderer.cleanup_screenshot(render_fetch_metadata.get("screenshot_path"))
-
-        fast_doc.metadata["auto_mode_used"] = "fast"
+        fast_doc.metadata[AUTO_MODE_USED] = "fast"
         return fast_doc
 
     def _execute_explicit_mode(
@@ -747,7 +759,7 @@ class IngestUseCase:
                     lambda: renderer.render_sync(url),
                 )
                 if screenshot_was_temp:
-                    fetch_result.metadata["screenshot_temp"] = True
+                    fetch_result.metadata[SCREENSHOT_TEMP] = True
             except Exception as render_exc:
                 if screenshot_was_temp and screenshot_temp_path is not None:
                     try:
@@ -768,9 +780,9 @@ class IngestUseCase:
                         f"render_error:{type(render_exc).__name__}",
                     ]
                 )
-                fetch_result.metadata["effective_mode"] = "fast"
-                fetch_result.metadata["degraded_render_fallback"] = True
-                fetch_result.metadata["degraded_reason"] = str(render_exc)
+                fetch_result.metadata[EFFECTIVE_MODE] = "fast"
+                fetch_result.metadata[DEGRADED_RENDER_FALLBACK] = True
+                fetch_result.metadata[DEGRADED_REASON] = str(render_exc)
         else:
             consume_cost(1, "fetch mode")
             fetcher = self._get_shared_fetcher(config)
@@ -783,10 +795,10 @@ class IngestUseCase:
                 bump_ingest_stat("circuit_breaker_rejections")
                 raise
         fetch_result.metadata.setdefault(
-            "cost_units_used",
+            COST_UNITS_USED,
             budget_state["used"] if budget_state["used"] is not None else 0,
         )
-        fetch_result.metadata.setdefault("render_cost_budget", cost_budget)
+        fetch_result.metadata.setdefault(RENDER_COST_BUDGET, cost_budget)
         fetch_result.metadata.setdefault("stage_timings_ms", stage_timings)
         return fetch_result, operational_flags
 
@@ -1007,7 +1019,7 @@ class BatchIngestUseCase:
                                 cached
                             )
                             bump_ingest_stat("cache_hits")
-                            cached_copy.metadata["requested_mode"] = prepared.requested_mode
+                            cached_copy.metadata[REQUESTED_MODE] = prepared.requested_mode
                             documents[prepared.index] = cached_copy
                             record_mode_result(prepared.requested_mode, success=True)
                             await report_completion(prepared.url)
@@ -1074,10 +1086,10 @@ class BatchIngestUseCase:
                                 batch_inflight.pop(prepared.request_key, None)
                         return False
                     shared = copy.deepcopy(shared_document)
-                    shared.metadata["inflight_deduplicated"] = True
-                    shared.metadata["inflight_shared_count"] = shared_count
-                    shared.metadata.setdefault("cache_hit", False)
-                    shared.metadata["requested_mode"] = prepared.requested_mode
+                    shared.metadata[INFLIGHT_DEDUPLICATED] = True
+                    shared.metadata[INFLIGHT_SHARED_COUNT] = shared_count
+                    shared.metadata.setdefault(CACHE_HIT, False)
+                    shared.metadata[REQUESTED_MODE] = prepared.requested_mode
                     documents[prepared.index] = shared
                     record_mode_result(prepared.requested_mode, success=True)
                     await report_completion(prepared.url)
@@ -1104,7 +1116,7 @@ class BatchIngestUseCase:
                             exc_info=True,
                         )
 
-                document.metadata["requested_mode"] = prepared.requested_mode
+                document.metadata[REQUESTED_MODE] = prepared.requested_mode
                 async with batch_inflight_lock:
                     shared_count = record.followers
                     shared_document = copy.deepcopy(document)
@@ -1120,9 +1132,9 @@ class BatchIngestUseCase:
                     if batch_inflight.get(prepared.request_key) is record:
                         batch_inflight.pop(prepared.request_key, None)
 
-                document.metadata["inflight_deduplicated"] = False
-                document.metadata["inflight_shared_count"] = shared_count
-                document.metadata.setdefault("cache_hit", False)
+                document.metadata[INFLIGHT_DEDUPLICATED] = False
+                document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
+                document.metadata.setdefault(CACHE_HIT, False)
                 documents[prepared.index] = document
                 if batch_tracks_metrics:
                     record_mode_result(prepared.requested_mode, success=True)
@@ -1234,4 +1246,5 @@ class CompareExtractorsUseCase:
     """Evaluate alternative extractors behind an application-level boundary."""
 
     def execute(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
+        from markdown_ingress.adapters.extractors.comparison import compare_extractors
         return compare_extractors(html, model=model)

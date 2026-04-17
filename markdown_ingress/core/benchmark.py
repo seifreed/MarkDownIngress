@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from markdown_ingress import ingest
-from markdown_ingress.adapters.extractors.comparison import compare_extractors
 from markdown_ingress.core.tokens import TokenEstimator
 
 _logger = logging.getLogger(__name__)
@@ -137,6 +136,7 @@ class Benchmark:
 
                 with Fetcher(timeout=30.0) as fetcher:
                     fetch_result = fetcher.fetch_sync(url)
+                from markdown_ingress.adapters.extractors.comparison import compare_extractors
                 extractor_comparison = compare_extractors(fetch_result.html, model=self.model)
             except Exception as e:
                 _logger.debug("Extractor comparison failed: %s", e)

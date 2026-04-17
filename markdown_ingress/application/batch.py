@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from typing import Literal
 
-from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
+from markdown_ingress.core.renderer import PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE
 from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.models import SafeDocument

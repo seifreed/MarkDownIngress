@@ -22,6 +22,7 @@ from markdown_ingress.api_server_support import (
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.cache import MemoryCache
 from markdown_ingress.core.config import Config
+from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
@@ -737,7 +738,7 @@ def test_build_runtime_config_rejects_boolean_cache_override():
 # ── orchestrator.py: PLAYWRIGHT_AVAILABLE=False auto-fallback (lines 217-218) ─
 
 
-@patch("markdown_ingress.core.orchestrator.PLAYWRIGHT_AVAILABLE", False)
+@patch("markdown_ingress.application.use_cases.PLAYWRIGHT_AVAILABLE", False)
 def test_orchestrator_auto_fast_fail_no_playwright():
     """Lines 217-218: fast fetch fails, Playwright unavailable → exception re-raised."""
     with pytest.raises(Exception):
@@ -970,7 +971,7 @@ def test_ingest_auto_mode_fast_fails_playwright_fallback(error_server):
             )
 
     with (
-        patch("markdown_ingress.core.orchestrator.Renderer", FakeRenderer),
+        patch.object(IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))),
         patch("markdown_ingress.api.PLAYWRIGHT_AVAILABLE", True),
     ):
         # error_server returns 403 → fast Fetcher raises → render fallback
@@ -1041,15 +1042,15 @@ def test_orchestrator_config_override_can_clear_inherited_screenshot(local_serve
 
 def test_orchestrator_render_mode_no_playwright(local_server):
     """Line 183: render mode with PLAYWRIGHT_AVAILABLE=False raises ImportError."""
-    import markdown_ingress.core.orchestrator as orch_module
+    import markdown_ingress.application.use_cases as use_cases_module
 
-    original = orch_module.PLAYWRIGHT_AVAILABLE
-    orch_module.PLAYWRIGHT_AVAILABLE = False
+    original = use_cases_module.PLAYWRIGHT_AVAILABLE
+    use_cases_module.PLAYWRIGHT_AVAILABLE = False
     try:
         with pytest.raises(ImportError):
             IngestOrchestrator().execute(local_server, mode="render", timeout=10.0)
     finally:
-        orch_module.PLAYWRIGHT_AVAILABLE = original
+        use_cases_module.PLAYWRIGHT_AVAILABLE = original
 
 
 # ── orchestrator.py: auto mode – fast fails, Playwright fallback (lines 203-216)
@@ -1075,8 +1076,8 @@ def test_orchestrator_auto_playwright_fallback(error_server):
             )
 
     with (
-        patch("markdown_ingress.core.orchestrator.Renderer", FakeRenderer),
-        patch("markdown_ingress.core.orchestrator.PLAYWRIGHT_AVAILABLE", True),
+        patch.object(IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))),
+        patch("markdown_ingress.application.use_cases.PLAYWRIGHT_AVAILABLE", True),
     ):
         # error_server returns 403 → fetcher.fetch_sync raises → render fallback
         result = IngestOrchestrator().execute(error_server, mode="auto", timeout=20.0)

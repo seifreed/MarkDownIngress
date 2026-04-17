@@ -1213,7 +1213,7 @@ def test_benchmark_compare_extractors_closes_fetcher_clients(monkeypatch):
 
     monkeypatch.setattr("markdown_ingress.core.benchmark.ingest", fake_ingest)
     monkeypatch.setattr(
-        "markdown_ingress.core.benchmark.compare_extractors", fake_compare_extractors
+        "markdown_ingress.adapters.extractors.comparison.compare_extractors", fake_compare_extractors
     )
 
     try:

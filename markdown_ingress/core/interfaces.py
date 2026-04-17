@@ -113,41 +113,6 @@ class INormalizer(Protocol):
         """
         ...  # pragma: no cover
 
-    def normalize_unicode(self, text: str) -> str:
-        """
-        Normalize Unicode to NFC form for consistency.
-
-        Args:
-            text: Input text
-
-        Returns:
-            NFC-normalized text
-        """
-        ...  # pragma: no cover
-
-    def normalize_whitespace(self, text: str) -> str:
-        """
-        Normalize whitespace: collapse multiple spaces, normalize line breaks.
-
-        Args:
-            text: Input text
-
-        Returns:
-            Text with normalized whitespace
-        """
-        ...  # pragma: no cover
-
-    def normalize_url(self, url: str) -> str:
-        """
-        Normalize URL by removing tracking parameters.
-
-        Args:
-            url: Input URL
-
-        Returns:
-            Normalized URL without tracking params
-        """
-        ...  # pragma: no cover
 
 
 class ICacheBackend(Protocol):

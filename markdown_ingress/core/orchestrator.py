@@ -3,12 +3,6 @@
 import time
 from typing import Any, Final, Literal
 
-from markdown_ingress.adapters.rendering.playwright_renderer import (
-    PLAYWRIGHT_AVAILABLE,
-)
-from markdown_ingress.adapters.rendering.playwright_renderer import (
-    PlaywrightRenderer as Renderer,
-)
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.document_builder import process_fetched_content
 from markdown_ingress.core.hashing import Hasher
@@ -201,8 +195,6 @@ class IngestOrchestrator:
 
         return IngestUseCase(
             orchestrator=self,
-            playwright_available=PLAYWRIGHT_AVAILABLE,
-            renderer_factory=lambda render_config: Renderer(config=render_config),
         ).execute(
             url=url,
             config=config,
