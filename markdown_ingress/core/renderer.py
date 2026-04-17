@@ -3,18 +3,41 @@ Playwright-based renderer for SPA/JavaScript-heavy sites
 """
 
 import asyncio
+import atexit
 import importlib.util
 import logging
+import os
 import tempfile
 import time
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from markdown_ingress.config_models import RenderConfig
+from markdown_ingress.core.renderer_support import (
+    _SCREENSHOT_UNSET,
+    build_renderer_config,
+    execute_render_session,
+)
 from markdown_ingress.core.resource_blocker import ResourceBlocker
-from markdown_ingress.core.renderer_support import build_renderer_config, execute_render_session
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
+
+# Track temp screenshots for atexit cleanup to prevent file leaks
+_active_screenshots: set[str] = set()
+
+
+def _cleanup_pending_screenshots() -> None:
+    """atexit handler: clean up any temp screenshot files still on disk."""
+    for path in list(_active_screenshots):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    _active_screenshots.clear()
+
+
+atexit.register(_cleanup_pending_screenshots)
+
 PLAYWRIGHT_INSTALLED = importlib.util.find_spec("playwright") is not None
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 _RETRYABLE_NAVIGATION_ERRORS = (
@@ -32,6 +55,15 @@ try:
     STEALTH_AVAILABLE = True
 except ImportError:  # pragma: no cover
     STEALTH_AVAILABLE = False  # pragma: no cover
+
+try:  # noqa: I001
+    from playwright.async_api import (  # noqa: I001
+        Error as PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+    )
+except ImportError:  # pragma: no cover
+    PlaywrightError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
+    PlaywrightTimeoutError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
 
 
 class Renderer:  # implements IRenderer protocol
@@ -74,7 +106,7 @@ class Renderer:  # implements IRenderer protocol
         block_media: bool | None = None,
         block_ads: bool | None = None,
         block_trackers: bool | None = None,
-        screenshot: bool | str | None = None,
+        screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
     ):
         """
         Initialize Playwright renderer.
@@ -165,7 +197,9 @@ class Renderer:  # implements IRenderer protocol
                 retry_result.metadata["original_error"] = error_str[:200]
                 return retry_result
             # Check for HTTP/2 protocol error
-            if "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2:  # pragma: no cover
+            if (
+                "ERR_HTTP2_PROTOCOL_ERROR" in error_str and not self.disable_http2
+            ):  # pragma: no cover
                 # Retry with HTTP/2 disabled - create config from current settings
                 retry_config = RenderConfig(  # pragma: no cover
                     timeout=self.timeout / 1000.0,  # Convert back to seconds
@@ -185,7 +219,6 @@ class Renderer:  # implements IRenderer protocol
                 )
                 retry_renderer = Renderer(config=retry_config)
                 result = await retry_renderer._render_with_browser(url)
-                # Mark as HTTP/2 fallback
                 result.metadata["http2_fallback"] = True
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
                 return result
@@ -235,8 +268,8 @@ class Renderer:  # implements IRenderer protocol
         return {
             "user_agent": self.user_agent,
             "viewport": {"width": 1920, "height": 1080},
-            "bypass_csp": True,
-            "ignore_https_errors": True,
+            "bypass_csp": False,
+            "ignore_https_errors": False,
         }
 
     async def _setup_resource_blocking(self, page):
@@ -267,12 +300,13 @@ class Renderer:  # implements IRenderer protocol
             return None
 
         if self.screenshot is True:
-            # Create temp file - caller responsible for cleanup
+            # Create temp file - tracked for atexit cleanup
             temp_file = tempfile.NamedTemporaryFile(
                 suffix=".png", delete=False, prefix="mdingress_screenshot_"
             )
             screenshot_path = temp_file.name
             temp_file.close()
+            _active_screenshots.add(screenshot_path)
         else:
             screenshot_path = str(self.screenshot)
 
@@ -299,8 +333,9 @@ class Renderer:  # implements IRenderer protocol
 
         try:
             os.unlink(path)
+            _active_screenshots.discard(path)
         except OSError:
-            pass  # File may not exist or already cleaned up
+            _active_screenshots.discard(path)  # File may not exist or already cleaned up
 
     def _build_metadata(self, screenshot_path: str | None, blocker) -> dict:
         """Build metadata dictionary for the fetch result."""
@@ -312,16 +347,21 @@ class Renderer:  # implements IRenderer protocol
 
         if screenshot_path:
             metadata["screenshot_path"] = screenshot_path
+            # BUG FIX: Mark temp screenshots for cleanup tracking
+            if self.screenshot is True:
+                metadata["screenshot_temp"] = True
 
         if blocker:
             stats = blocker.get_stats()
-            metadata.update({
-                "resource_blocking": True,
-                "blocked_requests": stats["blocked_requests"],
-                "total_requests": stats["total_requests"],
-                "block_rate_pct": stats["block_rate_pct"],
-                "blocked_by_type": stats["blocked_by_type"],
-            })
+            metadata.update(
+                {
+                    "resource_blocking": True,
+                    "blocked_requests": stats["blocked_requests"],
+                    "total_requests": stats["total_requests"],
+                    "block_rate_pct": stats["block_rate_pct"],
+                    "blocked_by_type": stats["blocked_by_type"],
+                }
+            )
 
         return metadata
 
@@ -393,7 +433,9 @@ class Renderer:  # implements IRenderer protocol
         if last_exception is not None:
             raise last_exception
         # This should not be reachable if LOAD_STRATEGIES is non-empty
-        raise RuntimeError("No render strategies configured or all strategies failed without capturing an exception")
+        raise RuntimeError(
+            "No render strategies configured or all strategies failed without capturing an exception"
+        )
 
     async def _render_with_smart_wait(self, url: str, timeout_ms: int) -> FetchResult:
         """Render with smart content waiting strategies."""
@@ -429,7 +471,7 @@ class Renderer:  # implements IRenderer protocol
                 await page.wait_for_selector(selector, timeout=selector_timeout)
                 logger.info(f"[Smart Wait] Found content selector: {selector}")
                 break
-            except Exception:
+            except (PlaywrightTimeoutError, PlaywrightError):
                 continue
 
         # Wait for body to have meaningful text content
@@ -498,7 +540,7 @@ class Renderer:  # implements IRenderer protocol
         """Read page HTML while tolerating transient navigation churn."""
         for attempt in range(3):
             try:
-                return await page.content()
+                return cast(str, await page.content())
             except Exception as exc:
                 if "page is navigating" not in str(exc).lower():
                     raise
@@ -509,14 +551,12 @@ class Renderer:  # implements IRenderer protocol
         # Fallback: use page.evaluate after loop exhaustion
         html = None  # BUG FIX: Initialize to prevent NameError on exception
         try:
-            html = await page.evaluate(
-                """
+            html = await page.evaluate("""
                 () => {
                     const root = document.documentElement;
                     return root ? root.outerHTML : '';
                 }
-                """
-            )
+                """)
             if isinstance(html, str) and html.strip():
                 return html
         except Exception as e:

@@ -554,6 +554,8 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         # Initialize database with proper cleanup on failure
         self._db_lock = threading.Lock()
         try:
+            # Re-validate to close the TOCTOU window between initial validation and open.
+            self.db_path = self._validate_db_path(str(self.db_path), allow_absolute_paths)
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._init_db()
         except Exception:

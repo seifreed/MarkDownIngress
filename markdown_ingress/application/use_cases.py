@@ -255,6 +255,24 @@ def _copy_batch_exception(exc: Exception) -> Exception:
                 return runtime_exc
 
 
+def _is_picklable(obj: object) -> bool:
+    import pickle
+
+    try:
+        pickle.dumps(obj)
+        return True
+    except Exception:
+        return False
+
+
+def _make_picklable(value: object) -> object:
+    if isinstance(value, dict):
+        return {k: _make_picklable(v) for k, v in value.items() if _is_picklable(v)}
+    if isinstance(value, list):
+        return [_make_picklable(v) for v in value if _is_picklable(v)]
+    return value
+
+
 def _execute_batch_ingest_in_subprocess(
     url: str,
     config: IngestConfig,
@@ -263,6 +281,7 @@ def _execute_batch_ingest_in_subprocess(
 ) -> None:
     try:
         document = IngestUseCase(playwright_available=playwright_available).execute(url, config)
+        document.metadata = _make_picklable(document.metadata)
         queue.put(("result", document))
     except Exception as exc:  # pragma: no cover - child process path
         try:
