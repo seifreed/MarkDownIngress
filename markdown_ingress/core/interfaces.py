@@ -8,13 +8,10 @@ These interfaces define contracts for core components, making it easier to:
 - Get better IDE support
 """
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from collections.abc import Callable, Sequence
+from typing import Any, Protocol
 
 from markdown_ingress.models import ExtractionResult, FetchResult, SafeDocument
-
-if TYPE_CHECKING:
-    from markdown_ingress.adapters.jobs.sqlite_job_queue import JobRecord
 
 
 class IFetcher(Protocol):
@@ -189,6 +186,21 @@ class IWebhookNotifier(Protocol):
         ...  # pragma: no cover
 
 
+class IJobRecord(Protocol):
+    """Protocol for job record types returned by IJobQueue."""
+
+    job_id: str
+    status: str
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    result: dict[str, Any] | None
+    error: str | None
+    webhook_url: str | None
+    ttl_seconds: int | None
+    legacy_expires_at: str | None
+
+
 class IJobQueue(Protocol):
     """Protocol for persistent or in-memory job queue implementations."""
 
@@ -197,7 +209,7 @@ class IJobQueue(Protocol):
         task: Callable[[], dict[str, Any]],
         webhook_url: str | None = None,
         start_immediately: bool = False,
-    ) -> "JobRecord":
+    ) -> IJobRecord:
         """Submit a job for background execution.
 
         Args:
@@ -206,18 +218,18 @@ class IJobQueue(Protocol):
             start_immediately: If True, start the job immediately.
 
         Returns:
-            JobRecord with job_id and status.
+            IJobRecord with job_id and status.
         """
         ...  # pragma: no cover
 
-    def get(self, job_id: str) -> "JobRecord | None":
+    def get(self, job_id: str) -> IJobRecord | None:
         """Retrieve a job record by id.
 
         Args:
             job_id: The unique job identifier.
 
         Returns:
-            JobRecord if found, None otherwise.
+            IJobRecord if found, None otherwise.
         """
         ...  # pragma: no cover
 
@@ -228,3 +240,63 @@ class IJobQueue(Protocol):
     def pending_count(self) -> int:
         """Return count of queued/running jobs."""
         ...  # pragma: no cover
+
+
+class IMarkdownConverter(Protocol):
+    """Protocol for HTML-to-Markdown converter components."""
+
+    def convert(self, html: str) -> str:
+        """Convert cleaned HTML to Markdown string."""
+        ...  # pragma: no cover
+
+
+class ITokenEstimator(Protocol):
+    """Protocol for LLM token estimation components."""
+
+    def estimate(self, text: str) -> int:
+        """Return estimated token count for text."""
+        ...  # pragma: no cover
+
+
+class IBatchIngestUseCase(Protocol):
+    """Protocol for batch ingestion use cases."""
+
+    async def execute(
+        self,
+        urls: Sequence[str],
+        config_builder: Callable[[], Any],
+        *,
+        max_concurrent: int = 5,
+        on_progress: Callable[[int, int, str], None] | None = None,
+    ) -> Any: ...  # pragma: no cover
+
+
+class IIngestOrchestrator(Protocol):
+    """Surface of IngestOrchestrator consumed by application-layer use cases.
+
+    Defines only the methods IngestUseCase needs, breaking the circular
+    import that arose from orchestrator.py lazily importing IngestUseCase.
+    """
+
+    def make_request_key(
+        self, url: str, config: Any, matched_domain_policy: Any = None
+    ) -> str: ...  # pragma: no cover
+
+    def acquire_inflight(self, request_key: str) -> Any: ...  # pragma: no cover
+
+    def await_inflight(self, entry: Any, request_key: str) -> Any: ...  # pragma: no cover
+
+    def release_inflight(
+        self, request_key: str, *, document: Any = None, error: Any = None
+    ) -> int: ...  # pragma: no cover
+
+    @staticmethod
+    def clone_cached_document(document: Any) -> Any: ...  # pragma: no cover
+
+    def process_fetched_content(
+        self,
+        fetch_result: Any,
+        config: Any,
+        matched_domain_policy: Any = None,
+        operational_flags: Any = None,
+    ) -> Any: ...  # pragma: no cover

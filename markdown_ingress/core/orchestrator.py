@@ -1,7 +1,7 @@
 """Ingestion orchestration entrypoint for the MarkDownIngress pipeline."""
 
 import time
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.document_builder import process_fetched_content
@@ -24,14 +24,11 @@ from markdown_ingress.core.ingest_stats import (
 )
 from markdown_ingress.core.interfaces import IExtractor, INormalizer
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
-from markdown_ingress.core.markdown import MarkdownConverter
+from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
+from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.scoring import Scorer
-from markdown_ingress.core.tokens import TokenEstimator
 from markdown_ingress.models import FetchResult, SafeDocument
-
-_SCREENSHOT_UNSET: Final = object()
-
 
 def get_ingest_stats() -> dict[str, Any]:
     """Return aggregate in-process ingestion stats for observability."""
@@ -90,114 +87,6 @@ class IngestOrchestrator:
         self.inflight_registry = inflight_registry or InFlightRegistry()
         self._default_inflight_registry = (
             self.inflight_registry if not self._inflight_registry_was_injected else None
-        )
-
-    def execute(
-        self,
-        url: str,
-        config: IngestConfig | None = None,
-        # Backward compatibility: accept individual parameters
-        mode: Literal["fast", "render", "auto"] | None = None,
-        strict: bool | None = None,
-        model: str | None = None,
-        timeout: float | None = None,
-        stealth: bool | None = None,
-        disable_http2: bool | None = None,
-        extreme_mode: bool | None = None,
-        screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
-        extract_metadata: bool | None = None,
-        extract_links: bool | None = None,
-        advanced_security: bool | None = None,
-        use_llm: bool | None = None,
-    ) -> SafeDocument:
-        """
-        Execute the complete ingestion pipeline.
-
-        Args:
-            url: Target URL to ingest
-            config: IngestConfig object with all settings (recommended)
-            mode: Fetching mode (deprecated, use config)
-            strict: Enable strict security mode (deprecated, use config)
-            model: LLM model name for token estimation (deprecated, use config)
-            timeout: Request timeout in seconds (deprecated, use config)
-            stealth: Enable stealth mode (deprecated, use config)
-            disable_http2: Disable HTTP/2 protocol (deprecated, use config)
-            extreme_mode: Enable extreme timeouts (deprecated, use config)
-            screenshot: Screenshot configuration (deprecated, use config)
-            extract_metadata: Extract enriched metadata (deprecated, use config)
-            extract_links: Extract and analyze links (deprecated, use config)
-            advanced_security: Enable Nova-tracer detection (deprecated, use config)
-            use_llm: Enable LLM-based detection (deprecated, use config)
-
-        Returns:
-            SafeDocument with markdown content, metadata, and security analysis
-        """
-        # If no config provided, create from individual parameters or defaults
-        if config is None:
-            config = IngestConfig(
-                mode=mode if mode is not None else "auto",
-                strict=strict if strict is not None else True,
-                model=model if model is not None else "gpt-4",
-                timeout=timeout if timeout is not None else 30.0,
-                stealth=stealth if stealth is not None else False,
-                disable_http2=disable_http2 if disable_http2 is not None else False,
-                extreme_mode=extreme_mode if extreme_mode is not None else False,
-                screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
-                extract_metadata=extract_metadata if extract_metadata is not None else True,
-                extract_links=extract_links if extract_links is not None else True,
-                advanced_security=advanced_security if advanced_security is not None else False,
-                use_llm=use_llm if use_llm is not None else False,
-            )
-        else:
-            config = config.clone()
-            explicit_keys: set[str] = set(config.explicit_keys())
-            # Config provided - override with any explicit parameters
-            if mode is not None:
-                config.mode = mode
-                explicit_keys.add("mode")
-            if strict is not None:
-                config.strict = strict
-                explicit_keys.add("strict")
-            if model is not None:
-                config.model = model
-                explicit_keys.add("model")
-            if timeout is not None:
-                config.timeout = timeout
-                explicit_keys.add("timeout")
-            if stealth is not None:
-                config.stealth = stealth
-                explicit_keys.add("stealth")
-            if disable_http2 is not None:
-                config.disable_http2 = disable_http2
-                explicit_keys.add("disable_http2")
-            if extreme_mode is not None:
-                config.extreme_mode = extreme_mode
-                explicit_keys.add("extreme_mode")
-            if screenshot is not _SCREENSHOT_UNSET:
-                config.screenshot = screenshot
-                explicit_keys.add("screenshot")
-            if extract_metadata is not None:
-                config.extract_metadata = extract_metadata
-                explicit_keys.add("extract_metadata")
-            if extract_links is not None:
-                config.extract_links = extract_links
-                explicit_keys.add("extract_links")
-            if advanced_security is not None:
-                config.advanced_security = advanced_security
-                explicit_keys.add("advanced_security")
-            if use_llm is not None:
-                config.use_llm = use_llm
-                explicit_keys.add("use_llm")
-            object.__setattr__(config, "_explicit_keys", frozenset(explicit_keys))
-            config.validate()
-
-        from markdown_ingress.application.use_cases import IngestUseCase
-
-        return IngestUseCase(
-            orchestrator=self,
-        ).execute(
-            url=url,
-            config=config,
         )
 
     @staticmethod
