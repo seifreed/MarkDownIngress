@@ -1,8 +1,8 @@
 """Integration tests for full pipeline"""
 
-from markdown_ingress.core.extractor import Extractor
+from markdown_ingress.adapters.extractors.readability_extractor import Extractor
+from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 from markdown_ingress.core.hashing import Hasher
-from markdown_ingress.core.markdown import MarkdownConverter
 from markdown_ingress.core.security import SecurityAnalyzer
 
 

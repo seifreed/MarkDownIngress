@@ -8,8 +8,8 @@ from typing import Any
 
 from readability import Document  # type: ignore[import-untyped]
 
+from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 from markdown_ingress.core.security import SecurityAnalyzer
-from markdown_ingress.core.tokens import TokenEstimator
 
 
 @dataclass
@@ -48,7 +48,7 @@ class ExtractorEvaluator:
         return {name: result.to_dict() for name, result in results.items()}
 
     def _evaluate_readability(self, html: str) -> ExtractorComparisonResult:
-        from markdown_ingress.core.markdown import MarkdownConverter
+        from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 
         try:
             doc = Document(html)

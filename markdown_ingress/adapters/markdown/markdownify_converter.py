@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 from markdown_ingress.core.interfaces import IMarkdownConverter
-from markdown_ingress.core.normalizer import Normalizer
+from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 from markdown_ingress.core.structured import render_code_fence, render_markdown_table
 
 

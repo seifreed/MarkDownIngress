@@ -1,11 +1,8 @@
-"""
-Content normalization module
-"""
+"""Content normalization — implements INormalizer protocol."""
 
 import re
 import unicodedata
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
 
 class Normalizer:  # implements INormalizer protocol
     """Normalize content for deterministic output"""
@@ -76,42 +73,15 @@ class Normalizer:  # implements INormalizer protocol
         self.zero_width_pattern = re.compile("|".join(map(re.escape, self.ZERO_WIDTH_CHARS)))
 
     def normalize(self, text: str) -> str:
-        """
-        Apply all normalization steps to text.
-
-        Args:
-            text: Input text to normalize
-
-        Returns:
-            Normalized text
-        """
         text = self.normalize_unicode(text)
         text = self.remove_zero_width_chars(text)
         text = self.normalize_whitespace(text)
         return text
 
     def normalize_unicode(self, text: str) -> str:
-        """
-        Normalize Unicode to NFC form for consistency.
-
-        Args:
-            text: Input text
-
-        Returns:
-            NFC-normalized text
-        """
         return unicodedata.normalize("NFC", text)
 
     def remove_zero_width_chars(self, text: str) -> str:
-        """
-        Remove zero-width and invisible characters.
-
-        Args:
-            text: Input text
-
-        Returns:
-            Text without zero-width chars
-        """
         return str(self.zero_width_pattern.sub("", text))
 
     # Match lines that start with markdown-significant prefixes
@@ -139,12 +109,6 @@ class Normalizer:  # implements INormalizer protocol
         markdown (list indentation, blockquotes, indented code blocks).
 
         Also preserves interior whitespace in fenced code blocks (```).
-
-        Args:
-            text: Input text
-
-        Returns:
-            Text with normalized whitespace
         """
         # Track fenced code block state
         in_fenced_code = False
@@ -152,15 +116,9 @@ class Normalizer:  # implements INormalizer protocol
         in_indented_code = False
         previous_blank_outside = False
 
-        # Normalize whitespace differently based on line type:
-        # - Fenced code blocks: preserve ALL whitespace
-        # - Indented code blocks: preserve ALL whitespace
-        # - List items/blockquotes: preserve leading, collapse interior
-        # - Regular lines: collapse interior, strip leading
         lines = text.split("\n")
         normalized: list[str] = []
         for line in lines:
-            # Track fenced code blocks (```)
             stripped = line.strip()
             fence_char = None
             if stripped.startswith("```"):
@@ -169,7 +127,6 @@ class Normalizer:  # implements INormalizer protocol
                 fence_char = "~"
 
             if fence_char is not None:
-                # Count consecutive fence characters to match fence length
                 fence_len = 0
                 for ch in stripped:
                     if ch == fence_char:
@@ -177,14 +134,11 @@ class Normalizer:  # implements INormalizer protocol
                     else:
                         break
                 current_fence = fence_char * fence_len
-                # BUG FIX: CommonMark requires minimum 3 fence characters
-                # Single or double characters are not valid fence delimiters
+                # CommonMark requires minimum 3 fence characters
                 if len(current_fence) < 3:
-                    # Not a valid fence delimiter, treat as regular text
                     normalized.append(line)
                     continue
                 if not in_fenced_code:
-                    # Opening fence
                     in_fenced_code = True
                     fenced_code_fence = current_fence
                     normalized.append(line.rstrip())
@@ -194,48 +148,39 @@ class Normalizer:  # implements INormalizer protocol
                     and fence_char == fenced_code_fence[0]
                     and len(current_fence) >= len(fenced_code_fence)
                 ):
-                    # Closing fence (CommonMark: same char, at least as many as opening)
                     in_fenced_code = False
                     fenced_code_fence = None
                     normalized.append(line.rstrip())
                     previous_blank_outside = False
                 else:
-                    # Different fence type or shorter fence inside code block - preserve
                     normalized.append(line)
                 continue
 
             if in_fenced_code:
-                # Inside fenced code block: preserve ALL whitespace
                 normalized.append(line)
                 previous_blank_outside = False
             elif in_indented_code:
-                # Continue indented code block: preserve indented/blank lines
                 if self._INDENTED_CODE_RE.match(line):
                     normalized.append(line)
                     previous_blank_outside = False
                 elif not line.strip():
-                    # Blank line inside indented code — preserve (may continue)
                     normalized.append("")
                     previous_blank_outside = True
                 else:
-                    # Non-indented, non-blank line exits indented code block
                     in_indented_code = False
                     cleaned = re.sub(r"[ \t]+", " ", line).strip()
                     normalized.append(cleaned)
                     previous_blank_outside = False
             elif previous_blank_outside and self._INDENTED_CODE_RE.match(line):
-                # Start indented code block (per CommonMark: only after blank line)
                 in_indented_code = True
                 normalized.append(line)
                 previous_blank_outside = False
             elif self._MARKDOWN_PREFIX_RE.match(line):
-                # List items/blockquotes: preserve leading, collapse interior runs
                 stripped = line.lstrip(" \t")
                 leading = line[: len(line) - len(stripped)]
                 normalized.append(leading + re.sub(r"[ \t]+", " ", stripped).rstrip())
                 previous_blank_outside = False
             else:
-                # Regular lines: collapse spaces and strip leading whitespace
                 cleaned = re.sub(r"[ \t]+", " ", line).strip()
                 if not cleaned:
                     if not previous_blank_outside:
@@ -245,11 +190,9 @@ class Normalizer:  # implements INormalizer protocol
                     normalized.append(cleaned)
                     previous_blank_outside = False
 
-        # BUG FIX: Auto-close unclosed fenced code blocks
-        # CommonMark allows unclosed blocks but auto-closing ensures consistent output
+        # Auto-close unclosed fenced code blocks for consistent output
         if in_fenced_code and fenced_code_fence:
             import logging
-
             _logger = logging.getLogger(__name__)
             _logger.warning(
                 "Unclosed fenced code block detected, auto-closing (fence=%s)",
@@ -268,48 +211,22 @@ class Normalizer:  # implements INormalizer protocol
         return "\n".join(normalized)
 
     def normalize_url(self, url: str) -> str:
-        """
-        Normalize URL by removing tracking parameters.
-
-        Args:
-            url: Input URL
-
-        Returns:
-            Normalized URL without tracking params
-        """
+        """Normalize URL by removing tracking parameters."""
         parsed = urlparse(url)
 
         if not parsed.query:
             return url
 
-        # Parse query parameters
         params = parse_qs(parsed.query, keep_blank_values=True)
-
-        # Filter out tracking parameters (case-insensitive key comparison)
         cleaned_params = {k: v for k, v in params.items() if k.lower() not in self.TRACKING_PARAMS}
-
-        # Reconstruct query string
         new_query = urlencode(cleaned_params, doseq=True) if cleaned_params else ""
 
-        # Rebuild URL
         return urlunparse(
             (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
         )
 
     def normalize_heading(self, heading: str) -> str:
-        """
-        Normalize heading text: trim, single line, no excess whitespace.
-
-        Args:
-            heading: Heading text
-
-        Returns:
-            Normalized heading
-        """
-        # Remove newlines
+        """Normalize heading text: trim, single line, no excess whitespace."""
         heading = heading.replace("\n", " ")
-
-        # Collapse spaces
         heading = re.sub(r"\s+", " ", heading)
-
         return heading.strip()

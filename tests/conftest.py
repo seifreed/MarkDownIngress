@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import markdown_ingress.application.use_cases  # noqa: F401 — registers all core factories
+
 
 def pytest_addoption(parser):
     """Register opt-in controls for large live-network baseline tests."""

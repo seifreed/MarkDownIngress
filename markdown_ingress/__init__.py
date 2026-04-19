@@ -2,6 +2,8 @@
 MarkDownIngress - Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines
 """
 
+from markdown_ingress.adapters.cache.memory import MemoryCache
+from markdown_ingress.adapters.cache.sqlite import SQLiteCache
 from markdown_ingress.adapters.extractors.comparison import compare_extractors
 from markdown_ingress.api import (
     generate_security_report,
@@ -14,7 +16,7 @@ from markdown_ingress.api import (
 from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, RenderConfig
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult
-from markdown_ingress.core.cache import Cache, MemoryCache, SQLiteCache
+from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.config import Config, ConfigLoader, load_config
 from markdown_ingress.core.orchestrator import get_ingest_stats, reset_ingest_stats
 from markdown_ingress.core.plugin import Plugin, PluginLoader

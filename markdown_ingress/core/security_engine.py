@@ -14,6 +14,9 @@ from markdown_ingress.core.security import SecurityAnalyzer
 
 logger = logging.getLogger(__name__)
 
+# Score assigned when Nova is disabled (no rules loaded) — basic analysis dominates.
+_NOVA_DISABLED_SCORE: float = 0.0
+
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
     """Return unique values while preserving first-seen order."""
@@ -96,6 +99,34 @@ class SecurityEngine:
                         "Falling back to basic pattern detection only."
                     )
 
+    def _parse_nova_result(self, markdown: str) -> tuple[float, dict, str]:
+        """Run Nova scan and parse the result into (nova_score, nova_details, scan_method)."""
+        try:
+            nova_result = self.nova.scan(markdown)
+            if nova_result is None:
+                logger.warning("Nova returned None, using fallback score: %s", self.exception_fallback_score)
+                return self.exception_fallback_score, {"error": "Nova returned None", "scan_incomplete": True}, "nova_failed"
+
+            nova_score_raw = nova_result.get("score")
+            if nova_score_raw is None:
+                if nova_result.get("severity") == "disabled":
+                    logger.debug("Nova scanner disabled (no rules loaded), using basic analysis only")
+                    return _NOVA_DISABLED_SCORE, {}, "basic"
+                logger.debug("Nova returned None score, using default: %s", self.exception_fallback_score)
+                return self.exception_fallback_score, nova_result, "nova_llm" if self.use_llm else "nova_semantic"
+
+            nova_score = max(0.0, min(1.0, nova_score_raw))
+            scan_method = "nova_llm" if self.use_llm else "nova_semantic"
+            scan_time = nova_result.get("scan_time_ms")
+            if scan_time is not None:
+                logger.info(f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms")
+            else:
+                logger.info(f"Nova scan: score={nova_score:.3f} (scan incomplete)")
+            return nova_score, nova_result, scan_method
+        except Exception as e:
+            logger.error(f"Nova scan failed: {e}")
+            return self.exception_fallback_score, {"error": str(e), "scan_incomplete": True}, "nova_error"
+
     def analyze(
         self,
         markdown: str,
@@ -133,54 +164,12 @@ class SecurityEngine:
         # Lowered threshold from 0.1 to 0.05 to prevent sophisticated attacks that
         # score just below the old threshold from bypassing semantic detection.
         # When advanced_security or strict is enabled, always run Nova.
-        nova_score = 0.0
+        nova_score = _NOVA_DISABLED_SCORE
         nova_details = {}
         scan_method = "basic"
 
         if self.nova and (basic_score > 0.05 or self.advanced_security or self.strict):
-            try:
-                nova_result = self.nova.scan(markdown)
-                # Handle None return from Nova (malformed response)
-                if nova_result is None:
-                    nova_score = self.exception_fallback_score
-                    nova_details = {"error": "Nova returned None", "scan_incomplete": True}
-                    scan_method = "nova_failed"
-                    logger.warning("Nova returned None, using fallback score: %s", nova_score)
-                else:
-                    # Handle None score from Nova (e.g., when no rules configured)
-                    nova_score_raw = nova_result.get("score")
-                    if nova_score_raw is None:
-                        # Distinguish between "disabled" (no rules) and actual failures.
-                        # When Nova is disabled (no rules loaded), it should not contribute
-                        # to the score — treat as 0.0 so basic analysis dominates.
-                        if nova_result.get("severity") == "disabled":
-                            nova_score = 0.0
-                            nova_details = {}
-                            scan_method = "basic"
-                            logger.debug(
-                                "Nova scanner disabled (no rules loaded), "
-                                "using basic analysis only"
-                            )
-                        else:
-                            nova_score = self.exception_fallback_score
-                            logger.debug("Nova returned None score, using default: %s", nova_score)
-                    else:
-                        nova_score = max(0.0, min(1.0, nova_score_raw))
-                    nova_details = nova_result
-                    scan_method = "nova_llm" if self.use_llm else "nova_semantic"
-                    scan_time = nova_details.get("scan_time_ms")
-                    if scan_time is not None:
-                        logger.info(f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms")
-                    else:
-                        logger.info(f"Nova scan: score={nova_score:.3f} (scan incomplete)")
-            except Exception as e:
-                logger.error(f"Nova scan failed: {e}")
-                # Use conservative score on exception - malicious payloads
-                # that trigger Nova crash should not bypass scanning.
-                # Use configurable fallback (default 0.75) for security.
-                nova_score = self.exception_fallback_score
-                nova_details = {"error": str(e), "scan_incomplete": True}
-                scan_method = "nova_error"
+            nova_score, nova_details, scan_method = self._parse_nova_result(markdown)
 
         # Combine scores: when Nova was never invoked, use basic score directly.
         # When both signals exist, never allow combination to reduce the highest signal.

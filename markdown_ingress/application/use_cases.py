@@ -3,39 +3,47 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-import hashlib
-import json
 import logging
-import multiprocessing
 import os
-import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import Literal, cast
-from urllib.parse import urlsplit
+from typing import Any, cast
 
-import httpx
-
-from markdown_ingress.config_models import IngestConfig, RenderConfig
-from markdown_ingress.core.cache import Cache
-from markdown_ingress.core.renderer import PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE
-from markdown_ingress.core.fetcher import (
-    DomainCircuitOpenError,
-    Fetcher,
-    UnsupportedContentTypeError,
+from markdown_ingress.application.batch_processor import (
+    _BatchContext,
+    _BatchUrlProcessor,
+    _CostBudget,
+    _PreparedBatchRequest,
 )
+from markdown_ingress.application.fetcher_manager import (
+    _ensure_fetcher_user_agent,
+    _SharedFetcherManager,
+)
+from markdown_ingress.application.heuristics import (
+    _looks_like_auth_interstitial,
+    _looks_like_non_html_resource,
+    _should_attempt_fast_degraded_fallback,
+    _should_attempt_render_fallback,
+)
+from markdown_ingress.application.subprocess_runner import (
+    _batch_process_context,
+    _execute_batch_ingest_in_subprocess,
+    _poll_subprocess_queue,
+    _select_execution_strategy,
+    _terminate_batch_process,
+)
+from markdown_ingress.config_models import DomainPolicy, IngestConfig, RenderConfig
+from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.inflight import build_request_identity
 from markdown_ingress.core.ingest_stats import (
     bump_ingest_stat,
     record_mode_request,
     record_mode_result,
     record_mode_timing,
-    record_stage_timing,
+    timed_stage_with_snapshot,
 )
-from markdown_ingress.core.interfaces import IFetcher, IRenderer
+from markdown_ingress.core.interfaces import IFetcher, IIngestOrchestrator, IRenderer
 from markdown_ingress.core.metadata_keys import (
     AUTO_MODE_REASON,
     AUTO_MODE_USED,
@@ -53,61 +61,39 @@ from markdown_ingress.core.metadata_keys import (
     REQUESTED_MODE,
     SCREENSHOT_TEMP,
 )
-from markdown_ingress.core.orchestrator import IngestOrchestrator
-from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
-from markdown_ingress.models import SafeDocument, SecurityReport
-from markdown_ingress.reporting import persist_report_for_document, security_report_from_document
+from markdown_ingress.core.policy import (
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
+from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
+from markdown_ingress.reporting import security_report_from_document
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 _logger = logging.getLogger(__name__)
 
-_NON_HTML_EXTENSIONS = {
-    ".7z",
-    ".avi",
-    ".bin",
-    ".csv",
-    ".doc",
-    ".docx",
-    ".epub",
-    ".exe",
-    ".gz",
-    ".iso",
-    ".jpeg",
-    ".jpg",
-    ".json",
-    ".mov",
-    ".mp3",
-    ".mp4",
-    ".pdf",
-    ".png",
-    ".ppt",
-    ".pptx",
-    ".rar",
-    ".rss",
-    ".svg",
-    ".tar",
-    ".tgz",
-    ".txt",
-    ".wav",
-    ".webm",
-    ".xml",
-    ".xls",
-    ".xlsx",
-    ".zip",
-}
-_AUTH_PATH_TOKENS = (
-    "account",
-    "accounts",
-    "auth",
-    "login",
-    "oauth",
-    "signin",
-    "sign-in",
-    "signup",
-    "sign-up",
-)
+# --- Bootstrap: register concrete adapters into core registries -----------------
+from markdown_ingress.application.bootstrap import register_all_factories as _register_all_factories
+_register_all_factories()
+# -------------------------------------------------------------------------------
+
+try:
+    import playwright.async_api as _playwright_check  # noqa: F401
+    PLAYWRIGHT_AVAILABLE: bool = True
+    del _playwright_check
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
 _AUTO_RENDER_MIN_IMPROVEMENT = 0.10
+_RENDER_COST_BUDGET_CEILING: int = 5
+
+
+def _cleanup_screenshot(path: str | None) -> None:
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
@@ -123,195 +109,100 @@ def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
         )
 
 
-def _ensure_fetcher_user_agent(
-    url: str,
-    config: IngestConfig,
-    matched_domain_policy=None,
-) -> str:
-    """Select and persist a per-request HTTP user agent.
+class _CacheResolutionHelper:
+    """Handles cache lookup and in-flight deduplication for ingestion requests."""
 
-    The request identity and the actual fetcher must use the same UA so cache
-    and in-flight deduplication do not cross-contaminate different request
-    variants.
+    def __init__(self, orchestrator: IIngestOrchestrator) -> None:
+        self._orchestrator = orchestrator
 
-    Note: Intentionally mutates ``config.fetcher_user_agent`` in-place.
-    Callers must pass a cloned config to avoid polluting shared state.
-    """
-    if config.fetcher_user_agent:
-        return config.fetcher_user_agent
-    identity_config = config.clone()
-    identity_config.fetcher_user_agent = ""
-    identity_payload = build_request_identity(url, identity_config, matched_domain_policy)
-    digest = hashlib.sha256(
-        json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).digest()
-    selected = ADVANCED_USER_AGENTS[int.from_bytes(digest[:8], "big") % len(ADVANCED_USER_AGENTS)]
-    config.fetcher_user_agent = selected
-    return selected
+    @staticmethod
+    def make_cache_key(
+        url: str,
+        resolved_config: IngestConfig,
+        request_identity: str,
+        cache_backend: Cache | None,
+    ) -> str | None:
+        if cache_backend is None:
+            return None
+        return Cache.make_key(
+            url=url,
+            mode=resolved_config.mode,
+            strict=resolved_config.strict,
+            extra=request_identity,
+        )
 
-
-def _looks_like_non_html_resource(url: str) -> bool:
-    """Best-effort URL heuristic to avoid launching Playwright for obvious downloads."""
-    path = urlsplit(url).path.lower()
-    return any(path.endswith(extension) for extension in _NON_HTML_EXTENSIONS)
-
-
-def _looks_like_auth_interstitial(url: str) -> bool:
-    """Skip costly auto-render for account/login flows that rarely improve via Playwright.
-
-    Inspects hostname labels (split by ``"."``) and path segments (split by
-    ``"/"``), but NOT query parameters, to avoid false positives like
-    ``?tracking=account_id``.
-    """
-    parsed = urlsplit(url)
-    tokens: set[str] = set()
-    if parsed.hostname:
-        tokens.update(label.lower() for label in parsed.hostname.split("."))
-    tokens.update(seg.lower() for seg in parsed.path.split("/") if seg)
-    return any(token in tokens for token in _AUTH_PATH_TOKENS)
-
-
-def _should_attempt_render_fallback(exc: Exception) -> bool:
-    """Limit auto-mode render fallback to failures a browser may realistically improve."""
-    if isinstance(exc, (DomainCircuitOpenError, UnsupportedContentTypeError, PolicyBlockedError)):
-        return False
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in {403, 429, 503}
-    if isinstance(exc, (httpx.UnsupportedProtocol, httpx.InvalidURL, httpx.ConnectError)):
-        return False
-    if isinstance(exc, httpx.TimeoutException):
-        return False
-    message = str(exc).lower()
-    if "name or service not known" in message or "nodename nor servname" in message:
-        return False
-    if "request url has an unsupported protocol" in message:
-        return False
-    if "unsupported content type" in message:
-        return False
-    return True
-
-
-@dataclass
-class _PreparedBatchRequest:
-    index: int
-    url: str
-    requested_mode: str
-    resolved_config: IngestConfig
-    request_key: str
-    cache_backend: Cache | None
-    cache_key: str | None
-
-
-@dataclass
-class _BatchInFlightRecord:
-    future: asyncio.Future[tuple[SafeDocument, int]]
-    followers: int = 0
-
-
-def _copy_custom_attrs(source: Exception, target: Exception) -> None:
-    """Copy custom instance attributes from source to target exception."""
-    skip = {"args", "__cause__", "__suppress_context__", "__notes__", "__traceback__"}
-    for attr, value in getattr(source, "__dict__", {}).items():
-        if attr not in skip:
-            try:
-                setattr(target, attr, value)
-            except (AttributeError, TypeError):
-                pass
-
-
-def _copy_batch_exception(exc: Exception) -> Exception:
-    """Copy an exception for batch processing, preserving type information.
-
-    Tries multiple fallback strategies to preserve exception type:
-    1. Deep copy (works for most exceptions)
-    2. Single-arg constructor (works for exceptions like ValueError)
-    3. No-arg constructor with args set (works for exceptions with custom init)
-    4. RuntimeError fallback (guaranteed to work)
-
-    """
-    try:
-        return copy.deepcopy(exc)
-    except Exception:
+    def try_cache_hit(
+        self,
+        cache_backend: Cache | None,
+        cache_key: str | None,
+        requested_mode: str,
+    ) -> SafeDocument | None:
+        if cache_backend is None or cache_key is None:
+            return None
         try:
-            # Try single-arg constructor (most common case)
-            new_exc = type(exc)(str(exc))
-            new_exc.__cause__ = exc
-            new_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
-            if hasattr(exc, "__notes__"):
-                new_exc.__notes__ = list(exc.__notes__)
-            _copy_custom_attrs(exc, new_exc)
-            return new_exc
-        except Exception:
-            try:
-                # Try no-arg constructor and set args manually
-                new_exc = type(exc)()
-                new_exc.args = (str(exc),)
-                new_exc.__cause__ = exc
-                new_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
-                if hasattr(exc, "__notes__"):
-                    new_exc.__notes__ = list(exc.__notes__)
-                _copy_custom_attrs(exc, new_exc)
-                return new_exc
-            except Exception:
-                # Last resort: preserve type name in RuntimeError
-                runtime_exc = RuntimeError(f"{type(exc).__name__}: {exc}")
-                runtime_exc.__cause__ = exc
-                runtime_exc.__suppress_context__ = getattr(exc, "__suppress_context__", False)
-                if hasattr(exc, "__notes__"):
-                    runtime_exc.__notes__ = list(exc.__notes__)
-                _copy_custom_attrs(exc, runtime_exc)
-                return runtime_exc
-
-
-def _is_picklable(obj: object) -> bool:
-    import pickle
-
-    try:
-        pickle.dumps(obj)
-        return True
-    except Exception:
-        return False
-
-
-def _make_picklable(value: object) -> object:
-    if isinstance(value, dict):
-        return {k: _make_picklable(v) for k, v in value.items() if _is_picklable(v)}
-    if isinstance(value, list):
-        return [_make_picklable(v) for v in value if _is_picklable(v)]
-    return value
-
-
-def _execute_batch_ingest_in_subprocess(
-    url: str,
-    config: IngestConfig,
-    playwright_available: bool,
-    queue,
-) -> None:
-    try:
-        document = IngestUseCase(playwright_available=playwright_available).execute(url, config)
-        document.metadata = _make_picklable(document.metadata)
-        queue.put(("result", document))
-    except Exception as exc:  # pragma: no cover - child process path
+            cached = cache_backend.get(cache_key)
+        except Exception as exc:
+            _logger.warning(
+                "Cache lookup failed for %s; continuing without cache: %s",
+                cache_key,
+                exc,
+                exc_info=True,
+            )
+            bump_ingest_stat("cache_misses")
+            return None
+        if cached is None:
+            bump_ingest_stat("cache_misses")
+            return None
         try:
-            queue.put(("exception", exc))
-        except Exception:
-            queue.put(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
+            cached_copy = self._orchestrator.clone_cached_document(cached)
+            bump_ingest_stat("cache_hits")
+            cached_copy.metadata[REQUESTED_MODE] = requested_mode
+            record_mode_result(requested_mode, success=True)
+            return cached_copy
+        except Exception as exc:
+            _logger.warning(
+                "Failed to clone cached document for %s, cache entry may be corrupt: %s",
+                cache_key,
+                exc,
+                exc_info=True,
+            )
+            _purge_corrupt_cache_entry(cache_backend, cache_key)
+            bump_ingest_stat("cache_misses")
+            return None
 
+    def try_inflight_follower(
+        self,
+        request_key: str,
+        requested_mode: str,
+    ) -> SafeDocument | None:
+        in_flight = self._orchestrator.acquire_inflight(request_key)
+        if in_flight is None:
+            return None
+        bump_ingest_stat("inflight_followers")
+        shared = cast(SafeDocument, self._orchestrator.await_inflight(in_flight, request_key))
+        shared.metadata[INFLIGHT_DEDUPLICATED] = True
+        shared.metadata.setdefault(CACHE_HIT, False)
+        shared.metadata[REQUESTED_MODE] = requested_mode
+        record_mode_result(requested_mode, success=True)
+        return shared
 
-def _should_attempt_fast_degraded_fallback(exc: Exception) -> bool:
-    """Allow render mode to degrade to a plain HTTP fetch for transient browser/runtime failures."""
-    if isinstance(exc, (httpx.UnsupportedProtocol, httpx.InvalidURL, UnsupportedContentTypeError)):
-        return False
-    message = str(exc).lower()
-    retryable_tokens = (
-        "err_failed",
-        "err_internet_disconnected",
-        "err_network_io_suspended",
-        "timeout",
-        "page is navigating",
-        "page.content",
-    )
-    return any(token in message for token in retryable_tokens)
+    def resolve(
+        self,
+        url: str,
+        resolved_config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None,
+        cache_backend: Cache | None,
+        request_key: str,
+        requested_mode: str,
+    ) -> tuple[SafeDocument | None, str | None]:
+        """Return a cached or in-flight-shared document and the cache key, or (None, key)."""
+        request_identity = build_request_identity(url, resolved_config, matched_domain_policy)
+        cache_key = self.make_cache_key(url, resolved_config, request_identity, cache_backend)
+        hit = self.try_cache_hit(cache_backend, cache_key, requested_mode)
+        if hit is not None:
+            return hit, cache_key
+        shared = self.try_inflight_follower(request_key, requested_mode)
+        return shared, cache_key
 
 
 class IngestUseCase:
@@ -319,24 +210,28 @@ class IngestUseCase:
 
     def __init__(
         self,
-        orchestrator: IngestOrchestrator | None = None,
+        orchestrator: IIngestOrchestrator | None = None,
         fetcher_factory: Callable[[IngestConfig], IFetcher] | None = None,
         renderer_factory: Callable[[RenderConfig], IRenderer] | None = None,
         *,
         playwright_available: bool | None = None,
     ) -> None:
-        self.orchestrator = orchestrator or IngestOrchestrator()
+        _used_default_orchestrator = orchestrator is None
+        if _used_default_orchestrator:
+            from markdown_ingress.core.orchestrator import IngestOrchestrator
+            orchestrator = IngestOrchestrator()
+        self.orchestrator: IIngestOrchestrator = orchestrator
+        self._used_default_orchestrator = _used_default_orchestrator
         self.fetcher_factory = fetcher_factory or self._default_fetcher_factory
         self.renderer_factory = renderer_factory or self._default_renderer_factory
-        self.playwright_available = (
-            PLAYWRIGHT_AVAILABLE if playwright_available is None else playwright_available
-        )
-        # Shared fetcher for connection pooling and circuit breaker reuse
-        self._shared_fetcher: IFetcher | None = None
-        self._shared_fetcher_config_key: tuple | None = None
+        self.playwright_available = PLAYWRIGHT_AVAILABLE if playwright_available is None else playwright_available
+        # Lambda defers to self.fetcher_factory so reassigning it after __init__ is honoured.
+        self._fetcher_mgr = _SharedFetcherManager(lambda config: self.fetcher_factory(config))
+        self._cache_resolver = _CacheResolutionHelper(self.orchestrator)
 
     @staticmethod
     def _default_fetcher_factory(config: IngestConfig) -> IFetcher:
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
         return Fetcher(
             timeout=config.timeout,
             user_agent=getattr(config, "fetcher_user_agent", None),
@@ -351,47 +246,9 @@ class IngestUseCase:
         from markdown_ingress.adapters.rendering.playwright_renderer import PlaywrightRenderer
         return PlaywrightRenderer(config=config)
 
-    @staticmethod
-    def _close_fetcher(fetcher: object) -> None:
-        """Close a sync fetcher if it exposes a close() hook."""
-        close = getattr(fetcher, "close", None)
-        if not callable(close):
-            return
-        try:
-            close()
-        except Exception as exc:  # pragma: no cover - defensive cleanup path
-            _logger.warning("Failed to close fetcher cleanly: %s", exc, exc_info=True)
-
-    @staticmethod
-    def _fetcher_config_key(config: IngestConfig) -> tuple:
-        """Hashable key to identify when a Fetcher can be reused across requests."""
-        return (
-            config.timeout,
-            getattr(config, "fetcher_user_agent", None),
-            config.allow_local_urls,
-            config.domain_request_interval,
-            config.circuit_breaker_threshold,
-            config.circuit_breaker_open_seconds,
-        )
-
-    def _get_shared_fetcher(self, config: IngestConfig) -> IFetcher:
-        """Get or create a shared Fetcher, reusing when config is compatible."""
-        key = self._fetcher_config_key(config)
-        if self._shared_fetcher is not None and self._shared_fetcher_config_key == key:
-            return self._shared_fetcher
-        # Close old fetcher if config changed
-        if self._shared_fetcher is not None:
-            self._close_fetcher(self._shared_fetcher)
-        self._shared_fetcher = self.fetcher_factory(config)
-        self._shared_fetcher_config_key = key
-        return self._shared_fetcher
-
     def close(self) -> None:
         """Close shared resources (fetcher, etc.)."""
-        if self._shared_fetcher is not None:
-            self._close_fetcher(self._shared_fetcher)
-            self._shared_fetcher = None
-            self._shared_fetcher_config_key = None
+        self._fetcher_mgr.close()
 
     @staticmethod
     def _matches_default_factory(
@@ -420,7 +277,7 @@ class IngestUseCase:
         )
         orchestrator = self.orchestrator
         uses_default_orchestrator = (
-            type(orchestrator) is IngestOrchestrator
+            self._used_default_orchestrator
             and not getattr(orchestrator, "_inflight_registry_was_injected", False)
             and getattr(orchestrator, "_default_inflight_registry", None)
             is orchestrator.inflight_registry
@@ -451,8 +308,8 @@ class IngestUseCase:
         if isinstance(screenshot, str) and os.path.isfile(screenshot):
             try:
                 os.unlink(screenshot)
-            except OSError:
-                pass
+            except OSError as exc:
+                _logger.debug("Could not remove screenshot %s: %s", screenshot, exc)
 
     def execute(self, url: str, config: IngestConfig) -> SafeDocument:
         """Execute one ingestion request including cache/inflight handling and auto-mode fallback."""
@@ -466,70 +323,18 @@ class IngestUseCase:
         _ensure_fetcher_user_agent(url, resolved_config, matched_domain_policy)
         try:
             cache_backend = cast(Cache | None, config.cache)
-            cache_key = None
-            request_identity = build_request_identity(url, resolved_config, matched_domain_policy)
-            request_key = self.orchestrator.make_request_key(
-                url,
-                resolved_config,
-                matched_domain_policy,
+            request_key = self.orchestrator.make_request_key(url, resolved_config, matched_domain_policy)
+            early_return, cache_key = self._cache_resolver.resolve(
+                url, resolved_config, matched_domain_policy, cache_backend, request_key, requested_mode
             )
-            if cache_backend is not None:
-                cache_key = Cache.make_key(
-                    url=url,
-                    mode=resolved_config.mode,
-                    strict=resolved_config.strict,
-                    extra=request_identity,
-                )
-                try:
-                    cached = cache_backend.get(cache_key)
-                except Exception as exc:
-                    _logger.warning(
-                        "Cache lookup failed for %s; continuing without cache: %s",
-                        cache_key,
-                        exc,
-                        exc_info=True,
-                    )
-                    cached = None
-                if cached is not None:
-                    try:
-                        cached_copy = self.orchestrator.clone_cached_document(cached)
-                        bump_ingest_stat("cache_hits")
-                        cached_copy.metadata[REQUESTED_MODE] = requested_mode
-                        record_mode_result(requested_mode, success=True)
-                        return cached_copy
-                    except Exception as exc:
-                        _logger.warning(
-                            "Failed to clone cached document for %s, cache entry may be corrupt: %s",
-                            cache_key,
-                            exc,
-                            exc_info=True,
-                        )
-                        _purge_corrupt_cache_entry(cache_backend, cache_key)
-                bump_ingest_stat("cache_misses")
-
-            in_flight = self.orchestrator.acquire_inflight(request_key)
-            if in_flight is not None:
-                # We're a follower, not a leader
-                bump_ingest_stat("inflight_followers")
-                shared = cast(
-                    SafeDocument, self.orchestrator.await_inflight(in_flight, request_key)
-                )
-                shared.metadata[INFLIGHT_DEDUPLICATED] = True
-                shared.metadata.setdefault(CACHE_HIT, False)
-                shared.metadata[REQUESTED_MODE] = requested_mode
-                record_mode_result(requested_mode, success=True)
-                return shared
+            if early_return is not None:
+                return early_return
             leader_slot_acquired = True
             bump_ingest_stat("leader_executions")
             document = self._execute_uncached(
-                url,
-                resolved_config,
-                matched_domain_policy,
-                cache_backend,
-                cache_key,
+                url, resolved_config, matched_domain_policy, cache_backend, cache_key
             )
         except Exception as exc:
-            # Release in-flight slot only if we acquired it (leader path)
             if request_key is not None and leader_slot_acquired:
                 try:
                     self.orchestrator.release_inflight(request_key, error=exc)
@@ -543,7 +348,6 @@ class IngestUseCase:
         document.metadata[REQUESTED_MODE] = requested_mode
         shared_count = self.orchestrator.release_inflight(request_key, document=document)
         document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-        # Note: record_mode_result already called for cache hits and inflight followers above
         record_mode_result(requested_mode, success=True)
         return document
 
@@ -551,18 +355,23 @@ class IngestUseCase:
         self,
         url: str,
         config: IngestConfig,
-        matched_domain_policy,
+        matched_domain_policy: DomainPolicy | None,
         cache_backend: Cache | None,
         cache_key: str | None,
     ) -> SafeDocument:
-        budget_state = {
-            "budget": config.render_cost_budget,
-            "used": 0,
-        }
+        budget = _CostBudget(limit=config.render_cost_budget)
+        pipeline = _FetchPipeline(
+            orchestrator=self.orchestrator,
+            renderer_factory=self.renderer_factory,
+            get_shared_fetcher=self._fetcher_mgr.get,
+            playwright_available=self.playwright_available,
+        )
         if config.mode == "auto":
-            document = self._execute_auto(url, config, matched_domain_policy, budget_state)
+            document = _AutoModeSelector(pipeline, self.playwright_available).execute(
+                url, config, matched_domain_policy, budget
+            )
         else:
-            document = self._execute_explicit_mode(url, config, matched_domain_policy, budget_state)
+            document = pipeline.execute_mode(url, config, matched_domain_policy, budget)
 
         if cache_backend is not None and cache_key is not None:
             try:
@@ -579,52 +388,270 @@ class IngestUseCase:
         document.metadata[INFLIGHT_SHARED_COUNT] = 0
         return document
 
-    def _execute_auto(
+
+class _FetchPipeline:
+    """Handles the fetch/render pipeline for a single URL ingestion request."""
+
+    def __init__(
+        self,
+        orchestrator: IIngestOrchestrator,
+        renderer_factory: Callable[[RenderConfig], IRenderer],
+        get_shared_fetcher: Callable[[IngestConfig], IFetcher],
+        playwright_available: bool,
+    ) -> None:
+        self._orchestrator = orchestrator
+        self._renderer_factory = renderer_factory
+        self._get_shared_fetcher = get_shared_fetcher
+        self._playwright_available = playwright_available
+
+    def execute_mode(
         self,
         url: str,
         config: IngestConfig,
-        matched_domain_policy,
-        budget_state: dict[str, int | None],
+        matched_domain_policy: DomainPolicy | None,
+        budget: _CostBudget,
+    ) -> SafeDocument:
+        fetch_result, operational_flags = self._fetch_result(url, config, budget)
+        return self._orchestrator.process_fetched_content(
+            fetch_result=fetch_result,
+            config=config,
+            matched_domain_policy=matched_domain_policy,
+            operational_flags=operational_flags,
+        )
+
+    def _fetch_result(self, url: str, config: IngestConfig, budget: _CostBudget):
+        operational_flags: list[str] = []
+        stage_timings: dict[str, float] = {}
+
+        def timed_stage(stage: str, fn: Callable[[], Any]) -> Any:
+            return timed_stage_with_snapshot(stage_timings, stage, fn)
+
+        if config.mode == "render":
+            fetch_result = self._fetch_render(url, config, budget, timed_stage, operational_flags)
+        else:
+            fetch_result = self._fetch_fast(url, config, budget, timed_stage)
+
+        fetch_result.metadata.setdefault(COST_UNITS_USED, budget.used)
+        fetch_result.metadata.setdefault(RENDER_COST_BUDGET, budget.limit)
+        fetch_result.metadata.setdefault("stage_timings_ms", stage_timings)
+        return fetch_result, operational_flags
+
+    @staticmethod
+    def _prepare_render_config(config: IngestConfig) -> tuple[RenderConfig, str | None, bool]:
+        """Build a RenderConfig, allocating a temp screenshot file when screenshot=True."""
+        render_config = RenderConfig(
+            timeout=config.timeout,
+            wait_until="domcontentloaded",
+            stealth=config.stealth,
+            disable_http2=config.disable_http2,
+            extreme_mode=config.extreme_mode,
+            screenshot=config.screenshot,
+        )
+        screenshot_temp_path: str | None = None
+        screenshot_was_temp = False
+        if render_config.screenshot is True:
+            tmp_file = tempfile.NamedTemporaryFile(
+                suffix=".png",
+                delete=False,
+                prefix="mdingress_screenshot_",
+            )
+            screenshot_temp_path = tmp_file.name
+            tmp_file.close()
+            render_config.screenshot = screenshot_temp_path
+            screenshot_was_temp = True
+        return render_config, screenshot_temp_path, screenshot_was_temp
+
+    def _execute_fast_degraded_fallback(
+        self,
+        url: str,
+        config: IngestConfig,
+        render_exc: Exception,
+        budget: _CostBudget,
+        timed_stage: Callable[[str, Callable[[], Any]], Any],
+        operational_flags: list[str],
+    ) -> FetchResult:
+        budget.consume(1, "degraded fast fallback from render")
+        fetcher = self._get_shared_fetcher(config)
+        fetch_result = timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(url))
+        operational_flags.extend([
+            "render_failed_fast_degraded_fallback",
+            f"render_error:{type(render_exc).__name__}",
+        ])
+        fetch_result.metadata[EFFECTIVE_MODE] = "fast"
+        fetch_result.metadata[DEGRADED_RENDER_FALLBACK] = True
+        fetch_result.metadata[DEGRADED_REASON] = str(render_exc)
+        return fetch_result
+
+    def _handle_render_failure(
+        self,
+        url: str,
+        config: IngestConfig,
+        render_exc: Exception,
+        screenshot_temp_path: str | None,
+        screenshot_was_temp: bool,
+        budget: _CostBudget,
+        timed_stage: Callable[[str, Callable[[], Any]], Any],
+        operational_flags: list[str],
+    ) -> FetchResult:
+        if screenshot_was_temp and screenshot_temp_path is not None:
+            try:
+                os.unlink(screenshot_temp_path)
+            except OSError as exc:
+                _logger.debug("Could not remove screenshot %s: %s", screenshot_temp_path, exc)
+        if not _should_attempt_fast_degraded_fallback(render_exc):
+            raise render_exc
+        return self._execute_fast_degraded_fallback(
+            url, config, render_exc, budget, timed_stage, operational_flags
+        )
+
+    def _run_render_or_degrade(
+        self,
+        url: str,
+        config: IngestConfig,
+        render_config: RenderConfig,
+        screenshot_temp_path: str | None,
+        screenshot_was_temp: bool,
+        budget: _CostBudget,
+        timed_stage: Callable[[str, Callable[[], Any]], Any],
+        operational_flags: list[str],
+    ) -> FetchResult:
+        """Run the Playwright render; fall back to a plain HTTP fetch on retryable failure."""
+        renderer = self._renderer_factory(render_config)
+        try:
+            fetch_result = timed_stage("fetch_render", lambda: renderer.render_sync(url))
+            if screenshot_was_temp:
+                fetch_result.metadata[SCREENSHOT_TEMP] = True
+            return fetch_result
+        except Exception as render_exc:
+            return self._handle_render_failure(
+                url, config, render_exc, screenshot_temp_path, screenshot_was_temp,
+                budget, timed_stage, operational_flags,
+            )
+
+    def _fetch_render(
+        self,
+        url: str,
+        config: IngestConfig,
+        budget: _CostBudget,
+        timed_stage: Callable[[str, Callable[[], Any]], Any],
+        operational_flags: list[str],
+    ) -> FetchResult:
+        if _looks_like_non_html_resource(url):
+            raise UnsupportedContentTypeError(
+                f"URL appears to target a non-HTML resource and should not be rendered: {url}"
+            )
+        # The render cost budget is an upper bound on the combined
+        # fast+render spend, so we only charge the delta up to 5 units.
+        # A previous audit flagged this as undercharging, but the test
+        # suite documents the opposite contract: fast probes already
+        # consumed budget leave less room for render, by design.
+        render_cost_units = max(0, _RENDER_COST_BUDGET_CEILING - budget.used)
+        budget.consume(render_cost_units, "render mode")
+        if not self._playwright_available:
+            raise ImportError(
+                "Render mode requires Playwright. Install with: "
+                "pip install 'markdown-ingress[render]' && playwright install"
+            )
+        render_config, screenshot_temp_path, screenshot_was_temp = self._prepare_render_config(
+            config
+        )
+        return self._run_render_or_degrade(
+            url, config, render_config, screenshot_temp_path, screenshot_was_temp,
+            budget, timed_stage, operational_flags,
+        )
+
+    def _fetch_fast(
+        self,
+        url: str,
+        config: IngestConfig,
+        budget: _CostBudget,
+        timed_stage: Callable[[str, Callable[[], Any]], Any],
+    ) -> FetchResult:
+        budget.consume(1, "fetch mode")
+        fetcher = self._get_shared_fetcher(config)
+        try:
+            return timed_stage("fetch_fast", lambda: fetcher.fetch_sync(url))
+        except DomainCircuitOpenError:
+            bump_ingest_stat("circuit_breaker_rejections")
+            raise
+
+
+class _AutoModeSelector:
+    """Orchestrates auto-mode: fast probe, render evaluation, and winner selection."""
+
+    def __init__(self, pipeline: _FetchPipeline, playwright_available: bool) -> None:
+        self._pipeline = pipeline
+        self._playwright_available = playwright_available
+
+    def execute(
+        self,
+        url: str,
+        config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None,
+        budget: _CostBudget,
     ) -> SafeDocument:
         fast_config = config.clone()
         fast_config.mode = "fast"
-
         try:
-            fast_doc = self._execute_explicit_mode(
-                url, fast_config, matched_domain_policy, budget_state
-            )
+            fast_doc = self._pipeline.execute_mode(url, fast_config, matched_domain_policy, budget)
         except Exception as exc:
-            if (
-                not self.playwright_available
-                or _looks_like_non_html_resource(url)
-                or _looks_like_auth_interstitial(url)
-                or not _should_attempt_render_fallback(exc)
-            ):
-                raise exc
-            render_config = config.clone()
-            render_config.mode = "render"
-            render_config.extreme_mode = True
-            render_doc = self._execute_explicit_mode(
-                url, render_config, matched_domain_policy, budget_state
+            return self._auto_fallback_render_on_error(
+                url, config, matched_domain_policy, budget, exc
             )
-            render_doc.metadata[AUTO_MODE_USED] = "render"
-            render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
-            return render_doc
-
-        if (
-            fast_doc.token_estimate >= config.auto_render_threshold
-            or not self.playwright_available
-            or _looks_like_auth_interstitial(url)
-            or _looks_like_non_html_resource(url)
-        ):
+        if self._auto_skip_render(url, fast_doc, config):
             fast_doc.metadata[AUTO_MODE_USED] = "fast"
             return fast_doc
+        return self._auto_render_with_fast_fallback(
+            url, config, matched_domain_policy, budget, fast_doc
+        )
 
+    def _auto_fallback_render_on_error(
+        self,
+        url: str,
+        config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None,
+        budget: _CostBudget,
+        exc: Exception,
+    ) -> SafeDocument:
+        """Try render mode after fast mode failed; re-raises if render is not applicable."""
+        if (
+            not self._playwright_available
+            or _looks_like_non_html_resource(url)
+            or _looks_like_auth_interstitial(url)
+            or not _should_attempt_render_fallback(exc)
+        ):
+            raise exc
+        render_config = config.clone()
+        render_config.mode = "render"
+        render_config.extreme_mode = True
+        render_doc = self._pipeline.execute_mode(url, render_config, matched_domain_policy, budget)
+        render_doc.metadata[AUTO_MODE_USED] = "render"
+        render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
+        return render_doc
+
+    def _auto_skip_render(self, url: str, fast_doc: SafeDocument, config: IngestConfig) -> bool:
+        """Return True when render would be wasteful or unavailable."""
+        return (
+            fast_doc.token_estimate >= config.auto_render_threshold
+            or not self._playwright_available
+            or _looks_like_auth_interstitial(url)
+            or _looks_like_non_html_resource(url)
+        )
+
+    def _auto_render_with_fast_fallback(
+        self,
+        url: str,
+        config: IngestConfig,
+        matched_domain_policy: DomainPolicy | None,
+        budget: _CostBudget,
+        fast_doc: SafeDocument,
+    ) -> SafeDocument:
+        """Attempt render and fall back to the already-fetched fast result on retryable failure."""
         render_config = config.clone()
         render_config.mode = "render"
         try:
-            render_doc = self._execute_explicit_mode(
-                url, render_config, matched_domain_policy, budget_state
+            render_doc = self._pipeline.execute_mode(
+                url, render_config, matched_domain_policy, budget
             )
         except Exception as exc:
             if not _should_attempt_fast_degraded_fallback(exc):
@@ -662,145 +689,12 @@ class IngestUseCase:
             render_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
             fast_fetch_metadata = fast_doc.metadata.get(FETCH_METADATA, {})
             if fast_fetch_metadata.get(SCREENSHOT_TEMP):
-                from markdown_ingress.core.renderer import Renderer
-
-                Renderer.cleanup_screenshot(fast_fetch_metadata.get("screenshot_path"))
+                _cleanup_screenshot(fast_fetch_metadata.get("screenshot_path"))
             return render_doc
         if render_fetch_metadata.get(SCREENSHOT_TEMP):
-            from markdown_ingress.core.renderer import Renderer
-
-            Renderer.cleanup_screenshot(render_fetch_metadata.get("screenshot_path"))
+            _cleanup_screenshot(render_fetch_metadata.get("screenshot_path"))
         fast_doc.metadata[AUTO_MODE_USED] = "fast"
         return fast_doc
-
-    def _execute_explicit_mode(
-        self,
-        url: str,
-        config: IngestConfig,
-        matched_domain_policy,
-        budget_state: dict[str, int | None],
-    ) -> SafeDocument:
-        fetch_result, operational_flags = self._fetch_result(url, config, budget_state)
-        return self.orchestrator.process_fetched_content(
-            fetch_result=fetch_result,
-            config=config,
-            matched_domain_policy=matched_domain_policy,
-            operational_flags=operational_flags,
-        )
-
-    def _fetch_result(self, url: str, config: IngestConfig, budget_state: dict[str, int | None]):
-        cost_budget = budget_state["budget"]
-        operational_flags: list[str] = []
-        stage_timings: dict[str, float] = {}
-
-        def timed_stage(stage: str, fn):
-            started = time.perf_counter()
-            result = fn()
-            duration_ms = (time.perf_counter() - started) * 1000.0
-            stage_timings[stage] = duration_ms
-            record_stage_timing(stage, duration_ms)
-            return result
-
-        def consume_cost(units: int, reason: str) -> None:
-            used = budget_state["used"] if budget_state["used"] is not None else 0
-            if cost_budget is None:
-                budget_state["used"] = used + units
-                return
-            if used + units > cost_budget:
-                raise RuntimeError(
-                    f"Render cost budget exceeded while handling {reason}: "
-                    f"required {used + units}, budget {cost_budget}"
-                )
-            budget_state["used"] = used + units
-
-        if config.mode == "render":
-            if _looks_like_non_html_resource(url):
-                raise UnsupportedContentTypeError(
-                    f"URL appears to target a non-HTML resource and should not be rendered: {url}"
-                )
-            # The render cost budget is an upper bound on the combined
-            # fast+render spend, so we only charge the delta up to 5 units.
-            # A previous audit flagged this as undercharging, but the test
-            # suite documents the opposite contract: fast probes already
-            # consumed budget leave less room for render, by design.
-            render_cost_units = max(
-                0, 5 - (budget_state["used"] if budget_state["used"] is not None else 0)
-            )
-            consume_cost(render_cost_units, "render mode")
-            if not self.playwright_available:
-                raise ImportError(
-                    "Render mode requires Playwright. Install with: "
-                    "pip install 'markdown-ingress[render]' && playwright install"
-                )
-            screenshot_temp_path: str | None = None
-            screenshot_was_temp = False
-            render_config = RenderConfig(
-                timeout=config.timeout,
-                wait_until="domcontentloaded",
-                stealth=config.stealth,
-                disable_http2=config.disable_http2,
-                extreme_mode=config.extreme_mode,
-                screenshot=config.screenshot,
-            )
-            if render_config.screenshot is True:
-                tmp_file = tempfile.NamedTemporaryFile(
-                    suffix=".png",
-                    delete=False,
-                    prefix="mdingress_screenshot_",
-                )
-                screenshot_temp_path = tmp_file.name
-                tmp_file.close()
-                render_config.screenshot = screenshot_temp_path
-                screenshot_was_temp = True
-            renderer = self.renderer_factory(render_config)
-            try:
-                fetch_result = timed_stage(
-                    "fetch_render",
-                    lambda: renderer.render_sync(url),
-                )
-                if screenshot_was_temp:
-                    fetch_result.metadata[SCREENSHOT_TEMP] = True
-            except Exception as render_exc:
-                if screenshot_was_temp and screenshot_temp_path is not None:
-                    try:
-                        os.unlink(screenshot_temp_path)
-                    except OSError:
-                        pass
-                if not _should_attempt_fast_degraded_fallback(render_exc):
-                    raise
-                consume_cost(1, "degraded fast fallback from render")
-                degraded_fetcher = self._get_shared_fetcher(config)
-                fetch_result = timed_stage(
-                    "fetch_fast_degraded",
-                    lambda: degraded_fetcher.fetch_sync(url),
-                )
-                operational_flags.extend(
-                    [
-                        "render_failed_fast_degraded_fallback",
-                        f"render_error:{type(render_exc).__name__}",
-                    ]
-                )
-                fetch_result.metadata[EFFECTIVE_MODE] = "fast"
-                fetch_result.metadata[DEGRADED_RENDER_FALLBACK] = True
-                fetch_result.metadata[DEGRADED_REASON] = str(render_exc)
-        else:
-            consume_cost(1, "fetch mode")
-            fetcher = self._get_shared_fetcher(config)
-            try:
-                fetch_result = timed_stage(
-                    "fetch_fast",
-                    lambda: fetcher.fetch_sync(url),
-                )
-            except DomainCircuitOpenError:
-                bump_ingest_stat("circuit_breaker_rejections")
-                raise
-        fetch_result.metadata.setdefault(
-            COST_UNITS_USED,
-            budget_state["used"] if budget_state["used"] is not None else 0,
-        )
-        fetch_result.metadata.setdefault(RENDER_COST_BUDGET, cost_budget)
-        fetch_result.metadata.setdefault("stage_timings_ms", stage_timings)
-        return fetch_result, operational_flags
 
 
 class BatchIngestUseCase:
@@ -808,17 +702,6 @@ class BatchIngestUseCase:
 
     def __init__(self, ingest_use_case: IngestUseCase | None = None) -> None:
         self.ingest_use_case = ingest_use_case or IngestUseCase()
-
-    @staticmethod
-    def _main_module_file() -> str | None:
-        """Return the current main-module path when subprocess respawn is safe."""
-        main_module = sys.modules.get("__main__")
-        path = getattr(main_module, "__file__", None)
-        if not isinstance(path, str) or not path or path.startswith("<"):
-            return None
-        if not os.path.isfile(path):
-            return None
-        return path
 
     def _prepare_request(
         self,
@@ -853,37 +736,8 @@ class BatchIngestUseCase:
             cache_key=cache_key,
         )
 
-    @staticmethod
-    def _batch_process_context():
-        if BatchIngestUseCase._main_module_file() is None:
-            return None
-        available = multiprocessing.get_all_start_methods()
-        for method in ("forkserver", "spawn", "fork"):
-            if method in available:
-                return multiprocessing.get_context(method)
-        return multiprocessing.get_context()
-
-    def _select_execution_strategy(self) -> tuple[Literal["isolated", "local"], str | None]:
-        """Choose between subprocess isolation and in-process execution."""
-        if not self.ingest_use_case.uses_default_runtime_dependencies():
-            return "local", "custom runtime dependencies"
-        if self._batch_process_context() is None:
-            return "local", "main module is not importable from a file"
-        return "isolated", None
-
-    @staticmethod
-    def _terminate_batch_process(process) -> None:
-        if not process.is_alive():
-            process.join(timeout=0.5)
-            return
-        process.terminate()
-        process.join(timeout=1.0)
-        if process.is_alive():
-            process.kill()
-            process.join(timeout=1.0)
-
     async def _execute_item_isolated(self, prepared: _PreparedBatchRequest) -> SafeDocument:
-        ctx = self._batch_process_context()
+        ctx = _batch_process_context()
         if ctx is None:
             raise RuntimeError("Batch subprocess isolation requires an importable __main__ module")
         # Use Queue instead of Pipe: Queue handles arbitrarily large objects;
@@ -903,33 +757,13 @@ class BatchIngestUseCase:
         )
         try:
             process.start()
-            while True:
-                if not queue.empty():
-                    kind, payload = queue.get_nowait()
-                    process.join(timeout=0.5)
-                    if kind == "result":
-                        return cast(SafeDocument, payload)
-                    if kind == "exception":
-                        raise payload
-                    if kind == "exception_payload":
-                        raise RuntimeError(f"{payload['type']}: {payload['message']}")
-                    raise RuntimeError(
-                        f"Batch worker returned an unknown payload for {prepared.url}"
-                    )
-                if not process.is_alive():
-                    process.join(timeout=0.5)
-                    if not queue.empty():
-                        continue
-                    raise RuntimeError(
-                        f"Batch worker exited without returning a result for {prepared.url}"
-                    )
-                await asyncio.sleep(0.1)
+            return await _poll_subprocess_queue(process, queue, prepared.url)
         except asyncio.CancelledError:
-            self._terminate_batch_process(process)
+            _terminate_batch_process(process)
             raise
         finally:
             if process.is_alive():
-                self._terminate_batch_process(process)
+                _terminate_batch_process(process)
             queue.close()
             queue.join_thread()
 
@@ -958,256 +792,29 @@ class BatchIngestUseCase:
         total = len(url_list)
         documents: list[SafeDocument | None] = [None] * total
         errors: list[BatchErrorItem] = []
-        semaphore = asyncio.Semaphore(max_concurrent)
-        errors_lock = asyncio.Lock()  # Protect concurrent errors.append() calls
-        batch_inflight: dict[str, _BatchInFlightRecord] = {}
-        batch_inflight_lock = asyncio.Lock()
-        progress_lock = asyncio.Lock()
-        completed = 0
-        execution_strategy, fallback_reason = self._select_execution_strategy()
+        execution_strategy, fallback_reason = _select_execution_strategy(self.ingest_use_case)
         if execution_strategy == "local" and fallback_reason is not None:
-            _logger.info(
-                "Batch falling back to in-process execution: %s.",
-                fallback_reason,
-            )
+            _logger.info("Batch falling back to in-process execution: %s.", fallback_reason)
         prepared_requests = [
             self._prepare_request(index, url, config_builder())
             for index, url in enumerate(url_list)
         ]
-
-        async def report_completion(url: str) -> None:
-            nonlocal completed
-            if on_progress is None:
-                return
-            async with progress_lock:
-                completed += 1
-                on_progress(completed, total, url)
-
-        async def process_url(prepared: _PreparedBatchRequest) -> bool:
-            """Return True on success, False on failure."""
-            started_at = time.perf_counter()
-            # In-process mode delegates to IngestUseCase.execute which records its own metrics.
-            # Only record here for isolated mode (subprocess can't update parent-process stats).
-            batch_tracks_metrics = execution_strategy != "local"
-            if batch_tracks_metrics:
-                bump_ingest_stat("requests_total")
-                record_mode_request(prepared.requested_mode)
-            is_leader = False
-            record: _BatchInFlightRecord | None = None
-            semaphore_held = False
-            try:
-                # Acquire semaphore for cache check + inflight detection.
-                # This preserves sequential cache reuse (with max_concurrent=1
-                # the second identical URL finds the first's result cached).
-                await semaphore.acquire()
-                semaphore_held = True
-
-                if prepared.cache_backend is not None and prepared.cache_key is not None:
-                    try:
-                        cached = prepared.cache_backend.get(prepared.cache_key)
-                    except Exception as exc:
-                        _logger.warning(
-                            "Batch cache lookup failed for %s; continuing without cache: %s",
-                            prepared.cache_key,
-                            exc,
-                            exc_info=True,
-                        )
-                        cached = None
-                    if cached is not None:
-                        try:
-                            cached_copy = self.ingest_use_case.orchestrator.clone_cached_document(
-                                cached
-                            )
-                            bump_ingest_stat("cache_hits")
-                            cached_copy.metadata[REQUESTED_MODE] = prepared.requested_mode
-                            documents[prepared.index] = cached_copy
-                            record_mode_result(prepared.requested_mode, success=True)
-                            await report_completion(prepared.url)
-                            return True
-                        except Exception as exc:
-                            _logger.warning(
-                                "Failed to clone cached batch document for %s, cache entry may be corrupt: %s",
-                                prepared.cache_key,
-                                exc,
-                                exc_info=True,
-                            )
-                            _purge_corrupt_cache_entry(
-                                prepared.cache_backend,
-                                prepared.cache_key,
-                            )
-                    bump_ingest_stat("cache_misses")
-
-                async with batch_inflight_lock:
-                    record = batch_inflight.get(prepared.request_key)
-                    if record is None:
-                        record = _BatchInFlightRecord(
-                            future=asyncio.get_running_loop().create_future()
-                        )
-                        batch_inflight[prepared.request_key] = record
-                        is_leader = True
-                    else:
-                        record.followers += 1
-                        is_leader = False
-
-                if not is_leader:
-                    # Release semaphore BEFORE awaiting — followers do no real
-                    # work, so holding a slot would waste concurrency and with
-                    # max_concurrent=1 + duplicates could cause effective deadlock.
-                    semaphore.release()
-                    semaphore_held = False
-                    bump_ingest_stat("inflight_followers")
-                    try:
-                        shared_document, shared_count = await record.future
-                    except asyncio.CancelledError:
-                        # Clean up stale entry so future requests for the same key don't
-                        # find a cancelled future and deadlock.
-                        async with batch_inflight_lock:
-                            rec = batch_inflight.get(prepared.request_key)
-                            if rec is not None and rec.future.done():
-                                batch_inflight.pop(prepared.request_key, None)
-                        raise
-                    except Exception as exc:
-                        import traceback
-
-                        error_message = str(exc)
-                        async with errors_lock:
-                            errors.append(
-                                BatchErrorItem(
-                                    index=prepared.index,
-                                    url=prepared.url,
-                                    error=error_message,
-                                    error_type=type(exc).__name__,
-                                    traceback=traceback.format_exc(),
-                                )
-                            )
-                        record_mode_result(prepared.requested_mode, success=False)
-                        async with batch_inflight_lock:
-                            if batch_inflight.get(prepared.request_key) is record:
-                                batch_inflight.pop(prepared.request_key, None)
-                        return False
-                    shared = copy.deepcopy(shared_document)
-                    shared.metadata[INFLIGHT_DEDUPLICATED] = True
-                    shared.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-                    shared.metadata.setdefault(CACHE_HIT, False)
-                    shared.metadata[REQUESTED_MODE] = prepared.requested_mode
-                    documents[prepared.index] = shared
-                    record_mode_result(prepared.requested_mode, success=True)
-                    await report_completion(prepared.url)
-                    return True
-
-                # Leader path: semaphore already held, execute ingestion
-                bump_ingest_stat("leader_executions")
-                if execution_strategy == "isolated":
-                    document = await self._execute_item_isolated(prepared)
-                else:
-                    document = await self._execute_item_in_process(prepared)
-                if prepared.cache_backend is not None and prepared.cache_key is not None:
-                    try:
-                        prepared.cache_backend.set(
-                            prepared.cache_key,
-                            document,
-                            ttl=prepared.resolved_config.cache_ttl,
-                        )
-                    except Exception as exc:
-                        _logger.warning(
-                            "Batch cache write failed for %s; continuing without cache: %s",
-                            prepared.cache_key,
-                            exc,
-                            exc_info=True,
-                        )
-
-                document.metadata[REQUESTED_MODE] = prepared.requested_mode
-                async with batch_inflight_lock:
-                    shared_count = record.followers
-                    shared_document = copy.deepcopy(document)
-                    try:
-                        record.future.set_result((shared_document, shared_count))
-                    except asyncio.InvalidStateError:
-                        _logger.warning(
-                            "Batch inflight future already done for %s (state: %s); "
-                            "followers may have been cancelled",
-                            prepared.request_key[:32],
-                            getattr(record.future, '_state', 'unknown'),
-                        )
-                    if batch_inflight.get(prepared.request_key) is record:
-                        batch_inflight.pop(prepared.request_key, None)
-
-                document.metadata[INFLIGHT_DEDUPLICATED] = False
-                document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-                document.metadata.setdefault(CACHE_HIT, False)
-                documents[prepared.index] = document
-                if batch_tracks_metrics:
-                    record_mode_result(prepared.requested_mode, success=True)
-                await report_completion(prepared.url)
-                return True
-            except asyncio.CancelledError:
-                if record is not None:
-                    async with batch_inflight_lock:
-                        if not record.future.done():
-                            record.future.cancel()
-                        if batch_inflight.get(prepared.request_key) is record:
-                            batch_inflight.pop(prepared.request_key, None)
-                raise
-            except Exception as exc:
-                import traceback
-
-                error_message = str(exc)
-                if (
-                    isinstance(exc, PolicyBlockedError)
-                    and exc.document is not None
-                    and prepared.resolved_config.save_reports
-                ):
-                    try:
-                        await asyncio.to_thread(
-                            persist_report_for_document,
-                            exc.document,
-                            prepared.resolved_config.reports_dir,
-                        )
-                    except OSError as persist_exc:
-                        _logger.warning(
-                            "Failed to persist security report for %s: %s",
-                            prepared.url,
-                            persist_exc,
-                        )
-                if record is not None:
-                    async with batch_inflight_lock:
-                        try:
-                            if not record.future.done():
-                                record.future.set_exception(
-                                    _copy_batch_exception(exc)
-                                )
-                        except asyncio.InvalidStateError:
-                            _logger.warning(
-                                "Batch inflight future already done when "
-                                "setting exception for %s",
-                                prepared.request_key[:32],
-                            )
-                        if batch_inflight.get(prepared.request_key) is record:
-                            batch_inflight.pop(prepared.request_key, None)
-                async with errors_lock:
-                    errors.append(
-                        BatchErrorItem(
-                            index=prepared.index,
-                            url=prepared.url,
-                            error=error_message,
-                            error_type=type(exc).__name__,
-                            traceback=traceback.format_exc(),
-                        )
-                    )
-                if batch_tracks_metrics:
-                    record_mode_result(prepared.requested_mode, success=False)
-                await report_completion(prepared.url)
-                return False
-            finally:
-                if semaphore_held:
-                    semaphore.release()
-                if batch_tracks_metrics:
-                    record_mode_timing(
-                        prepared.requested_mode,
-                        (time.perf_counter() - started_at) * 1000.0,
-                    )
-
-        tasks = [asyncio.create_task(process_url(prepared)) for prepared in prepared_requests]
+        ctx = _BatchContext(
+            total=total,
+            documents=documents,
+            errors=errors,
+            semaphore=asyncio.Semaphore(max_concurrent),
+            errors_lock=asyncio.Lock(),
+            batch_inflight={},
+            batch_inflight_lock=asyncio.Lock(),
+            progress_lock=asyncio.Lock(),
+            completed=0,
+            execution_strategy=execution_strategy,
+            on_progress=on_progress,
+            batch_tracks_metrics=execution_strategy != "local",
+        )
+        processor = _BatchUrlProcessor(ctx, self)
+        tasks = [asyncio.create_task(processor.process(prepared)) for prepared in prepared_requests]
         try:
             results = await asyncio.gather(*tasks)
         except asyncio.CancelledError:

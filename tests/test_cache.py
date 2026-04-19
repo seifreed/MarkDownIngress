@@ -4,7 +4,9 @@ import time
 
 import pytest
 
-from markdown_ingress.core.cache import Cache, MemoryCache, SQLiteCache
+from markdown_ingress.adapters.cache.memory import MemoryCache
+from markdown_ingress.adapters.cache.sqlite import SQLiteCache
+from markdown_ingress.core.cache import Cache
 from markdown_ingress.models import SafeDocument
 
 
@@ -209,8 +211,8 @@ def test_request_identity_ignores_cache_ttl():
 
 
 def test_request_identity_ignores_cache_backend_presence():
+    from markdown_ingress.adapters.cache.memory import MemoryCache
     from markdown_ingress.config_models import IngestConfig
-    from markdown_ingress.core.cache import MemoryCache
     from markdown_ingress.core.inflight import build_request_identity, make_request_key
 
     cached = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=60))
@@ -231,8 +233,9 @@ def test_request_identity_ignores_cache_backend_presence():
 
 
 def test_request_identity_ignores_cache_backend_details(monkeypatch, tmp_path):
+    from markdown_ingress.adapters.cache.memory import MemoryCache
+    from markdown_ingress.adapters.cache.sqlite import SQLiteCache
     from markdown_ingress.config_models import IngestConfig
-    from markdown_ingress.core.cache import MemoryCache, SQLiteCache
     from markdown_ingress.core.inflight import build_request_identity, make_request_key
 
     memory_a = IngestConfig(mode="fast", cache=MemoryCache(default_ttl=60, max_entries=10))
@@ -281,8 +284,8 @@ def test_request_identity_ignores_cache_backend_details(monkeypatch, tmp_path):
 
 
 def test_request_identity_ignores_custom_cache_backend_state():
+    from markdown_ingress.adapters.cache.memory import MemoryCache
     from markdown_ingress.config_models import IngestConfig
-    from markdown_ingress.core.cache import MemoryCache
     from markdown_ingress.core.inflight import build_request_identity, make_request_key
 
     class SlotCache:

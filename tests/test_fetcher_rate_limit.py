@@ -20,7 +20,7 @@ def _start_server(handler_cls: type[BaseHTTPRequestHandler]) -> tuple[ThreadingH
 
 
 def test_fetcher_applies_retry_after_backoff_to_same_host():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     call_times: list[float] = []
 
@@ -61,7 +61,7 @@ def test_fetcher_applies_retry_after_backoff_to_same_host():
 
 
 def test_fetcher_does_not_open_circuit_for_repeated_429_before_backoff():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -89,7 +89,7 @@ def test_fetcher_does_not_open_circuit_for_repeated_429_before_backoff():
 
 
 def test_fetcher_applies_extra_backoff_for_known_host_suffix():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     delayed = []
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0)
@@ -112,10 +112,10 @@ def test_fetcher_applies_extra_backoff_for_known_host_suffix():
 
 
 def test_fetcher_rotate_ua_false_uses_stable_user_agent_per_instance(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.ADVANCED_USER_AGENTS",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.ADVANCED_USER_AGENTS",
         ["UA-1", "UA-2", "UA-3"],
     )
 
@@ -126,13 +126,13 @@ def test_fetcher_rotate_ua_false_uses_stable_user_agent_per_instance(monkeypatch
 
 
 def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.ADVANCED_USER_AGENTS",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.ADVANCED_USER_AGENTS",
         ["UA-1", "UA-2"],
     )
-    monkeypatch.setattr("markdown_ingress.core.fetcher.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None)
 
     retry_request = httpx.Request("GET", "https://example.com/retry")
     retry_response = httpx.Response(
@@ -203,7 +203,7 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
 
 
 def test_fetcher_instance_state_does_not_leak_between_configs():
-    from markdown_ingress.core.fetcher import DomainCircuitOpenError, Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
 
     strict_fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, circuit_breaker_threshold=1)
     relaxed_fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, circuit_breaker_threshold=5)
@@ -217,14 +217,14 @@ def test_fetcher_instance_state_does_not_leak_between_configs():
 
 
 def test_fetcher_rejects_non_positive_max_response_size():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     with pytest.raises(ValueError, match="max_response_size"):
         Fetcher(max_response_size=0)
 
 
 def test_fetcher_host_key_ignores_userinfo_and_port():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     assert Fetcher._host_key("https://user:pass@example.com:443/path") == "example.com"
     assert Fetcher._host_key("https://EXAMPLE.com:8443/path") == "example.com"
@@ -245,7 +245,7 @@ def test_fetcher_host_key_ignores_userinfo_and_port():
     ],
 )
 def test_fetcher_blocks_ssrf_targets_by_default(monkeypatch, url: str):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     monkeypatch.delenv("MDI_ALLOW_LOCAL_URLS", raising=False)
 
@@ -254,7 +254,7 @@ def test_fetcher_blocks_ssrf_targets_by_default(monkeypatch, url: str):
 
 
 def test_fetcher_can_explicitly_allow_local_urls():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     assert (
         Fetcher._validate_url("http://127.0.0.1:8000/", allow_local_urls=True)
@@ -263,7 +263,7 @@ def test_fetcher_can_explicitly_allow_local_urls():
 
 
 def test_fetcher_blocks_hostname_that_resolves_to_private_ip(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     def fake_getaddrinfo(host, port, *args, **kwargs):
         assert host == "public.example"
@@ -276,7 +276,7 @@ def test_fetcher_blocks_hostname_that_resolves_to_private_ip(monkeypatch):
 
 
 def test_fetcher_allows_hostname_that_resolves_to_public_ip(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     def fake_getaddrinfo(host, port, *args, **kwargs):
         assert host == "public.example"
@@ -290,7 +290,7 @@ def test_fetcher_allows_hostname_that_resolves_to_public_ip(monkeypatch):
 
 
 def test_fetcher_rejects_unresolvable_hostname(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     def fake_getaddrinfo(host, port, *args, **kwargs):
         raise socket.gaierror("not found")
@@ -303,7 +303,7 @@ def test_fetcher_rejects_unresolvable_hostname(monkeypatch):
 
 @pytest.mark.parametrize("url", ["https://:443/path", "https://user:pass@/path"])
 def test_fetcher_rejects_urls_without_hostname(url: str):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     with pytest.raises(ValueError, match="valid host"):
         Fetcher._validate_url(url)
@@ -321,14 +321,14 @@ def test_fetcher_rejects_urls_without_hostname(url: str):
     ],
 )
 def test_fetcher_rejects_invalid_ports(url: str):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     with pytest.raises(ValueError, match=r"(?i)port"):
         Fetcher._validate_url(url)
 
 
 def test_fetcher_applies_soft_throttle_to_final_redirect_host():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     class FinalHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -376,7 +376,7 @@ def test_fetcher_applies_soft_throttle_to_final_redirect_host():
 
 
 def test_fetcher_records_success_on_final_redirect_host_async():
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     class FinalHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -433,7 +433,7 @@ def test_fetcher_records_success_on_final_redirect_host_async():
 
 
 def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     first_retryable = httpx.Response(
         503,
@@ -497,11 +497,11 @@ def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
     sleep_calls: list[float] = []
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.time.sleep", lambda seconds: sleep_calls.append(seconds)
+        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: sleep_calls.append(seconds)
     )
     bypass_client = BypassClient()
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.httpx.Client", lambda *args, **kwargs: bypass_client
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client", lambda *args, **kwargs: bypass_client
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
@@ -519,7 +519,7 @@ def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
 
 def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     first_retryable = httpx.Response(
         503,
@@ -591,9 +591,9 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
     bypass_client = BypassClient()
     main_client = MainClient()
-    monkeypatch.setattr("markdown_ingress.core.fetcher.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.httpx.AsyncClient", lambda *args, **kwargs: bypass_client
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient", lambda *args, **kwargs: bypass_client
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
@@ -613,7 +613,7 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
 
 def test_fetcher_sync_rechecks_circuit_breaker_after_rate_limit_sleep(monkeypatch):
-    from markdown_ingress.core.fetcher import DomainCircuitOpenError, Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
 
     url = "https://example.com/recheck"
     host = Fetcher._host_key(url)
@@ -663,7 +663,7 @@ def test_fetcher_sync_rechecks_circuit_breaker_after_rate_limit_sleep(monkeypatc
         with fetcher._failure_lock:
             fetcher._open_until_by_host[host] = time.monotonic() + 60.0
 
-    monkeypatch.setattr("markdown_ingress.core.fetcher.time.sleep", fake_sleep)
+    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", fake_sleep)
 
     with pytest.raises(DomainCircuitOpenError):
         fetcher.fetch_sync(url)
@@ -673,7 +673,7 @@ def test_fetcher_sync_rechecks_circuit_breaker_after_rate_limit_sleep(monkeypatc
 
 def test_circuit_breaker_opens_with_spaced_failures(monkeypatch):
     """Circuit breaker must open even when failures are spread over time."""
-    from markdown_ingress.core.fetcher import DomainCircuitOpenError, Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
 
     fetcher = Fetcher(
         timeout=2.0,

@@ -318,7 +318,7 @@ def test_structured_serializers_return_plain_dicts():
 
 def test_markdown_converter_lang_prefix_detected():
     """lang-* class prefix should be recognized as code language."""
-    from markdown_ingress.core.markdown import MarkdownConverter
+    from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 
     converter = MarkdownConverter()
     html = '<pre><code class="lang-python">x = 1\n</code></pre>'
@@ -328,7 +328,7 @@ def test_markdown_converter_lang_prefix_detected():
 
 def test_markdown_converter_highlight_prefix_detected():
     """highlight-* class prefix should be recognized as code language."""
-    from markdown_ingress.core.markdown import MarkdownConverter
+    from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 
     converter = MarkdownConverter()
     html = '<pre><code class="highlight-javascript">const x = 1;\n</code></pre>'
@@ -338,7 +338,7 @@ def test_markdown_converter_highlight_prefix_detected():
 
 def test_markdown_converter_language_prefix_still_works():
     """language-* class prefix (original) must continue working after the multi-prefix refactor."""
-    from markdown_ingress.core.markdown import MarkdownConverter
+    from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 
     converter = MarkdownConverter()
     html = '<pre><code class="language-rust">fn main() {}\n</code></pre>'

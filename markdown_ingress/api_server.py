@@ -6,23 +6,39 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 import threading
 from collections import deque
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     LEGACY_UNKNOWN_TTL_SECONDS,
-    JobRecord,
     PersistentJobQueue,
+    SQLiteError,
+    check_external_owner_still_owns,
 )
 from markdown_ingress.api import generate_security_report, ingest, ingest_many, retry_ingest
+from markdown_ingress.api_server_auth import (
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW_SECONDS,
+    _check_rate_limit_redis,
+)
+from markdown_ingress.api_server_dependencies import (
+    _rate_limit_client_id,  # noqa: F401 — re-exported for test access via api_server.*
+    _require_api_key,
+    _require_rate_limit,
+)
+from markdown_ingress.api_server_env import (
+    _detect_multiworker_environment,
+    _read_bool_env,
+    _read_optional_float_env,
+    _read_positive_int_env,
+)
 from markdown_ingress.api_server_handlers import (
     handle_batch_status,
     handle_batch_submit,
@@ -44,6 +60,18 @@ from markdown_ingress.api_server_models import (
     RetryIngestRequest,
     SecurityReportResponse,
 )
+from markdown_ingress.api_server_queue import (
+    _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
+    _close_queue_for_repair,
+    _ExternalOwnerJobQueue,
+    _is_active_owner_error,
+    _is_stale_heartbeat,
+    _job_record_within_api_ttl,
+    _legacy_unknown_ttl_expires_at,
+    _queue_still_has_visible_jobs,
+    _read_job_from_queue,
+    _TransientLegacyQueueReadError,
+)
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
@@ -52,155 +80,23 @@ _logger = logging.getLogger(__name__)
 
 API_VERSION = "0.8.0"
 
-
-def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
-        return default
-    if value < minimum:
-        _logger.warning(
-            "Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default
-        )
-        return default
-    return value
-
-
-def _read_bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    _logger.warning("Invalid boolean for %s=%r. Using default %s.", name, raw, default)
-    return default
-
-
-def _read_optional_float_env(
-    name: str, *, minimum: float = 0.0, exclusive_minimum: bool = False
-) -> float | None:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    try:
-        value = float(raw)
-    except ValueError:
-        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
-        return None
-    is_invalid = value < minimum or (exclusive_minimum and value == minimum)
-    if is_invalid:
-        comparator = ">" if exclusive_minimum else ">="
-        _logger.warning(
-            "Invalid value for %s=%r. Expected %s %s. Disabling optional setting.",
-            name,
-            raw,
-            comparator,
-            minimum,
-        )
-        return None
-    return value
-
-
-def _parse_iso_datetime_utc(value: str) -> datetime | None:
-    """Parse an ISO timestamp and normalize naive values to UTC.
-
-    Legacy rows in the job database may omit timezone information. For retention
-    and lease comparisons we interpret those values as UTC instead of crashing on
-    aware/naive comparisons.
-    """
-    try:
-        parsed = datetime.fromisoformat(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
-def _legacy_unknown_ttl_expires_at(
-    completed_at: str | None, legacy_expires_at: str | None
-) -> datetime | None:
-    """Return the effective expiry for a legacy completed job.
-
-    When an explicit ``legacy_expires_at`` exists, it is authoritative.
-    Older rows may lack both ``ttl_seconds`` and ``legacy_expires_at``. In that
-    case the queue layer preserves them with ``LEGACY_UNKNOWN_TTL_SECONDS``
-    from completion time, so the API needs to use the same derived window when
-    deciding whether the row is still visible.
-    """
-    if legacy_expires_at:
-        expires_dt = _parse_iso_datetime_utc(legacy_expires_at)
-        if expires_dt is not None:
-            return expires_dt
-        return None
-    if completed_at is None:
-        return None
-    completed_dt = _parse_iso_datetime_utc(completed_at)
-    if completed_dt is None:
-        return None
-    return completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)
-
-
+# ---------------------------------------------------------------------------
+# API key configuration (kept here so monkeypatch via api_server.* works)
+# ---------------------------------------------------------------------------
 _RAW_API_KEY = os.getenv("MDI_API_KEY")
-API_KEY_CONFIG_ERROR = _RAW_API_KEY is not None and _RAW_API_KEY.strip() == ""
-OPTIONAL_API_KEY = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
-JOB_TTL_SECONDS = _read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600)
-JOB_DB_PATH = os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3")
-JOB_WORKERS = _read_positive_int_env("MDI_API_JOB_WORKERS", 2)
-MAX_QUEUED_JOBS = _read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100)
-JOB_WEBHOOK_MAX_RETRIES = _read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2)
-_job_webhook_retry_delay = _read_optional_float_env(
-    "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
-)
-JOB_WEBHOOK_RETRY_DELAY_SECONDS = (
-    0.25 if _job_webhook_retry_delay is None else _job_webhook_retry_delay
-)
-JOB_EXECUTION_TIMEOUT_SECONDS = _read_optional_float_env(
-    "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
-)
-ALLOW_LOCAL_WEBHOOKS = _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
+API_KEY_CONFIG_ERROR: bool = _RAW_API_KEY is not None and _RAW_API_KEY.strip() == ""
+OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 
-# Rate limiting configuration
-RATE_LIMIT_REQUESTS = _read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100)
-RATE_LIMIT_WINDOW_SECONDS = _read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60)
-# BUG FIX: Use deque with maxlen to prevent unbounded growth per client
-# Each client can have at most 2x rate limit requests worth of timestamps
-_RATE_LIMIT_MAX_TIMESTAMPS_PER_CLIENT = RATE_LIMIT_REQUESTS * 2
+# ---------------------------------------------------------------------------
+# Rate limiting state (kept here so monkeypatch via api_server.* works)
+# ---------------------------------------------------------------------------
 _request_counts: dict[str, deque] = {}  # type: ignore[var-annotated]
 _rate_limit_lock = threading.Lock()
-_rate_limit_cleanup_counter = 0  # Counter for periodic cleanup
-_RATE_LIMIT_CLEANUP_THRESHOLD = 1000  # Cleanup every N requests
-_RATE_LIMIT_MAX_CLIENTS = 10000  # Max clients before forced cleanup (memory leak prevention)
+_rate_limit_cleanup_counter: int = 0  # Counter for periodic cleanup
+_RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000  # Cleanup every N requests
+_RATE_LIMIT_MAX_CLIENTS: int = 10000  # Max clients before forced cleanup
 
-
-def _detect_multiworker_environment() -> bool:
-    """Detect if running in a multi-worker deployment environment.
-
-    Returns:
-        True if multiple worker processes are configured, False otherwise.
-    """
-    # Gunicorn and Uvicorn use worker-count environment variables.
-    # Invalid values should degrade gracefully instead of crashing import.
-    for env_name in ("GUNICORN_WORKERS", "UVICORN_WORKERS"):
-        raw = os.environ.get(env_name)
-        if not raw:
-            continue
-        try:
-            if int(raw) > 1:
-                return True
-        except ValueError:
-            _logger.warning(
-                "Invalid integer for %s=%r. Assuming single-worker deployment.", env_name, raw
-            )
-    return False
-
+_RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
 
 # BUG FIX: Warn about per-worker rate limiting in multi-worker deployments
 if _detect_multiworker_environment():
@@ -209,55 +105,6 @@ if _detect_multiworker_environment():
         "Each worker process maintains separate rate limit state. "
         "Consider using Redis-backed rate limiting for production deployments."
     )
-
-
-_RATE_LIMIT_BACKEND = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
-_RATE_LIMIT_REDIS_URL = os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
-_RATE_LIMIT_REDIS_PREFIX = os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:")
-_rate_limit_redis_client: Any | None = None
-
-
-def _get_redis_rate_limit_client():
-    """Lazily initialise the Redis client for distributed rate limiting (S9)."""
-    global _rate_limit_redis_client
-    if _rate_limit_redis_client is not None:
-        return _rate_limit_redis_client
-    try:
-        import redis  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError(
-            "MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package. "
-            "Install with: pip install redis"
-        ) from exc
-    client = redis.Redis.from_url(_RATE_LIMIT_REDIS_URL, decode_responses=True)
-    try:
-        client.ping()
-    except Exception as exc:  # pragma: no cover — depends on env
-        raise RuntimeError(
-            f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}"
-        ) from exc
-    _rate_limit_redis_client = client
-    return client
-
-
-def _check_rate_limit_redis(client_id: str) -> tuple[bool, int]:
-    """Fixed-window rate limit backed by Redis (S9).
-
-    Uses INCR + EXPIRE in a pipeline. The key lives for the remainder of the
-    window; once it expires the counter resets, avoiding sliding-window cost.
-    """
-    redis_client = _get_redis_rate_limit_client()
-    key = f"{_RATE_LIMIT_REDIS_PREFIX}{client_id}"
-    pipe = redis_client.pipeline()
-    pipe.incr(key, 1)
-    pipe.ttl(key)
-    count, ttl = pipe.execute()
-    if ttl is None or ttl < 0:
-        redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
-        ttl = RATE_LIMIT_WINDOW_SECONDS
-    if int(count) > RATE_LIMIT_REQUESTS:
-        return False, max(1, int(ttl))
-    return True, 0
 
 
 def _check_rate_limit(client_id: str) -> tuple[bool, int]:
@@ -319,6 +166,22 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         return True, 0
 
 
+JOB_TTL_SECONDS = _read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600)
+JOB_DB_PATH = os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3")
+JOB_WORKERS = _read_positive_int_env("MDI_API_JOB_WORKERS", 2)
+MAX_QUEUED_JOBS = _read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100)
+JOB_WEBHOOK_MAX_RETRIES = _read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2)
+_job_webhook_retry_delay = _read_optional_float_env(
+    "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
+)
+JOB_WEBHOOK_RETRY_DELAY_SECONDS = (
+    0.25 if _job_webhook_retry_delay is None else _job_webhook_retry_delay
+)
+JOB_EXECUTION_TIMEOUT_SECONDS = _read_optional_float_env(
+    "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
+)
+ALLOW_LOCAL_WEBHOOKS = _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
+
 app = FastAPI(
     title="MarkDownIngress API",
     description="Deterministic Web → Markdown Engine for LLM Pipelines",
@@ -367,112 +230,6 @@ _JOB_QUEUE_HISTORY: list[PersistentJobQueue] = []
 _RECOVERABLE_QUEUE_STATES = {"closing", "lease_lost", "external_owner", "backend_error"}
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
-_QUEUE_LEASE_TIMEOUT_SECONDS = 30.0
-_LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD = 3
-
-
-class _ExternalOwnerJobQueue:
-    """Read-only queue view used when another active process owns the job DB."""
-
-    def __init__(self, db_path: str | Path):
-        self.db_path = Path(db_path)
-        self.state = "external_owner"
-
-    def _raise_backend_read_error(self, exc: sqlite3.Error) -> None:
-        message = str(exc).lower()
-        if isinstance(exc, sqlite3.OperationalError) and ("locked" in message or "busy" in message):
-            raise RuntimeError(
-                "Job queue backend is temporarily unavailable because the current owner is busy"
-            )
-        self.state = "backend_error"
-        raise RuntimeError(f"Job queue backend read failed: {exc}")
-
-    def _db_uri(self) -> str:
-        return f"{self.db_path.resolve().as_uri()}?mode=ro"
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_uri(), timeout=0.0, uri=True)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def submit(self, *args, **kwargs):
-        if self.state == "backend_error":
-            raise RuntimeError("Job queue backend read failed: external owner backend is unhealthy")
-        raise RuntimeError(
-            "Job queue is unavailable because the DB is owned by another active instance"
-        )
-
-    def pending_count(self, *, cleanup_expired: bool = True) -> int:
-        row = None
-        try:
-            with closing(sqlite3.connect(self._db_uri(), timeout=0.0, uri=True)) as conn:
-                row = conn.execute(
-                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
-                ).fetchone()
-        except sqlite3.Error as exc:
-            self._raise_backend_read_error(exc)
-        return int(row[0]) if row else 0
-
-    @staticmethod
-    def _row_is_expired(row: sqlite3.Row) -> bool:
-        if row["status"] in {"queued", "running"}:
-            return False
-
-        def _parse(value: str | None) -> datetime | None:
-            if value is None:
-                return None
-            try:
-                parsed = datetime.fromisoformat(value)
-            except (TypeError, ValueError):
-                return None
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=UTC)
-            return parsed.astimezone(UTC)
-
-        now_dt = datetime.now(UTC)
-        ttl_seconds = row["ttl_seconds"]
-        completed_at = _parse(row["completed_at"])
-        legacy_expires_at = _parse(row["legacy_expires_at"])
-
-        if ttl_seconds is not None:
-            if completed_at is None:
-                return True
-            return completed_at + timedelta(seconds=int(ttl_seconds)) <= now_dt
-        if legacy_expires_at is not None:
-            return legacy_expires_at <= now_dt
-        if completed_at is None:
-            return True
-        return completed_at + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt
-
-    def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
-        try:
-            with closing(self._connect()) as conn:
-                row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
-        except sqlite3.Error as exc:
-            self._raise_backend_read_error(exc)
-        if row is None:
-            return None
-        if cleanup_expired and self._row_is_expired(row):
-            return None
-        return JobRecord(
-            job_id=row["job_id"],
-            status=row["status"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            result=PersistentJobQueue._safe_json_loads(row["result_json"]),
-            error=row["error"],
-            webhook_url=row["webhook_url"],
-            ttl_seconds=row["ttl_seconds"],
-            legacy_expires_at=row["legacy_expires_at"],
-        )
-
-    def close(self, *args, **kwargs) -> None:
-        return None
-
-
-class _TransientLegacyQueueReadError(RuntimeError):
-    """Signal that a legacy queue could not be inspected due to a transient read problem."""
 
 
 def _build_job_queue() -> PersistentJobQueue:
@@ -486,10 +243,6 @@ def _build_job_queue() -> PersistentJobQueue:
         allow_local_webhooks=ALLOW_LOCAL_WEBHOOKS,
         job_timeout_seconds=JOB_EXECUTION_TIMEOUT_SECONDS,
     )
-
-
-def _is_active_owner_error(exc: RuntimeError) -> bool:
-    return str(exc) == "Job queue DB is already owned by another active instance"
 
 
 def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
@@ -515,47 +268,6 @@ def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
                 if str(getattr(existing, "db_path", object())) != queue_db_path
             ]
         _JOB_QUEUE_HISTORY.append(queue)
-
-
-def _queue_still_has_visible_jobs(queue) -> bool:
-    connect = getattr(queue, "_connect", None)
-    if not callable(connect):
-        return True
-    try:
-        with closing(connect()) as conn:
-            rows = conn.execute("""
-                SELECT status, completed_at, ttl_seconds, legacy_expires_at
-                FROM jobs
-                """).fetchall()
-    except sqlite3.Error as exc:
-        raise _TransientLegacyQueueReadError(str(exc)) from exc
-    except (AttributeError, TypeError, KeyError) as exc:
-        raise _TransientLegacyQueueReadError(
-            f"legacy queue inspection failed: {exc}"
-        ) from exc
-    now = datetime.now(UTC)
-    for row in rows:
-        status = row["status"] if isinstance(row, sqlite3.Row) else row[0]
-        completed_at = row["completed_at"] if isinstance(row, sqlite3.Row) else row[1]
-        ttl_seconds = row["ttl_seconds"] if isinstance(row, sqlite3.Row) else row[2]
-        legacy_expires_at = row["legacy_expires_at"] if isinstance(row, sqlite3.Row) else row[3]
-        if status in {"queued", "running"}:
-            return True
-        if ttl_seconds is None:
-            expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
-            if expires_dt is None:
-                continue
-            if now <= expires_dt:
-                return True
-            continue
-        if not completed_at:
-            continue
-        completed_dt = _parse_iso_datetime_utc(completed_at)
-        if completed_dt is None:
-            continue  # skip corrupt row, don't abort entire queue
-        if (now - completed_dt).total_seconds() <= int(ttl_seconds):
-            return True
-    return False
 
 
 def _prune_job_queue_history() -> None:
@@ -589,48 +301,6 @@ def _replace_job_queue_if_current(expected_queue, replacement_queue) -> bool:
         return True
 
 
-def _close_queue_for_repair(queue: PersistentJobQueue) -> None:
-    try:
-        queue.close(inline_wait_timeout=0.0, preserve_state_on_inline_timeout=True)
-    except TypeError:
-        queue.close()
-
-
-def _read_job_from_queue(queue, job_id: str):
-    try:
-        return queue.get(job_id, cleanup_expired=False)
-    except TypeError:
-        try:
-            return queue.get(job_id)
-        except sqlite3.Error as exc:
-            raise RuntimeError(f"Job queue backend read failed: {exc}") from exc
-    except sqlite3.Error as exc:
-        raise RuntimeError(f"Job queue backend read failed: {exc}") from exc
-
-
-def _job_record_within_api_ttl(job) -> bool:
-    status = getattr(job, "status", None)
-    completed_at = getattr(job, "completed_at", None)
-    if status in {"queued", "running"}:
-        return True
-    ttl_seconds = cast(int | None, getattr(job, "ttl_seconds", None))
-    if ttl_seconds is None:
-        expires_dt = _legacy_unknown_ttl_expires_at(
-            completed_at,
-            getattr(job, "legacy_expires_at", None),
-        )
-        if expires_dt is None:
-            return False
-        return datetime.now(UTC) <= expires_dt
-    if completed_at is None:
-        return False
-    completed_dt = _parse_iso_datetime_utc(completed_at)
-    if completed_dt is None:
-        return False
-    age_seconds = (datetime.now(UTC) - completed_dt).total_seconds()
-    return age_seconds <= ttl_seconds
-
-
 def _promote_external_owner_queue(expected_queue):
     if getattr(expected_queue, "state", None) == "external_owner":
         return expected_queue
@@ -657,7 +327,7 @@ def _build_replacement_queue_or_current(expected_queue):
         # BUG FIX #2: Catch only specific exceptions, not all exceptions.
         # Previously caught all Exception including MemoryError, KeyboardInterrupt, etc.
         # Only catch database/file errors that indicate transient backend issues.
-        except (sqlite3.Error, OSError):
+        except (SQLiteError, OSError):
             with _JOB_QUEUE_LOCK:
                 if getattr(expected_queue, "state", None) in {"backend_error", "external_owner"}:
                     expected_queue.state = "backend_error"
@@ -670,48 +340,13 @@ def _build_replacement_queue_or_current(expected_queue):
             return JOB_QUEUE
 
 
-def _is_owner_process_alive(owner_pid: int) -> bool:
-    if owner_pid <= 0:
-        return False
-    try:
-        os.kill(owner_pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _is_stale_heartbeat(heartbeat_at: str) -> bool:
-    heartbeat_dt = _parse_iso_datetime_utc(heartbeat_at)
-    if heartbeat_dt is None:
-        return True
-    age_seconds = (datetime.now(UTC) - heartbeat_dt).total_seconds()
-    return age_seconds > _QUEUE_LEASE_TIMEOUT_SECONDS
-
-
 def _external_owner_backend_still_owned(queue) -> bool:
     db_path = Path(getattr(queue, "db_path", JOB_DB_PATH))
-    db_uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    try:
-        with closing(sqlite3.connect(db_uri, timeout=0.0, uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT owner_id, heartbeat_at, owner_pid FROM queue_leases WHERE lease_name = ?",
-                ("default",),
-            ).fetchone()
-    except sqlite3.Error as exc:
-        message = str(exc).lower()
-        if isinstance(exc, sqlite3.OperationalError) and ("locked" in message or "busy" in message):
-            return True
-        queue.state = "backend_error"
-        raise RuntimeError(f"Job queue backend read failed during repair: {exc}")
-    if row is None:
-        return False
-    heartbeat_at = row["heartbeat_at"]
-    # A fresh heartbeat is the authoritative lease signal.
-    # Missing or dead PID metadata should not override a still-valid lease.
-    return not _is_stale_heartbeat(heartbeat_at)
+
+    def _set_backend_error(_state: str) -> None:
+        queue.state = _state
+
+    return check_external_owner_still_owns(db_path, _is_stale_heartbeat, _set_backend_error)
 
 
 def _start_job_queue_repair_loop() -> None:
@@ -910,12 +545,6 @@ def _ensure_job_queue_initialized():
             # JOB_QUEUE remains None; endpoints will handle unavailable queue
 
 
-# Legacy initialization for backwards compatibility - now happens lazily
-# JOB_QUEUE = _init_job_queue(globals().get("JOB_QUEUE"))
-# _maybe_start_job_queue_repair()
-# _start_job_queue_watchdog()
-
-
 def _get_job_queue():
     global JOB_QUEUE
     # Ensure job queue is initialized before use (lazy initialization)
@@ -986,12 +615,12 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
             return None
         try:
             return cast(int, queue_obj.pending_count(cleanup_expired=False))
-        except (RuntimeError, sqlite3.Error):
+        except (RuntimeError, SQLiteError):
             return None
         except TypeError:
             try:
                 return cast(int, queue_obj.pending_count())
-            except (RuntimeError, sqlite3.Error):
+            except (RuntimeError, SQLiteError):
                 return None
 
     def count_unknown_ttl_jobs(queue_obj) -> int:
@@ -1011,8 +640,8 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         count = 0
         now = datetime.now(UTC)
         for row in rows:
-            completed_at = row["completed_at"] if isinstance(row, sqlite3.Row) else row[0]
-            legacy_expires_at = row["legacy_expires_at"] if isinstance(row, sqlite3.Row) else row[1]
+            completed_at = row["completed_at"] if hasattr(row, "keys") else row[0]
+            legacy_expires_at = row["legacy_expires_at"] if hasattr(row, "keys") else row[1]
             expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
             if expires_dt is None:
                 continue
@@ -1070,85 +699,6 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         "legacy_unknown_ttl_seconds": LEGACY_UNKNOWN_TTL_SECONDS,
         "repair_in_progress": bool(repair_thread is not None and repair_thread.is_alive()),
     }
-
-
-def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Enforce API key auth when configured.
-
-    Uses secrets.compare_digest for constant-time comparison to prevent timing attacks.
-    Returns an identical "Unauthorized" detail for both missing and wrong keys so
-    callers cannot enumerate whether a key is configured or simply incorrect.
-    """
-    import secrets
-
-    if API_KEY_CONFIG_ERROR:
-        raise HTTPException(status_code=500, detail="Server API key configuration is invalid")
-    if OPTIONAL_API_KEY is None:
-        return
-    # Normalise None to an empty string so compare_digest runs in both branches
-    # (both wrong result + identical error message = no enumeration vector).
-    provided = x_api_key if x_api_key is not None else ""
-    if not secrets.compare_digest(provided, OPTIONAL_API_KEY):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-def _is_valid_ip(value: str) -> bool:
-    """Return True if the string parses as a valid IPv4/IPv6 address."""
-    import ipaddress
-
-    try:
-        ipaddress.ip_address(value)
-        return True
-    except ValueError:
-        return False
-
-
-def _rate_limit_client_id(request: Request, x_api_key: str | None) -> str:
-    import hashlib
-
-    if OPTIONAL_API_KEY is not None and x_api_key is not None:
-        return hashlib.sha256(x_api_key.encode()).hexdigest()[:16]
-    # Support X-Forwarded-For / X-Real-IP when behind trusted proxies
-    trusted_proxies = os.getenv("MDI_TRUSTED_PROXY_IPS", "").strip()
-    if trusted_proxies and request.client is not None and request.client.host:
-        trusted_set = {ip.strip() for ip in trusted_proxies.split(",") if ip.strip()}
-        if request.client.host in trusted_set:
-            # Use X-Real-IP first, then rightmost untrusted IP from X-Forwarded-For.
-            # Each header value MUST parse as a valid IP; otherwise an attacker
-            # could send arbitrary strings to bypass per-IP rate-limit buckets.
-            real_ip = request.headers.get("x-real-ip")
-            if real_ip:
-                candidate = real_ip.strip()
-                if _is_valid_ip(candidate):
-                    return f"ip:{candidate}"
-            xff = request.headers.get("x-forwarded-for")
-            if xff:
-                parts = [p.strip() for p in xff.split(",")]
-                # Rightmost untrusted IP (walk right-to-left, skip trusted)
-                for part in reversed(parts):
-                    if part in trusted_set:
-                        continue
-                    if _is_valid_ip(part):
-                        return f"ip:{part}"
-    if request.client is not None and request.client.host:
-        return f"ip:{request.client.host}"
-    return "anonymous:unknown"
-
-
-def _require_rate_limit(request: Request, x_api_key: str | None = Header(default=None)) -> None:
-    """Enforce rate limiting for batch endpoints.
-
-    Uses API key (if available) or falls back to the client IP for anonymous clients.
-    Raises HTTP 429 if rate limit is exceeded.
-    """
-    client_id = _rate_limit_client_id(request, x_api_key)
-    allowed, retry_after = _check_rate_limit(client_id)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)},
-        )
 
 
 def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:

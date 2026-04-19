@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from markdown_ingress.core.advanced_stealth import (
+from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (
     AdvancedStealthRenderer,
     render_with_advanced_stealth_sync,
 )
-from markdown_ingress.core.renderer import Renderer
+from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 
 
 async def _call_renderer_sync_in_loop() -> None:

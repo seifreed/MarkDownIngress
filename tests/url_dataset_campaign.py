@@ -15,9 +15,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from markdown_ingress import ingest_async
+from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher, UnsupportedContentTypeError
 from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
-from markdown_ingress.core.fetcher import Fetcher, UnsupportedContentTypeError
 from markdown_ingress.core.orchestrator import get_ingest_stats, reset_ingest_stats
 from markdown_ingress.models import SafeDocument
 

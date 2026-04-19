@@ -1,6 +1,6 @@
 """Tests for extraction and cleaning"""
 
-from markdown_ingress.core.extractor import Extractor
+from markdown_ingress.adapters.extractors.readability_extractor import Extractor
 
 
 def test_simple_extraction(simple_html):

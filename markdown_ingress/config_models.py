@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import MISSING, dataclass, field, fields, replace
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -18,8 +18,8 @@ from markdown_ingress.core.ssrf import normalize_domain_pattern
 _logger = logging.getLogger(__name__)
 
 
-class IngestMode(str, Enum):
-    """Valid ingestion modes. Inherits str so comparisons with string literals still work."""
+class IngestMode(StrEnum):
+    """Valid ingestion modes."""
 
     FAST = "fast"
     RENDER = "render"

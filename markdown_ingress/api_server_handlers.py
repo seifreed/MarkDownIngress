@@ -29,8 +29,11 @@ from markdown_ingress.api_server_support import (
     to_document_response,
     to_security_report_response,
 )
-from markdown_ingress.core.fetcher import DomainCircuitOpenError, UnsupportedContentTypeError
-from markdown_ingress.core.policy import PolicyBlockedError
+from markdown_ingress.core.policy import (
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
 
 _logger = logging.getLogger(__name__)
 _INTERNAL_ERROR_DETAIL = "Internal server error"

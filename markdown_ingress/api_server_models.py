@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from markdown_ingress.api_server_env import _read_bool_env, _read_positive_int_env
 from markdown_ingress.config_models import (
     VALID_OUTPUT_REPRESENTATIONS,
     VALID_POLICY_NAMES,
@@ -19,37 +19,6 @@ Mode = Literal["auto", "fast", "render"]
 ChunkingStrategy = Literal["none", "heading", "size"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
 _logger = logging.getLogger(__name__)
-
-
-def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
-        return default
-    if value < minimum:
-        _logger.warning(
-            "Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default
-        )
-        return default
-    return value
-
-
-def _read_bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    _logger.warning("Invalid boolean for %s=%r. Using default %s.", name, raw, default)
-    return default
-
 
 MAX_BATCH_URLS = _read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100)
 MAX_TIMEOUT_SECONDS = _read_positive_int_env("MDI_API_MAX_TIMEOUT", 300)

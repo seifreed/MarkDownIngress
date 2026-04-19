@@ -8,15 +8,16 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Literal
 
-from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
+from markdown_ingress.adapters.rendering.playwright_renderer import (
+    PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
+)
 from markdown_ingress.api_runtime import UNSET, build_runtime_config
 from markdown_ingress.application.use_cases import (
     BatchIngestUseCase,
     GenerateSecurityReportUseCase,
     IngestUseCase,
 )
-from markdown_ingress.config_models import DomainPolicy, IngestConfig
-from markdown_ingress.core.config import Config as FileConfig
+from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import (
@@ -28,6 +29,21 @@ from markdown_ingress.reporting import (
 from markdown_ingress.shared_results import BatchResult
 
 logger = logging.getLogger(__name__)
+
+_RETRY_TIMEOUT_INCREMENT_S: float = 30.0
+
+
+def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> None:
+    """Persist a security report to disk if save_reports is enabled."""
+    if doc is None or not config.save_reports:
+        return
+    try:
+        _persist_report_for_document(doc, config.reports_dir)
+    except OSError as exc:
+        logger.warning("Failed to persist security report for %s: %s", url, exc)
+
+
+_RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
 def ingest_resolved(
@@ -44,92 +60,6 @@ def ingest_resolved(
         use_case.close()
 
 
-def build_runtime_kwargs(
-    *,
-    config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout: float | None = None,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
-) -> dict:
-    """Collect the full public runtime config argument set into one dict."""
-    return {
-        "config": config,
-        "mode": mode,
-        "strict": strict,
-        "allow_local_urls": allow_local_urls,
-        "model": model,
-        "timeout": timeout,
-        "auto_render_threshold": auto_render_threshold,
-        "stealth": stealth,
-        "disable_http2": disable_http2,
-        "extreme_mode": extreme_mode,
-        "screenshot": screenshot,
-        "extract_metadata": extract_metadata,
-        "extract_links": extract_links,
-        "advanced_security": advanced_security,
-        "use_llm": use_llm,
-        "cache": cache,
-        "cache_ttl": cache_ttl,
-        "policy_name": policy_name,
-        "custom_patterns": custom_patterns,
-        "plugin_dirs": plugin_dirs,
-        "output_format": output_format,
-        "output_profile": output_profile,
-        "output_formats": output_formats,
-        "extract_blocks": extract_blocks,
-        "chunking_strategy": chunking_strategy,
-        "chunk_size": chunk_size,
-        "chunk_overlap": chunk_overlap,
-        "detect_language": detect_language,
-        "normalize_multilingual": normalize_multilingual,
-        "include_security_explanation": include_security_explanation,
-        "include_observability": include_observability,
-        "save_reports": save_reports,
-        "reports_dir": reports_dir,
-        "fetcher_user_agent": fetcher_user_agent,
-        "domain_request_interval": domain_request_interval,
-        "circuit_breaker_threshold": circuit_breaker_threshold,
-        "circuit_breaker_open_seconds": circuit_breaker_open_seconds,
-        "render_cost_budget": render_cost_budget,
-        "domain_policies": domain_policies,
-    }
-
-
 def ingest_impl(
     url: str, *, playwright_available: bool = PLAYWRIGHT_AVAILABLE, **runtime_kwargs
 ) -> SafeDocument:
@@ -138,17 +68,9 @@ def ingest_impl(
     try:
         doc = ingest_resolved(url, runtime_config, playwright_available=playwright_available)
     except PolicyBlockedError as exc:
-        if runtime_config.save_reports and exc.document is not None:
-            try:
-                _persist_report_for_document(exc.document, runtime_config.reports_dir)
-            except OSError as persist_exc:
-                logger.warning("Failed to persist security report for %s: %s", url, persist_exc)
+        _maybe_persist(exc.document, runtime_config, url)
         raise
-    if runtime_config.save_reports:
-        try:
-            _persist_report_for_document(doc, runtime_config.reports_dir)
-        except OSError as exc:
-            logger.warning("Failed to persist security report for %s: %s", url, exc)
+    _maybe_persist(doc, runtime_config, url)
     return doc
 
 
@@ -172,25 +94,9 @@ async def ingest_async_impl(
             playwright_available=playwright_available,
         )
     except PolicyBlockedError as exc:
-        if runtime_config.save_reports and exc.document is not None:
-            try:
-                await asyncio.to_thread(
-                    _persist_report_for_document,
-                    exc.document,
-                    runtime_config.reports_dir,
-                )
-            except OSError as persist_exc:
-                logger.warning("Failed to persist security report for %s: %s", url, persist_exc)
+        await asyncio.to_thread(_maybe_persist, exc.document, runtime_config, url)
         raise
-    if runtime_config.save_reports:
-        try:
-            await asyncio.to_thread(
-                _persist_report_for_document,
-                doc,
-                runtime_config.reports_dir,
-            )
-        except OSError as exc:
-            logger.warning("Failed to persist security report for %s: %s", url, exc)
+    await asyncio.to_thread(_maybe_persist, doc, runtime_config, url)
     return doc
 
 
@@ -266,6 +172,34 @@ def ingest_many_sync_impl(
     )
 
 
+def _compute_retry_attempt_params(
+    attempt: int,
+    max_retries: int,
+    initial_timeout: float,
+    max_timeout: float | None,
+    enable_stealth: bool,
+) -> tuple[float, bool, bool]:
+    """Return (timeout, use_stealth, use_extreme) for a given retry attempt."""
+    timeout = initial_timeout + attempt * _RETRY_TIMEOUT_INCREMENT_S
+    if max_timeout is not None:
+        timeout = min(timeout, max_timeout)
+    return timeout, enable_stealth and attempt >= 1, attempt == max_retries - 1
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Return True if the exception warrants another retry attempt."""
+    import httpx
+
+    if isinstance(exc, PolicyBlockedError):
+        return False
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_HTTP_STATUSES
+    retryable_names = ("ConnectTimeout", "ReadTimeout", "ConnectionError", "TargetClosedError")
+    return any(type(exc).__name__.startswith(name) for name in retryable_names)
+
+
 def retry_ingest_impl(
     url: str,
     mode: Literal["fast", "render", "auto"] = "auto",
@@ -278,8 +212,6 @@ def retry_ingest_impl(
     max_timeout: float | None = None,
 ) -> SafeDocument:
     """Implementation for retrying ingestion with escalating timeout and stealth."""
-    import httpx
-
     if max_retries < 1:
         raise ValueError("max_retries must be >= 1")
     if initial_timeout <= 0:
@@ -292,11 +224,9 @@ def retry_ingest_impl(
         try:
             from markdown_ingress.api import ingest as public_ingest
 
-            timeout = initial_timeout + (attempt * 30.0)
-            if max_timeout is not None:
-                timeout = min(timeout, max_timeout)
-            use_stealth = enable_stealth and (attempt >= 1)
-            use_extreme = attempt == max_retries - 1
+            timeout, use_stealth, use_extreme = _compute_retry_attempt_params(
+                attempt, max_retries, initial_timeout, max_timeout, enable_stealth
+            )
             if attempt > 0:
                 logger.info("Retry attempt %d/%d for %s", attempt + 1, max_retries, url)
                 logger.info(
@@ -323,28 +253,7 @@ def retry_ingest_impl(
         except Exception as exc:
             last_exception = exc
             error_type = type(exc).__name__
-            if not isinstance(exc, PolicyBlockedError) and isinstance(
-                exc,
-                (
-                    TimeoutError,
-                    httpx.TimeoutException,
-                    httpx.ConnectError,
-                    httpx.NetworkError,
-                ),
-            ):
-                is_retryable = True
-            elif isinstance(exc, httpx.HTTPStatusError) and not isinstance(exc, PolicyBlockedError):
-                is_retryable = exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
-            else:
-                is_retryable = False
-            if not is_retryable:
-                retryable_error_names = (
-                    "ConnectTimeout",
-                    "ReadTimeout",
-                    "ConnectionError",
-                    "TargetClosedError",
-                )
-                is_retryable = any(error_type.startswith(name) for name in retryable_error_names)
+            is_retryable = _is_retryable_error(exc)
             if attempt < max_retries - 1:
                 if is_retryable:
                     wait_time = 2**attempt

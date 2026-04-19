@@ -35,6 +35,14 @@ def _validate_regex_pattern(pattern: str, description: str) -> None:
         )
 
 
+class UnsupportedContentTypeError(ValueError):
+    """Raised when the fetched response is not HTML-like content."""
+
+
+class DomainCircuitOpenError(RuntimeError):
+    """Raised when a per-domain circuit breaker is open."""
+
+
 class PolicyBlockedError(RuntimeError):
     """Raised when a policy decides the ingested content must be blocked."""
 
@@ -102,95 +110,80 @@ class Policy:
             _validate_regex_pattern(pattern.pattern, pattern.description)
 
 
-class PolicyEngine:
-    """Manage and apply security policies"""
+# Predefined policy registry — module-level so it's independent of PolicyEngine
+POLICIES: dict[str, Policy] = {
+    "permissive": Policy(
+        name="permissive",
+        description="Minimal security checks, maximum compatibility",
+        block_threshold=0.9,
+        warn_threshold=0.6,
+        strictness="permissive",
+        check_imperative_density=False,
+    ),
+    "normal": Policy(
+        name="normal",
+        description="Balanced security and usability",
+        block_threshold=0.7,
+        warn_threshold=0.4,
+        strictness="normal",
+    ),
+    "strict": Policy(
+        name="strict",
+        description="Enhanced security, may have false positives",
+        block_threshold=0.5,
+        warn_threshold=0.2,
+        strictness="strict",
+    ),
+    "paranoid": Policy(
+        name="paranoid",
+        description="Maximum security, high false positive rate",
+        block_threshold=0.3,
+        warn_threshold=0.1,
+        strictness="paranoid",
+        allow_embedded_scripts=False,
+        allow_iframes=False,
+    ),
+}
 
-    # Predefined policies
-    POLICIES = {
-        "permissive": Policy(
-            name="permissive",
-            description="Minimal security checks, maximum compatibility",
-            block_threshold=0.9,
-            warn_threshold=0.6,
-            strictness="permissive",
-            check_imperative_density=False,
-        ),
-        "normal": Policy(
-            name="normal",
-            description="Balanced security and usability",
-            block_threshold=0.7,
-            warn_threshold=0.4,
-            strictness="normal",
-        ),
-        "strict": Policy(
-            name="strict",
-            description="Enhanced security, may have false positives",
-            block_threshold=0.5,
-            warn_threshold=0.2,
-            strictness="strict",
-        ),
-        "paranoid": Policy(
-            name="paranoid",
-            description="Maximum security, high false positive rate",
-            block_threshold=0.3,
-            warn_threshold=0.1,
-            strictness="paranoid",
-            allow_embedded_scripts=False,
-            allow_iframes=False,
-        ),
-    }
+
+def policy_engine_from_name(name: str) -> "PolicyEngine":
+    """Create a PolicyEngine from a predefined policy name."""
+    if name not in POLICIES:
+        raise ValueError(
+            f"Unknown policy: {name}. Use 'list_policies()' to see available options."
+        )
+    return PolicyEngine(policy=copy.deepcopy(POLICIES[name]))
+
+
+def policy_engine_from_dict(config: dict[str, Any]) -> "PolicyEngine":
+    """Create a PolicyEngine from a configuration dictionary."""
+    config_copy = copy.deepcopy(config)
+    custom_patterns = []
+    if "custom_patterns" in config_copy:
+        for pattern_dict in config_copy["custom_patterns"]:
+            custom_patterns.append(InjectionPattern(**pattern_dict))
+        config_copy["custom_patterns"] = custom_patterns
+    return PolicyEngine(policy=Policy(**config_copy))
+
+
+class PolicyEngine:
+    """Evaluate security policies. Construction via from_name() or from_dict()."""
+
+    # Class-level alias for backward compatibility
+    POLICIES = POLICIES
 
     def __init__(self, policy: Policy | None = None):
-        """
-        Initialize policy engine.
-
-        Args:
-            policy: Policy to use (default: normal)
-        """
         self.policy = (
-            copy.deepcopy(policy) if policy is not None else copy.deepcopy(self.POLICIES["normal"])
+            copy.deepcopy(policy) if policy is not None else copy.deepcopy(POLICIES["normal"])
         )
 
     @classmethod
     def from_name(cls, name: str) -> "PolicyEngine":
-        """
-        Create policy engine from predefined policy name.
-
-        Args:
-            name: Policy name ('permissive', 'normal', 'strict', 'paranoid')
-
-        Returns:
-            PolicyEngine instance
-        """
-        if name not in cls.POLICIES:
-            raise ValueError(
-                f"Unknown policy: {name}. Use 'list_policies()' to see available options."
-            )
-        return cls(policy=copy.deepcopy(cls.POLICIES[name]))
+        return policy_engine_from_name(name)
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> "PolicyEngine":
-        """
-        Create policy engine from configuration dictionary.
-
-        Args:
-            config: Policy configuration
-
-        Returns:
-            PolicyEngine instance
-        """
-        # Create a deep copy to avoid mutating the input dictionary
-        # (nested dicts like custom_pattern_weights need to be copied too)
-        config_copy = copy.deepcopy(config)
-        # Convert custom_patterns if present
-        custom_patterns = []
-        if "custom_patterns" in config_copy:
-            for pattern_dict in config_copy["custom_patterns"]:
-                custom_patterns.append(InjectionPattern(**pattern_dict))
-            config_copy["custom_patterns"] = custom_patterns
-
-        policy = Policy(**config_copy)
-        return cls(policy=policy)
+        return policy_engine_from_dict(config)
 
     def _validate_score(self, injection_score: float) -> float:
         """Validate and normalize injection score.

@@ -5,11 +5,12 @@ Benchmarking utilities for MarkDownIngress
 import logging
 import statistics
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from markdown_ingress import ingest
-from markdown_ingress.core.tokens import TokenEstimator
+from markdown_ingress.core.interfaces import IFetcher
 
 _logger = logging.getLogger(__name__)
 
@@ -51,15 +52,15 @@ class BenchmarkResult:
 class Benchmark:
     """Benchmark MarkDownIngress performance"""
 
-    def __init__(self, model: str = "gpt-4"):
-        """
-        Initialize benchmarker.
-
-        Args:
-            model: LLM model for token estimation
-        """
+    def __init__(
+        self,
+        model: str = "gpt-4",
+        fetcher_factory: Callable[[], IFetcher] | None = None,
+        compare_fn: Callable[[str, str], dict] | None = None,
+    ):
         self.model = model
-        self.token_estimator = TokenEstimator(model=model)
+        self._fetcher_factory = fetcher_factory
+        self._compare_fn = compare_fn
 
     def run_single(
         self,
@@ -131,15 +132,17 @@ class Benchmark:
         )
         extractor_comparison = None
         if compare_extractors_enabled:
-            try:
-                from markdown_ingress.core.fetcher import Fetcher
-
-                with Fetcher(timeout=30.0) as fetcher:
-                    fetch_result = fetcher.fetch_sync(url)
-                from markdown_ingress.adapters.extractors.comparison import compare_extractors
-                extractor_comparison = compare_extractors(fetch_result.html, model=self.model)
-            except Exception as e:
-                _logger.debug("Extractor comparison failed: %s", e)
+            if self._compare_fn is None:
+                _logger.warning("compare_extractors not available (no compare_fn provided)")
+            else:
+                try:
+                    if self._fetcher_factory is None:
+                        raise RuntimeError("No fetcher_factory provided to Benchmark.")
+                    with self._fetcher_factory() as fetcher:
+                        fetch_result = fetcher.fetch_sync(url)
+                    extractor_comparison = self._compare_fn(fetch_result.html, self.model)
+                except Exception as e:
+                    _logger.debug("Extractor comparison failed: %s", e)
 
         return BenchmarkResult(
             url=url,

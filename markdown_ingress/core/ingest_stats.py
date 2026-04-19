@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from typing import Any
 
 _INGEST_STATS_LOCK = threading.Lock()
@@ -107,6 +108,16 @@ def record_stage_timing(stage: str, duration_ms: float) -> None:
         bucket["count"] = count
         bucket["total"] = total
         bucket["avg"] = total / count
+
+
+def timed_stage_with_snapshot(stage_timings: dict[str, float], stage: str, fn) -> Any:
+    """Execute a stage and record both local and aggregate timing snapshots."""
+    started = time.perf_counter()
+    result = fn()
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    stage_timings[stage] = duration_ms
+    record_stage_timing(stage, duration_ms)
+    return result
 
 
 def record_policy_action(action: str) -> None:

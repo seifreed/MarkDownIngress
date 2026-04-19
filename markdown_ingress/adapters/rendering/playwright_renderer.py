@@ -12,7 +12,7 @@ from typing import Literal, cast
 
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.interfaces import IRenderer
-from markdown_ingress.core.renderer_support import (
+from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
     build_renderer_config,
     execute_render_session,

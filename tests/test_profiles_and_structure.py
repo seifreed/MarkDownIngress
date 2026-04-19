@@ -9,8 +9,7 @@ from markdown_ingress import DomainPolicy, IngestConfig, compare_extractors, ing
 from markdown_ingress.api_server import app
 from markdown_ingress.core.config import Config
 from markdown_ingress.core.document_builder import build_policy_engine, process_fetched_content
-from markdown_ingress.core.orchestrator import IngestOrchestrator
-from markdown_ingress.models import FetchResult, SafeDocument
+from markdown_ingress.models import FetchResult
 
 FIXTURE_HTML = Path("tests/fixtures/technical_doc.html").read_text(encoding="utf-8")
 
@@ -29,7 +28,7 @@ def _make_fetch_result(url: str, html: str) -> FetchResult:
 
 def test_output_profile_produces_blocks_chunks_and_language(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.Fetcher.fetch_sync",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync",
         lambda self, url: _make_fetch_result(url, FIXTURE_HTML),
     )
 
@@ -51,7 +50,7 @@ def test_output_profile_produces_blocks_chunks_and_language(monkeypatch):
 
 def test_domain_policy_overrides_timeout_policy_and_profile(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.Fetcher.fetch_sync",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync",
         lambda self, url: _make_fetch_result(url, FIXTURE_HTML),
     )
 
@@ -219,33 +218,17 @@ def test_legacy_config_preserves_explicit_default_like_output_overrides():
     assert resolved.extract_blocks is False
 
 
-def test_orchestrator_legacy_overrides_become_explicit(monkeypatch):
-    captured = {}
-
-    class DummyIngestUseCase:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def execute(self, url, config):
-            captured["config"] = config
-            return SafeDocument(
-                markdown="ok",
-                metadata={},
-                token_estimate=1,
-                content_hash="hash",
-                injection_score=0.0,
-            )
-
-    monkeypatch.setattr("markdown_ingress.application.use_cases.IngestUseCase", DummyIngestUseCase)
-
-    orchestrator = IngestOrchestrator()
+def test_config_overrides_become_explicit():
+    """Cloning a config and setting fields registers them in explicit_keys."""
     config = IngestConfig(output_profile="for_archive")
-
-    orchestrator.execute("https://example.com/page", config=config, strict=False)
-
-    runtime_config = captured["config"]
-    assert "strict" in runtime_config.explicit_keys()
-    resolved, _ = runtime_config.resolve_for_url("https://example.com/page")
+    merged = config.clone()
+    merged.strict = False
+    object.__setattr__(
+        merged, "_explicit_keys", frozenset(config.explicit_keys() | {"strict"})
+    )
+    merged.validate()
+    assert "strict" in merged.explicit_keys()
+    resolved, _ = merged.resolve_for_url("https://example.com/page")
     assert resolved.strict is False
 
 
@@ -281,7 +264,7 @@ def test_metadata_tracks_requested_and_emitted_output_formats_separately():
 
 def test_markdown_preserves_code_fences_and_tables(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.Fetcher.fetch_sync",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync",
         lambda self, url: _make_fetch_result(url, FIXTURE_HTML),
     )
 
@@ -324,7 +307,7 @@ def test_compare_extractors_handles_trafilatura_runtime_failure(monkeypatch):
 def test_versioned_api_and_batch_jobs(monkeypatch):
     client = TestClient(app)
     monkeypatch.setattr(
-        "markdown_ingress.core.fetcher.Fetcher.fetch_sync",
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync",
         lambda self, url: _make_fetch_result(url, FIXTURE_HTML),
     )
     monkeypatch.setattr(

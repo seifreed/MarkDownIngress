@@ -7,8 +7,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from markdown_ingress.core.advanced_stealth import AdvancedStealthRenderer
-from markdown_ingress.core.renderer_support import execute_render_session
+from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
+from markdown_ingress.adapters.rendering.renderer_support import execute_render_session
 
 
 class _FakeCloseable:
@@ -162,13 +162,13 @@ async def test_advanced_stealth_closes_browser_when_context_close_fails(monkeypa
         context_close_error=RuntimeError("context close failed"),
     )
 
-    from markdown_ingress.core import advanced_stealth as advanced_stealth_module
+    import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
 
     async def fake_inject_stealth(_page):
         return None
 
-    monkeypatch.setattr(advanced_stealth_module, "inject_stealth_pre_nav", fake_inject_stealth)
-    monkeypatch.setattr(advanced_stealth_module, "inject_stealth_post_nav", fake_inject_stealth)
+    monkeypatch.setattr(_renderer_module, "inject_stealth_pre_nav", fake_inject_stealth)
+    monkeypatch.setattr(_renderer_module, "inject_stealth_post_nav", fake_inject_stealth)
 
     renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
     result = await renderer._render_with_browser("https://example.com")

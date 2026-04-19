@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from markdown_ingress.core.interfaces import IFetcher
+from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.core.ssrf import (
     normalize_hostname,
     resolve_allow_local_urls,
@@ -55,13 +56,6 @@ _DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 
 _rng = random.SystemRandom()
 
-
-class UnsupportedContentTypeError(ValueError):
-    """Raised when the fetched response is not HTML-like content."""
-
-
-class DomainCircuitOpenError(RuntimeError):
-    """Raised when a per-domain circuit breaker is open."""
 
 
 def _is_supported_html_content_type(content_type: str | None) -> bool:
@@ -607,6 +601,49 @@ class Fetcher(IFetcher):
             self._failure_first_seen.pop(host, None)
             self._open_until_by_host.pop(host, None)
 
+    @staticmethod
+    def _decode_content(content: bytes, charset_encoding: str | None) -> str:
+        encoding = charset_encoding or "utf-8"
+        try:
+            return content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            return content.decode("latin-1")
+
+    def _make_fetch_result(
+        self,
+        content: bytes,
+        url: str,
+        response,
+        elapsed_ms: float,
+        ua: str,
+        attempt: int,
+        *,
+        ssl_bypass: bool = False,
+        total_attempt: int | None = None,
+    ) -> FetchResult:
+        html = self._decode_content(content, response.charset_encoding)
+        metadata: dict = {"fetcher": "httpx", "user_agent": ua, "attempt": (total_attempt or attempt + 1)}
+        if ssl_bypass:
+            metadata["ssl_bypass"] = True
+        return FetchResult(
+            html=html,
+            url=url,
+            status_code=response.status_code,
+            final_url=str(response.url),
+            headers=response.headers,
+            timing_ms=elapsed_ms,
+            metadata=metadata,
+        )
+
+    def _handle_retryable_status(
+        self, response_host: str, status_code: int, retry_delay: float
+    ) -> None:
+        if status_code in {403, 429}:
+            self._record_soft_throttle(response_host, retry_delay)
+        else:
+            self._defer_host(response_host, retry_delay)
+            self._record_failure(response_host)
+
     async def fetch(self, url: str) -> FetchResult:
         original_hostname = urlsplit(url).hostname or ""
         url = self._validate_url(url, allow_local_urls=self.allow_local_urls)
@@ -683,22 +720,7 @@ class Fetcher(IFetcher):
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
-
-                encoding = response.charset_encoding or "utf-8"
-                try:
-                    html = content.decode(encoding)
-                except (UnicodeDecodeError, LookupError):
-                    html = content.decode("latin-1")
-
-                return FetchResult(
-                    html=html,
-                    url=url,
-                    status_code=response.status_code,
-                    final_url=str(response.url),
-                    headers=response.headers,
-                    timing_ms=elapsed_ms,
-                    metadata={"fetcher": "httpx", "user_agent": ua, "attempt": attempt + 1},
-                )
+                return self._make_fetch_result(content, url, response, elapsed_ms, ua, attempt)
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -707,20 +729,10 @@ class Fetcher(IFetcher):
                 if status_code not in _RETRYABLE_STATUS:
                     self._record_failure(response_host)
                     raise
-                if attempt >= _MAX_RETRIES - 1:
-                    retry_delay = _retry_delay_seconds(exc.response, attempt)
-                    if status_code in {403, 429}:
-                        self._record_soft_throttle(response_host, retry_delay)
-                    else:
-                        self._defer_host(response_host, retry_delay)
-                        self._record_failure(response_host)
-                    raise
                 retry_delay = _retry_delay_seconds(exc.response, attempt)
-                if status_code in {403, 429}:
-                    self._record_soft_throttle(response_host, retry_delay)
-                else:
-                    self._defer_host(response_host, retry_delay)
-                    self._record_failure(response_host)
+                self._handle_retryable_status(response_host, status_code, retry_delay)
+                if attempt >= _MAX_RETRIES - 1:
+                    raise
                 await asyncio.sleep(retry_delay)
                 attempt += 1
                 continue
@@ -821,26 +833,9 @@ class Fetcher(IFetcher):
                             self._ssl_bypass_hosts[host] = (
                                 time.monotonic() + self._ssl_bypass_ttl
                             )
-
-                        encoding = response.charset_encoding or "utf-8"
-                        try:
-                            html = ssl_content.decode(encoding)
-                        except (UnicodeDecodeError, LookupError):
-                            html = ssl_content.decode("latin-1")
-
-                        return FetchResult(
-                            html=html,
-                            url=url,
-                            status_code=response.status_code,
-                            final_url=str(response.url),
-                            headers=response.headers,
-                            timing_ms=elapsed_ms,
-                            metadata={
-                                "fetcher": "httpx",
-                                "user_agent": ua,
-                                "attempt": total_attempt_num,
-                                "ssl_bypass": True,
-                            },
+                        return self._make_fetch_result(
+                            ssl_content, url, response, elapsed_ms, ua, ssl_attempt,
+                            ssl_bypass=True, total_attempt=total_attempt_num,
                         )
 
                     except httpx.HTTPStatusError as exc:
@@ -855,17 +850,9 @@ class Fetcher(IFetcher):
                         ):
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
-                                ssl_attempt_num,
-                                remaining_attempts,
-                                status_code,
-                                url,
-                                retry_delay,
+                                ssl_attempt_num, remaining_attempts, status_code, url, retry_delay,
                             )
-                            if status_code in {403, 429}:
-                                self._record_soft_throttle(response_host, retry_delay)
-                            else:
-                                self._defer_host(response_host, retry_delay)
-                                self._record_failure(response_host)
+                            self._handle_retryable_status(response_host, status_code, retry_delay)
                             await asyncio.sleep(retry_delay)
                             continue
                         self._record_failure(response_host)
@@ -970,22 +957,7 @@ class Fetcher(IFetcher):
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
-
-                encoding = response.charset_encoding or "utf-8"
-                try:
-                    html = sync_content.decode(encoding)
-                except (UnicodeDecodeError, LookupError):
-                    html = sync_content.decode("latin-1")
-
-                return FetchResult(
-                    html=html,
-                    url=url,
-                    status_code=response.status_code,
-                    final_url=str(response.url),
-                    headers=response.headers,
-                    timing_ms=elapsed_ms,
-                    metadata={"fetcher": "httpx", "user_agent": ua, "attempt": attempt + 1},
-                )
+                return self._make_fetch_result(sync_content, url, response, elapsed_ms, ua, attempt)
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -994,20 +966,10 @@ class Fetcher(IFetcher):
                 if status_code not in _RETRYABLE_STATUS:
                     self._record_failure(response_host)
                     raise
-                if attempt >= _MAX_RETRIES - 1:
-                    retry_delay = _retry_delay_seconds(exc.response, attempt)
-                    if status_code in {403, 429}:
-                        self._record_soft_throttle(response_host, retry_delay)
-                    else:
-                        self._defer_host(response_host, retry_delay)
-                        self._record_failure(response_host)
-                    raise
                 retry_delay = _retry_delay_seconds(exc.response, attempt)
-                if status_code in {403, 429}:
-                    self._record_soft_throttle(response_host, retry_delay)
-                else:
-                    self._defer_host(response_host, retry_delay)
-                    self._record_failure(response_host)
+                self._handle_retryable_status(response_host, status_code, retry_delay)
+                if attempt >= _MAX_RETRIES - 1:
+                    raise
                 time.sleep(retry_delay)
                 attempt += 1
                 continue
@@ -1119,26 +1081,9 @@ class Fetcher(IFetcher):
                         self._record_success(response_host)
                         with self._ssl_bypass_lock:
                             self._ssl_bypass_hosts[host] = time.monotonic() + self._ssl_bypass_ttl
-
-                        encoding = response.charset_encoding or "utf-8"
-                        try:
-                            html = ssl_sync_content.decode(encoding)
-                        except (UnicodeDecodeError, LookupError):
-                            html = ssl_sync_content.decode("latin-1")
-
-                        return FetchResult(
-                            html=html,
-                            url=url,
-                            status_code=response.status_code,
-                            final_url=str(response.url),
-                            headers=response.headers,
-                            timing_ms=elapsed_ms,
-                            metadata={
-                                "fetcher": "httpx",
-                                "user_agent": ua,
-                                "attempt": total_attempt_num,
-                                "ssl_bypass": True,
-                            },
+                        return self._make_fetch_result(
+                            ssl_sync_content, url, response, elapsed_ms, ua, ssl_attempt,
+                            ssl_bypass=True, total_attempt=total_attempt_num,
                         )
 
                     except httpx.HTTPStatusError as exc:
@@ -1153,17 +1098,9 @@ class Fetcher(IFetcher):
                         ):
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
-                                ssl_attempt_num,
-                                remaining_attempts,
-                                status_code,
-                                url,
-                                retry_delay,
+                                ssl_attempt_num, remaining_attempts, status_code, url, retry_delay,
                             )
-                            if status_code in {403, 429}:
-                                self._record_soft_throttle(response_host, retry_delay)
-                            else:
-                                self._defer_host(response_host, retry_delay)
-                                self._record_failure(response_host)
+                            self._handle_retryable_status(response_host, status_code, retry_delay)
                             time.sleep(retry_delay)
                             continue
                         self._record_failure(response_host)

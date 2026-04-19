@@ -31,6 +31,9 @@ from markdown_ingress.core.ssrf import (
 
 _logger = logging.getLogger(__name__)
 
+# Re-export so callers outside this module don't need to import sqlite3 directly.
+SQLiteError = sqlite3.Error
+
 _STOP_WORKER = object()
 LEGACY_UNKNOWN_TTL_SECONDS = 3600
 
@@ -901,102 +904,99 @@ class PersistentJobQueue:
             legacy_expires_at=row["legacy_expires_at"],
         )
 
+    def _delete_ttl_expired_jobs(self, conn, now_iso: str) -> None:
+        conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE status NOT IN ('queued', 'running')
+              AND ttl_seconds IS NOT NULL
+              AND (
+                  completed_at IS NULL
+                  OR julianday(completed_at) IS NULL
+                  OR julianday(?) > julianday(completed_at) + (ttl_seconds / 86400.0)
+              )
+            """,
+            (now_iso,),
+        )
+
+    def _delete_legacy_expired_jobs(self, conn, now_iso: str) -> None:
+        conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE status NOT IN ('queued', 'running')
+              AND ttl_seconds IS NULL
+              AND legacy_expires_at IS NOT NULL
+              AND (
+                  julianday(legacy_expires_at) IS NULL
+                  OR julianday(?) > julianday(legacy_expires_at)
+              )
+            """,
+            (now_iso,),
+        )
+
+    def _delete_corrupt_legacy_jobs(self, conn) -> None:
+        conn.execute("""
+            DELETE FROM jobs
+            WHERE status NOT IN ('queued', 'running')
+              AND ttl_seconds IS NULL
+              AND legacy_expires_at IS NULL
+              AND (completed_at IS NULL OR julianday(completed_at) IS NULL)
+            """)
+
+    def _compute_legacy_ttl_updates(
+        self, conn, now_dt
+    ) -> tuple[list[tuple[int, str, str]], list[str]]:
+        rows = conn.execute("""
+            SELECT job_id, completed_at
+            FROM jobs
+            WHERE status NOT IN ('queued', 'running')
+              AND completed_at IS NOT NULL
+              AND ttl_seconds IS NULL
+              AND legacy_expires_at IS NULL
+            """).fetchall()
+        updates: list[tuple[int, str, str]] = []
+        expired_ids: list[str] = []
+        for row in rows:
+            try:
+                completed_dt = self._parse_iso(row["completed_at"])
+            except ValueError:
+                continue
+            expires_at = (completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)).isoformat()
+            if completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt:
+                expired_ids.append(row["job_id"])
+            else:
+                updates.append((LEGACY_UNKNOWN_TTL_SECONDS, expires_at, row["job_id"]))
+        return updates, expired_ids
+
+    def _apply_legacy_ttl_backfill(
+        self, conn, updates: list[tuple[int, str, str]], expired_ids: list[str]
+    ) -> None:
+        if expired_ids:
+            conn.executemany(
+                "DELETE FROM jobs WHERE job_id = ?",
+                ((job_id,) for job_id in expired_ids),
+            )
+        if updates:
+            conn.executemany(
+                """
+                UPDATE jobs
+                SET ttl_seconds = ?,
+                    legacy_expires_at = ?
+                WHERE job_id = ?
+                """,
+                updates,
+            )
+
     def cleanup_expired(self) -> None:
         now_iso = _utcnow()
         now_dt = datetime.now(UTC)
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            # Delete completed jobs whose persisted TTL has expired or whose
-            # completion timestamp is missing/corrupt. Active jobs are excluded
-            # by status so queued/running rows remain untouched.
-            conn.execute(
-                """
-                DELETE FROM jobs
-                WHERE status NOT IN ('queued', 'running')
-                  AND ttl_seconds IS NOT NULL
-                  AND (
-                      completed_at IS NULL
-                      OR
-                      julianday(completed_at) IS NULL
-                      OR julianday(?) > julianday(completed_at) + (ttl_seconds / 86400.0)
-                  )
-                """,
-                (now_iso,),
-            )
-            # Delete legacy jobs whose explicit expiry has passed or is unparseable.
-            # Explicit legacy expiry is authoritative even when completed_at is
-            # missing or malformed.
-            conn.execute(
-                """
-                DELETE FROM jobs
-                WHERE status NOT IN ('queued', 'running')
-                  AND ttl_seconds IS NULL
-                  AND legacy_expires_at IS NOT NULL
-                  AND (
-                      julianday(legacy_expires_at) IS NULL
-                      OR julianday(?) > julianday(legacy_expires_at)
-                  )
-                """,
-                (now_iso,),
-            )
-            # Remove corrupt legacy rows that have no expiry metadata and no
-            # usable completion timestamp. They cannot be surfaced consistently
-            # and otherwise linger forever.
-            conn.execute("""
-                DELETE FROM jobs
-                WHERE status NOT IN ('queued', 'running')
-                  AND ttl_seconds IS NULL
-                  AND legacy_expires_at IS NULL
-                  AND (
-                      completed_at IS NULL
-                      OR julianday(completed_at) IS NULL
-                  )
-                """)
-            # BUG FIX: Instead of deleting legacy jobs with no expiry info,
-            # set a default TTL (LEGACY_UNKNOWN_TTL_SECONDS) to preserve their data.
-            # The expiry must be derived from each row's completed_at, not from the
-            # cleanup time, otherwise cleanup would extend or shorten visibility.
-            rows = conn.execute("""
-                SELECT job_id, completed_at
-                FROM jobs
-                WHERE status NOT IN ('queued', 'running')
-                  AND completed_at IS NOT NULL
-                  AND ttl_seconds IS NULL
-                  AND legacy_expires_at IS NULL
-                """).fetchall()
-            updates: list[tuple[int, str, str]] = []
-            expired_unknown_ttl_job_ids: list[str] = []
-            for row in rows:
-                completed_at = row["completed_at"]
-                try:
-                    completed_dt = self._parse_iso(completed_at)
-                except ValueError:
-                    continue
-                expires_at = (
-                    completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)
-                ).isoformat()
-                if completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt:
-                    expired_unknown_ttl_job_ids.append(row["job_id"])
-                    continue
-                updates.append((LEGACY_UNKNOWN_TTL_SECONDS, expires_at, row["job_id"]))
-            if expired_unknown_ttl_job_ids:
-                conn.executemany(
-                    """
-                    DELETE FROM jobs
-                    WHERE job_id = ?
-                    """,
-                    ((job_id,) for job_id in expired_unknown_ttl_job_ids),
-                )
-            if updates:
-                conn.executemany(
-                    """
-                    UPDATE jobs
-                    SET ttl_seconds = ?,
-                        legacy_expires_at = ?
-                    WHERE job_id = ?
-                    """,
-                    updates,
-                )
+            self._delete_ttl_expired_jobs(conn, now_iso)
+            self._delete_legacy_expired_jobs(conn, now_iso)
+            self._delete_corrupt_legacy_jobs(conn)
+            updates, expired_ids = self._compute_legacy_ttl_updates(conn, now_dt)
+            self._apply_legacy_ttl_backfill(conn, updates, expired_ids)
             conn.commit()
 
     def _worker_loop(self) -> None:
@@ -1404,3 +1404,36 @@ class PersistentJobQueue:
             if cursor.rowcount == 0:
                 # Job was already transitioned by another process - nothing to do
                 return
+
+
+def check_external_owner_still_owns(
+    db_path: Path,
+    is_stale_fn: Callable[[str], bool],
+    on_backend_error: Callable[[str], None] | None = None,
+) -> bool:
+    """Read the queue lease table to determine if an external owner's lease is still valid.
+
+    Accepts ``is_stale_fn`` so the caller's heartbeat-staleness logic is injected
+    rather than duplicated, keeping this module free of presentation-layer imports.
+    Returns True if the lease is still held (not stale), False otherwise.
+    Raises RuntimeError on unrecoverable backend errors.
+    """
+    db_uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    try:
+        with closing(sqlite3.connect(db_uri, timeout=0.0, uri=True)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT owner_id, heartbeat_at, owner_pid FROM queue_leases WHERE lease_name = ?",
+                ("default",),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        message = str(exc).lower()
+        if isinstance(exc, sqlite3.OperationalError) and ("locked" in message or "busy" in message):
+            return True
+        if on_backend_error is not None:
+            on_backend_error("backend_error")
+        raise RuntimeError(f"Job queue backend read failed during repair: {exc}")
+    if row is None:
+        return False
+    heartbeat_at = row["heartbeat_at"]
+    return not is_stale_fn(heartbeat_at)

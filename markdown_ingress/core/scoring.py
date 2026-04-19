@@ -12,6 +12,8 @@ _logger = logging.getLogger(__name__)
 class Scorer:
     """Calculate and interpret injection risk scores"""
 
+    DEFAULT_BLOCK_THRESHOLD: float = 0.7
+
     # Risk level thresholds (upper bound is exclusive except for "critical")
     RISK_LEVELS = {
         "safe": (0.0, 0.2),
@@ -63,7 +65,7 @@ class Scorer:
             return "low"
         return "safe"
 
-    def should_block(self, analysis: InjectionAnalysis, threshold: float = 0.7) -> bool:
+    def should_block(self, analysis: InjectionAnalysis, threshold: float = DEFAULT_BLOCK_THRESHOLD) -> bool:
         """
         Determine if content should be blocked based on score.
 

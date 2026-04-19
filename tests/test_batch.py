@@ -11,6 +11,7 @@ import markdown_ingress.api as public_api
 from markdown_ingress import ingest_async, ingest_many, ingest_many_async
 from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
+from markdown_ingress.application.subprocess_runner import _select_execution_strategy
 from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.config import Config
@@ -422,7 +423,9 @@ async def test_batch_falls_back_to_local_execution_when_main_is_not_importable(m
             "batch should not use subprocess isolation without importable __main__"
         )
 
-    monkeypatch.setattr(BatchIngestUseCase, "_main_module_file", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        "markdown_ingress.application.subprocess_runner._main_module_file", lambda: None
+    )
     monkeypatch.setattr(batch_use_case, "_execute_item_in_process", fake_local)
     monkeypatch.setattr(batch_use_case, "_execute_item_isolated", fail_if_isolated)
 
@@ -450,7 +453,7 @@ def test_batch_selects_local_strategy_for_injected_inflight_registry():
         )
     )
 
-    strategy, reason = batch_use_case._select_execution_strategy()
+    strategy, reason = _select_execution_strategy(batch_use_case.ingest_use_case)
 
     assert strategy == "local"
     assert reason == "custom runtime dependencies"

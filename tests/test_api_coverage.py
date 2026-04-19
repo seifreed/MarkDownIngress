@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from markdown_ingress.adapters.cache.memory import MemoryCache
 from markdown_ingress.api import ingest, ingest_many, retry_ingest
 from markdown_ingress.api_runtime import build_runtime_config
 from markdown_ingress.api_server import app, main
@@ -19,11 +20,9 @@ from markdown_ingress.api_server_support import (
     to_document_response,
     to_security_report_response,
 )
-from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.core.cache import MemoryCache
-from markdown_ingress.core.config import Config
 from markdown_ingress.application.use_cases import IngestUseCase
-from markdown_ingress.core.orchestrator import IngestOrchestrator
+from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.core.config import Config
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
@@ -307,58 +306,50 @@ def test_main_calls_uvicorn(mock_uvicorn):
     mock_uvicorn.assert_called_once()
 
 
-# ── orchestrator.py: config override branch (lines 121-160) ──────────────────
+# ── IngestConfig: clone + override immutability ───────────────────────────────
 
 
 def test_orchestrator_config_override_mode_timeout(local_server):
-    """Verify overrides are applied on a clone and original config is not mutated."""
+    """Verify that cloning a config and overriding fields does not mutate the original."""
     config = IngestConfig(mode="fast", timeout=5.0, strict=True)
-    result = IngestOrchestrator().execute(
-        local_server,
-        config=config,
-        mode="fast",
-        timeout=20.0,
-        strict=False,
-    )
+    merged = config.clone()
+    merged.mode = "fast"
+    merged.timeout = 20.0
+    merged.strict = False
+    result = IngestUseCase().execute(local_server, merged)
     assert result.markdown
-    # Original config must not be mutated (overrides go to a clone)
+    # Original config must not be mutated
     assert config.mode == "fast"
     assert config.timeout == 5.0
-    assert config.strict is True  # Verify strict was not mutated either
+    assert config.strict is True
 
 
 def test_orchestrator_config_override_all_params(local_server):
     """Verify all override branches work and original config stays immutable."""
     config = IngestConfig(mode="fast", timeout=5.0)
-    result = IngestOrchestrator().execute(
-        local_server,
-        config=config,
-        mode="fast",
-        timeout=20.0,
-        strict=False,
-        stealth=False,
-        disable_http2=False,
-        extreme_mode=False,
-        extract_metadata=False,
-        extract_links=False,
-        advanced_security=False,
-        use_llm=False,
-    )
+    merged = config.clone()
+    merged.mode = "fast"
+    merged.timeout = 20.0
+    merged.strict = False
+    merged.stealth = False
+    merged.disable_http2 = False
+    merged.extreme_mode = False
+    merged.extract_metadata = False
+    merged.extract_links = False
+    merged.advanced_security = False
+    merged.use_llm = False
+    result = IngestUseCase().execute(local_server, merged)
     assert result.markdown
     # Original config must not be mutated
     assert config.mode == "fast"
     assert config.timeout == 5.0
-    # Overrides applied: extract_metadata=False means no enriched metadata
+    # extract_metadata=False means no enriched metadata
     assert result.metadata.get("author") is None
 
 
 def test_orchestrator_config_override_revalidates_invalid_mode():
     with pytest.raises(ValueError, match="Invalid mode 'broken'"):
-        IngestOrchestrator().execute(
-            "https://unit.test/invalid-mode",
-            config=IngestConfig(mode="fast"),
-            mode="broken",
-        )
+        IngestConfig(mode="broken")
 
 
 def test_build_runtime_config_none_can_clear_nullable_overrides():
@@ -700,10 +691,10 @@ def test_ingest_many_persists_policy_blocked_documents(tmp_path):
             side_effect=PolicyBlockedError("blocked", document=doc),
         ),
         patch(
-            "markdown_ingress.application.use_cases.BatchIngestUseCase._select_execution_strategy",
+            "markdown_ingress.application.use_cases._select_execution_strategy",
             return_value=("local", None),
         ),
-        patch("markdown_ingress.application.use_cases.persist_report_for_document") as persist,
+        patch("markdown_ingress.application.batch_processor.persist_report_for_document") as persist,
     ):
         result = ingest_many(
             ["https://example.com/blocked"],
@@ -740,11 +731,11 @@ def test_build_runtime_config_rejects_boolean_cache_override():
 
 @patch("markdown_ingress.application.use_cases.PLAYWRIGHT_AVAILABLE", False)
 def test_orchestrator_auto_fast_fail_no_playwright():
-    """Lines 217-218: fast fetch fails, Playwright unavailable → exception re-raised."""
+    """fast fetch fails, Playwright unavailable → exception re-raised."""
     with pytest.raises(Exception):
-        IngestOrchestrator().execute(
+        IngestUseCase(playwright_available=False).execute(
             "http://127.0.0.1:1",  # guaranteed connection refusal
-            config=IngestConfig(mode="auto", timeout=2.0),
+            IngestConfig(mode="auto", timeout=2.0),
         )
 
 
@@ -791,7 +782,7 @@ def test_ingest_config_override_cache_non_none(local_server):
     import os
     import tempfile
 
-    from markdown_ingress.core.cache import SQLiteCache
+    from markdown_ingress.adapters.cache.sqlite import SQLiteCache
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
@@ -858,7 +849,7 @@ def test_ingest_file_config_preserves_cache_backend():
 
 
 def test_orchestrator_execute_preserves_config_cache_backend():
-    """Direct orchestrator use should not lose cache when cloning the config."""
+    """IngestUseCase should not lose cache when reusing a config across calls."""
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -888,10 +879,10 @@ def test_orchestrator_execute_preserves_config_cache_backend():
             cache=MemoryCache(default_ttl=60),
             cache_ttl=60,
         )
-        orchestrator = IngestOrchestrator()
+        use_case = IngestUseCase()
 
-        first = orchestrator.execute(url, config=config)
-        second = orchestrator.execute(url, config=config)
+        first = use_case.execute(url, config)
+        second = use_case.execute(url, config)
 
         assert CountingHandler.counter == 1
         assert first.metadata["cache_hit"] is False
@@ -1000,64 +991,42 @@ def test_ingest_auto_mode_fast_fails_no_playwright():
         api_module.PLAYWRIGHT_AVAILABLE = original
 
 
-# ── orchestrator.py: no config provided (line 121) ───────────────────────────
+# ── IngestUseCase: basic execution and config variants ────────────────────────
 
 
 def test_orchestrator_no_config(local_server):
-    """Line 121: IngestOrchestrator.execute() without config creates one."""
-    result = IngestOrchestrator().execute(local_server, mode="fast", timeout=10.0)
+    """IngestUseCase.execute() with an explicit fast config."""
+    result = IngestUseCase().execute(local_server, IngestConfig(mode="fast", timeout=10.0))
     assert result.markdown
 
 
-# ── orchestrator.py: model and screenshot overrides (lines 142, 152) ─────────
-
-
 def test_orchestrator_config_override_model_screenshot(local_server):
-    """Lines 142,152: model and screenshot params override provided config."""
-    config = IngestConfig(mode="fast", timeout=5.0)
-    result = IngestOrchestrator().execute(
-        local_server,
-        config=config,
-        model="gpt-3.5-turbo",  # line 142
-        screenshot=True,  # line 152
-    )
+    """model and screenshot params passed via IngestConfig."""
+    config = IngestConfig(mode="fast", timeout=5.0, model="gpt-3.5-turbo", screenshot=True)
+    result = IngestUseCase().execute(local_server, config)
     assert result.markdown
 
 
 def test_orchestrator_config_override_can_clear_inherited_screenshot(local_server):
-    config = IngestConfig(mode="fast", timeout=5.0, screenshot="shot.png")
-
-    result = IngestOrchestrator().execute(
-        local_server,
-        config=config,
-        screenshot=None,
-    )
-
+    config = IngestConfig(mode="fast", timeout=5.0, screenshot=None)
+    result = IngestUseCase().execute(local_server, config)
     assert result.markdown
     assert result.screenshot_path is None
 
 
-# ── orchestrator.py: render mode, Playwright unavailable (line 183) ──────────
-
-
 def test_orchestrator_render_mode_no_playwright(local_server):
-    """Line 183: render mode with PLAYWRIGHT_AVAILABLE=False raises ImportError."""
-    import markdown_ingress.application.use_cases as use_cases_module
-
-    original = use_cases_module.PLAYWRIGHT_AVAILABLE
-    use_cases_module.PLAYWRIGHT_AVAILABLE = False
-    try:
-        with pytest.raises(ImportError):
-            IngestOrchestrator().execute(local_server, mode="render", timeout=10.0)
-    finally:
-        use_cases_module.PLAYWRIGHT_AVAILABLE = original
+    """render mode with playwright_available=False raises ImportError."""
+    with pytest.raises(ImportError):
+        IngestUseCase(playwright_available=False).execute(
+            local_server, IngestConfig(mode="render", timeout=10.0)
+        )
 
 
-# ── orchestrator.py: auto mode – fast fails, Playwright fallback (lines 203-216)
+# ── IngestUseCase: auto mode – fast fails, Playwright fallback ────────────────
 
 
 def test_orchestrator_auto_playwright_fallback(error_server):
-    """Lines 203-216: fast fetch fails → Playwright auto-fallback renders the page."""
+    """fast fetch fails → Playwright auto-fallback renders the page."""
 
     class FakeRenderer:
         def __init__(self, config):
@@ -1080,6 +1049,9 @@ def test_orchestrator_auto_playwright_fallback(error_server):
         patch("markdown_ingress.application.use_cases.PLAYWRIGHT_AVAILABLE", True),
     ):
         # error_server returns 403 → fetcher.fetch_sync raises → render fallback
-        result = IngestOrchestrator().execute(error_server, mode="auto", timeout=20.0)
+        result = IngestUseCase(
+            renderer_factory=lambda rc: FakeRenderer(rc),
+            playwright_available=True,
+        ).execute(error_server, IngestConfig(mode="auto", timeout=20.0))
 
     assert result is not None

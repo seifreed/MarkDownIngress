@@ -1,12 +1,12 @@
 """Main public API for MarkDownIngress."""
 
 from collections.abc import Callable, Sequence
-from typing import Literal
 
-from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
+from markdown_ingress.adapters.rendering.playwright_renderer import (
+    PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
+)
 from markdown_ingress.api_facade import (
     UNSET,
-    build_runtime_kwargs,
     generate_security_report_impl,
     ingest_async_impl,
     ingest_impl,
@@ -16,7 +16,7 @@ from markdown_ingress.api_facade import (
     retry_ingest_impl,
 )
 from markdown_ingress.api_runtime import resolve_batch_api_options
-from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
@@ -27,45 +27,7 @@ _ingest_resolved = ingest_resolved
 def ingest(
     url: str,
     config: IngestConfig | FileConfig | None = None,
-    # Backward compatibility: accept individual parameters
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout: float | None = None,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    **kwargs,
 ) -> SafeDocument:
     """
     Ingest web content and convert to safe, sanitized Markdown.
@@ -78,22 +40,17 @@ def ingest(
     Args:
         url: Target URL to ingest
         config: IngestConfig object with all settings (recommended)
-        mode: Fetching mode (deprecated, use config):
-            - 'fast': HTTP only (no JS execution)
-            - 'render': Playwright with JS rendering
-            - 'auto': Try fast first, use render if content is minimal (default)
-        strict: Enable strict security mode (deprecated, use config)
-        model: LLM model name for token estimation (deprecated, use config)
-        timeout: Request timeout in seconds (deprecated, use config)
-        auto_render_threshold: Token threshold for auto mode (deprecated, use config)
-        stealth: Enable stealth mode (deprecated, use config)
-        disable_http2: Disable HTTP/2 protocol (deprecated, use config)
-        extreme_mode: Enable extreme timeouts (deprecated, use config)
-        screenshot: Screenshot path or True for temp (deprecated, use config)
-        extract_metadata: Extract enriched metadata (deprecated, use config)
-        extract_links: Extract and analyze links (deprecated, use config)
-        advanced_security: Enable Nova-tracer detection (deprecated, use config)
-        use_llm: Enable LLM-based detection (deprecated, use config)
+        **kwargs: Deprecated individual parameters — pass an IngestConfig instead:
+            mode, strict, allow_local_urls, model, timeout, auto_render_threshold,
+            stealth, disable_http2, extreme_mode, screenshot, extract_metadata,
+            extract_links, advanced_security, use_llm, cache, cache_ttl,
+            policy_name, custom_patterns, plugin_dirs, output_format,
+            output_profile, output_formats, extract_blocks, chunking_strategy,
+            chunk_size, chunk_overlap, detect_language, normalize_multilingual,
+            include_security_explanation, include_observability, save_reports,
+            reports_dir, fetcher_user_agent, domain_request_interval,
+            circuit_breaker_threshold, circuit_breaker_open_seconds,
+            render_cost_budget, domain_policies.
 
     Returns:
         SafeDocument with markdown content, metadata, and security analysis
@@ -122,190 +79,32 @@ def ingest(
         >>> config = IngestConfig(mode="auto", stealth=True, timeout=60.0)
         >>> doc = ingest("https://example.com", config=config)
     """
-    return ingest_impl(
-        url,
-        playwright_available=PLAYWRIGHT_AVAILABLE,
-        **build_runtime_kwargs(
-            config=config,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            timeout=timeout,
-            auto_render_threshold=auto_render_threshold,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
-            cache=cache,
-            cache_ttl=cache_ttl,
-            policy_name=policy_name,
-            custom_patterns=custom_patterns,
-            plugin_dirs=plugin_dirs,
-            output_format=output_format,
-            output_profile=output_profile,
-            output_formats=output_formats,
-            extract_blocks=extract_blocks,
-            chunking_strategy=chunking_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            detect_language=detect_language,
-            normalize_multilingual=normalize_multilingual,
-            include_security_explanation=include_security_explanation,
-            include_observability=include_observability,
-            save_reports=save_reports,
-            reports_dir=reports_dir,
-            fetcher_user_agent=fetcher_user_agent,
-            domain_request_interval=domain_request_interval,
-            circuit_breaker_threshold=circuit_breaker_threshold,
-            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
-            render_cost_budget=render_cost_budget,
-            domain_policies=domain_policies,
-        ),
-    )
+    return ingest_impl(url, playwright_available=PLAYWRIGHT_AVAILABLE, config=config, **kwargs)
 
 
 async def ingest_async(
     url: str,
     config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout: float | None = None,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    **kwargs,
 ) -> SafeDocument:
     """Async wrapper around ingest() for use inside asyncio applications.
 
-    Cancelling the returned task interrupts the await, but does not guarantee
-    abortion of sync ingestion work already dispatched in a background thread.
+    Accepts the same arguments as ingest(). Cancelling the returned task
+    interrupts the await, but does not guarantee abortion of sync ingestion
+    work already dispatched in a background thread.
     """
     return await ingest_async_impl(
-        url,
-        playwright_available=PLAYWRIGHT_AVAILABLE,
-        **build_runtime_kwargs(
-            config=config,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            timeout=timeout,
-            auto_render_threshold=auto_render_threshold,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
-            cache=cache,
-            cache_ttl=cache_ttl,
-            policy_name=policy_name,
-            custom_patterns=custom_patterns,
-            plugin_dirs=plugin_dirs,
-            output_format=output_format,
-            output_profile=output_profile,
-            output_formats=output_formats,
-            extract_blocks=extract_blocks,
-            chunking_strategy=chunking_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            detect_language=detect_language,
-            normalize_multilingual=normalize_multilingual,
-            include_security_explanation=include_security_explanation,
-            include_observability=include_observability,
-            save_reports=save_reports,
-            reports_dir=reports_dir,
-            fetcher_user_agent=fetcher_user_agent,
-            domain_request_interval=domain_request_interval,
-            circuit_breaker_threshold=circuit_breaker_threshold,
-            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
-            render_cost_budget=render_cost_budget,
-            domain_policies=domain_policies,
-        ),
+        url, playwright_available=PLAYWRIGHT_AVAILABLE, config=config, **kwargs
     )
 
 
 async def ingest_many_async(
     urls: Sequence[str],
     config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout=UNSET,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    *,
     max_concurrent=UNSET,
     on_progress: Callable[[int, int, str], None] | None = None,
+    **kwargs,
 ) -> BatchResult:
     """
     Ingest multiple URLs concurrently using the same public contract as ingest().
@@ -313,158 +112,42 @@ async def ingest_many_async(
     Returns a BatchResult that preserves the input order in `documents`.
     Failed URLs leave `None` in the matching position and populate `errors`.
     """
+    timeout = kwargs.pop("timeout", UNSET)
     resolved_timeout, resolved_max_concurrent = resolve_batch_api_options(
-        config,
-        timeout=timeout,
-        max_concurrent=max_concurrent,
+        config, timeout=timeout, max_concurrent=max_concurrent
     )
-
     return await ingest_many_async_impl(
         urls,
         playwright_available=PLAYWRIGHT_AVAILABLE,
         max_concurrent=resolved_max_concurrent,
         on_progress=on_progress,
-        **build_runtime_kwargs(
-            config=config,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            timeout=resolved_timeout,
-            auto_render_threshold=auto_render_threshold,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
-            cache=cache,
-            cache_ttl=cache_ttl,
-            policy_name=policy_name,
-            custom_patterns=custom_patterns,
-            plugin_dirs=plugin_dirs,
-            output_format=output_format,
-            output_profile=output_profile,
-            output_formats=output_formats,
-            extract_blocks=extract_blocks,
-            chunking_strategy=chunking_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            detect_language=detect_language,
-            normalize_multilingual=normalize_multilingual,
-            include_security_explanation=include_security_explanation,
-            include_observability=include_observability,
-            save_reports=save_reports,
-            reports_dir=reports_dir,
-            fetcher_user_agent=fetcher_user_agent,
-            domain_request_interval=domain_request_interval,
-            circuit_breaker_threshold=circuit_breaker_threshold,
-            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
-            render_cost_budget=render_cost_budget,
-            domain_policies=domain_policies,
-        ),
+        config=config,
+        timeout=resolved_timeout,
+        **kwargs,
     )
 
 
 def ingest_many(
     urls: Sequence[str],
     config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout=UNSET,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    *,
     max_concurrent=UNSET,
     on_progress: Callable[[int, int, str], None] | None = None,
+    **kwargs,
 ) -> BatchResult:
     """Synchronous wrapper for concurrent batch ingestion from normal Python code."""
+    timeout = kwargs.pop("timeout", UNSET)
     resolved_timeout, resolved_max_concurrent = resolve_batch_api_options(
-        config,
-        timeout=timeout,
-        max_concurrent=max_concurrent,
+        config, timeout=timeout, max_concurrent=max_concurrent
     )
-
     return ingest_many_sync_impl(
         urls,
         playwright_available=PLAYWRIGHT_AVAILABLE,
         max_concurrent=resolved_max_concurrent,
         on_progress=on_progress,
-        **build_runtime_kwargs(
-            config=config,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            timeout=resolved_timeout,
-            auto_render_threshold=auto_render_threshold,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
-            cache=cache,
-            cache_ttl=cache_ttl,
-            policy_name=policy_name,
-            custom_patterns=custom_patterns,
-            plugin_dirs=plugin_dirs,
-            output_format=output_format,
-            output_profile=output_profile,
-            output_formats=output_formats,
-            extract_blocks=extract_blocks,
-            chunking_strategy=chunking_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            detect_language=detect_language,
-            normalize_multilingual=normalize_multilingual,
-            include_security_explanation=include_security_explanation,
-            include_observability=include_observability,
-            save_reports=save_reports,
-            reports_dir=reports_dir,
-            fetcher_user_agent=fetcher_user_agent,
-            domain_request_interval=domain_request_interval,
-            circuit_breaker_threshold=circuit_breaker_threshold,
-            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
-            render_cost_budget=render_cost_budget,
-            domain_policies=domain_policies,
-        ),
+        config=config,
+        timeout=resolved_timeout,
+        **kwargs,
     )
 
 
@@ -475,7 +158,7 @@ def _ingest_with_config(url: str, config: IngestConfig) -> SafeDocument:
 
 def retry_ingest(
     url: str,
-    mode: Literal["fast", "render", "auto"] = "auto",
+    mode="auto",
     strict: bool = True,
     allow_local_urls=UNSET,
     model: str = "gpt-4",
@@ -543,102 +226,20 @@ def retry_ingest(
 def generate_security_report(
     url: str,
     config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout: float | None = None,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    **kwargs,
 ) -> SecurityReport:
     """
     Generate comprehensive security report for a URL.
 
     Similar to ingest() but returns detailed SecurityReport instead of SafeDocument.
-    Useful for security auditing and analysis workflows.
+    Accepts the same arguments as ingest().
 
     Args:
         url: Target URL to analyze
-        mode: Fetching mode - 'fast' or 'render'
-        strict: Enable strict security mode
-        model: LLM model name for token estimation
-        timeout: Request timeout in seconds
+        config: IngestConfig object with all settings (recommended)
+        **kwargs: Deprecated individual parameters — same as ingest()
 
     Returns:
         SecurityReport with detailed security analysis
     """
-    return generate_security_report_impl(
-        url=url,
-        **build_runtime_kwargs(
-            config=config,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            timeout=timeout,
-            auto_render_threshold=auto_render_threshold,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
-            cache=cache,
-            cache_ttl=cache_ttl,
-            policy_name=policy_name,
-            custom_patterns=custom_patterns,
-            plugin_dirs=plugin_dirs,
-            output_format=output_format,
-            output_profile=output_profile,
-            output_formats=output_formats,
-            extract_blocks=extract_blocks,
-            chunking_strategy=chunking_strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            detect_language=detect_language,
-            normalize_multilingual=normalize_multilingual,
-            include_security_explanation=include_security_explanation,
-            include_observability=include_observability,
-            save_reports=save_reports,
-            reports_dir=reports_dir,
-            fetcher_user_agent=fetcher_user_agent,
-            domain_request_interval=domain_request_interval,
-            circuit_breaker_threshold=circuit_breaker_threshold,
-            circuit_breaker_open_seconds=circuit_breaker_open_seconds,
-            render_cost_budget=render_cost_budget,
-            domain_policies=domain_policies,
-        ),
-    )
+    return generate_security_report_impl(url, config=config, **kwargs)

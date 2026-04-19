@@ -341,7 +341,12 @@ def cmd_compare(args):
 def cmd_benchmark(args):
     """Run benchmark report with optional extractor comparison."""
     urls = load_urls_from_file(args.file)
-    bench = Benchmark(model=args.model or "gpt-4")
+    try:
+        from markdown_ingress.adapters.extractors.comparison import compare_extractors as _cmp_fn
+        _compare_fn = _cmp_fn
+    except ImportError:
+        _compare_fn = None
+    bench = Benchmark(model=args.model or "gpt-4", compare_fn=_compare_fn)
     results = bench.run_batch(
         urls,
         mode=determine_mode(args) or "auto",

@@ -318,7 +318,7 @@ def test_nova_guard_rules_path(tmp_path):
 
 def test_normalize_url_with_tracking_params():
     """normalizer.py lines 123-132"""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     url = "https://example.com/page?utm_source=test&utm_medium=email&id=123"
@@ -329,7 +329,7 @@ def test_normalize_url_with_tracking_params():
 
 def test_normalize_url_no_query():
     """normalizer.py: no query string branch"""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     url = "https://example.com/page"
@@ -338,7 +338,7 @@ def test_normalize_url_no_query():
 
 def test_normalize_url_all_tracking_params_removed():
     """normalizer.py line 129: cleaned_params is empty"""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     url = "https://example.com/page?utm_source=foo&fbclid=bar"
@@ -350,7 +350,7 @@ def test_normalize_url_all_tracking_params_removed():
 
 def test_normalize_heading():
     """normalizer.py lines 147-152"""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     result = n.normalize_heading("  Hello\nWorld  ")
@@ -361,7 +361,7 @@ def test_normalize_heading():
 
 def test_normalizer_preserves_trailing_whitespace_in_code_blocks():
     """Bug fix: trailing whitespace inside fenced code blocks must be preserved."""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     code_with_trailing = "```\nline with trailing   \nanother line\t\n```"
@@ -372,7 +372,7 @@ def test_normalizer_preserves_trailing_whitespace_in_code_blocks():
 
 def test_normalizer_strips_trailing_whitespace_outside_code_blocks():
     """Trailing whitespace on regular and list lines should still be stripped."""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     text = "regular line   \n- list item   \n> quote item   "
@@ -383,7 +383,7 @@ def test_normalizer_strips_trailing_whitespace_outside_code_blocks():
 
 def test_normalizer_preserves_blank_lines_inside_fenced_code_blocks():
     """Blank lines inside fenced code blocks must not be collapsed away."""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     text = "before\n\n```txt\nline1\n\n\nline2\n```\n\nafter"
@@ -395,7 +395,7 @@ def test_normalizer_preserves_blank_lines_inside_fenced_code_blocks():
 
 def test_normalizer_preserves_indented_code_block_indentation():
     """Indented code blocks must keep their leading indentation after a blank line (CommonMark)."""
-    from markdown_ingress.core.normalizer import Normalizer
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 
     n = Normalizer()
     # Per CommonMark spec, indented code blocks require a preceding blank line
@@ -488,7 +488,10 @@ def test_fetcher_rejects_pdf_content_type():
     """fetcher.py: real PDF response should fail early with UnsupportedContentTypeError."""
     server, port = _start_server(_PdfHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher, UnsupportedContentTypeError
+        from markdown_ingress.adapters.fetching.httpx_fetcher import (
+            Fetcher,
+            UnsupportedContentTypeError,
+        )
 
         fetcher = Fetcher(timeout=5.0)
         with pytest.raises(UnsupportedContentTypeError, match="application/pdf"):
@@ -502,7 +505,7 @@ def test_fetcher_429_retry_after_then_success():
     _RetryAfterThenOkHandler.request_count = 0
     server, port = _start_server(_RetryAfterThenOkHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0)
         started = time.perf_counter()
@@ -521,7 +524,7 @@ def test_fetcher_throttles_same_host_bursts():
     _RateLimitedBurstHandler.last_request_at = 0.0
     server, port = _start_server(_RateLimitedBurstHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0, domain_request_interval=0.25)
         first = fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
@@ -569,7 +572,7 @@ def test_fetcher_403_retry_then_success():
     _RetryThenOkHandler.request_count = 0
     server, port = _start_server(_RetryThenOkHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0)
         result = fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
@@ -582,7 +585,7 @@ def test_fetcher_all_retries_fail():
     """fetcher.py lines 182-191: all retries fail -> raise"""
     server, port = _start_server(_AlwaysForbiddenHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0)
         with pytest.raises(httpx.HTTPStatusError):
@@ -597,7 +600,7 @@ async def test_fetcher_async_403_retry_then_success():
     _RetryThenOkHandler.request_count = 0
     server, port = _start_server(_RetryThenOkHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0)
         result = await fetcher.fetch(f"http://127.0.0.1:{port}/")
@@ -612,7 +615,7 @@ async def test_fetcher_async_all_retries_fail():
     """fetcher.py lines 182-191 async: raise last_exc"""
     server, port = _start_server(_AlwaysForbiddenHandler)
     try:
-        from markdown_ingress.core.fetcher import Fetcher
+        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         fetcher = Fetcher(timeout=5.0)
         with pytest.raises(httpx.HTTPStatusError):
@@ -831,7 +834,7 @@ def test_metadata_extractor_language_meta():
 
 def test_sqlite_cache_clear(tmp_path):
     """cache.py lines 216-217: SQLiteCache.clear()"""
-    from markdown_ingress.core.cache import SQLiteCache
+    from markdown_ingress.adapters.cache.sqlite import SQLiteCache
     from markdown_ingress.models import SafeDocument
 
     db_path = str(tmp_path / "test_cache.db")
@@ -858,7 +861,7 @@ def test_sqlite_cache_clear(tmp_path):
 
 def test_extractor_fallback_no_body():
     """extractor.py line 53-54: no body tag fallback"""
-    from markdown_ingress.core.extractor import Extractor
+    from markdown_ingress.adapters.extractors.readability_extractor import Extractor
 
     extractor = Extractor()
     # Minimal HTML that forces fallback AND has no body
@@ -869,7 +872,7 @@ def test_extractor_fallback_no_body():
 
 def test_extractor_fallback_empty_readability():
     """extractor.py lines 48-51: readability returns empty, fallback to body"""
-    from markdown_ingress.core.extractor import Extractor
+    from markdown_ingress.adapters.extractors.readability_extractor import Extractor
 
     extractor = Extractor()
     # Very minimal HTML that readability struggles with
@@ -1581,7 +1584,7 @@ def test_link_analyzer_internal_external():
 
 def test_fetcher_fixed_user_agent(local_http_server):
     """fetcher.py line 67: Fetcher(user_agent=...) returns the fixed UA."""
-    from markdown_ingress.core.fetcher import Fetcher
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     fetcher = Fetcher(user_agent="TestBot/1.0", timeout=5.0)
     assert fetcher.user_agent == "TestBot/1.0"  # directly covers line 67

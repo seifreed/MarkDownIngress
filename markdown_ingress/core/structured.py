@@ -4,11 +4,20 @@ Structured extraction helpers for block-level and chunk-level outputs.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
 
 from markdown_ingress.core.hashing import Hasher
-from markdown_ingress.core.tokens import TokenEstimator
+from markdown_ingress.core.interfaces import ITokenEstimator
 from markdown_ingress.models import DocumentChunk, StructuredBlock
+
+_token_estimator_factory: Callable[[], ITokenEstimator] | None = None
+
+
+def register_token_estimator_factory(fn: Callable[[], ITokenEstimator]) -> None:
+    global _token_estimator_factory
+    _token_estimator_factory = fn
 
 
 def render_code_fence(code: str, language: str | None = None) -> str:
@@ -248,9 +257,13 @@ class HTMLStructureExtractor:
 class ChunkBuilder:
     """Create stable chunks from structured blocks."""
 
-    def __init__(self, hasher: Hasher | None = None, token_estimator: TokenEstimator | None = None):
+    def __init__(self, hasher: Hasher | None = None, token_estimator: ITokenEstimator | None = None):
         self.hasher = hasher or Hasher()
-        self.token_estimator = token_estimator or TokenEstimator()
+        if token_estimator is None:
+            if _token_estimator_factory is None:
+                raise RuntimeError("No token estimator factory registered.")
+            token_estimator = _token_estimator_factory()
+        self.token_estimator = token_estimator
 
     def build(
         self,

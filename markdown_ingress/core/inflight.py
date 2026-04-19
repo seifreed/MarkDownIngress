@@ -32,6 +32,11 @@ _INFLIGHT_TTL_SECONDS = 900  # 15 minutes
 
 _INFLIGHT_WAIT_TIMEOUT = 600  # seconds — prevents infinite hang if leader crashes
 
+_INFLIGHT_COMPLETING_GRACE_MULTIPLIER = 2
+_INFLIGHT_CLEANUP_INTERVAL_SECONDS = 30.0
+_INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS = 5.0
+_REQUEST_KEY_LOG_TRUNCATE_LENGTH = 16
+
 _ALL_INFLIGHT_REGISTRIES: weakref.WeakSet[InFlightRegistry] = weakref.WeakSet()
 _ALL_INFLIGHT_REGISTRIES_LOCK = threading.Lock()
 
@@ -113,7 +118,7 @@ class InFlightRegistry:
             if thread is None:
                 return
             self._cleanup_stop.set()
-        thread.join(timeout=5.0)
+        thread.join(timeout=_INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS)
         with self._cleanup_control_lock:
             if self._cleanup_thread is thread:
                 self._cleanup_thread = None
@@ -123,7 +128,7 @@ class InFlightRegistry:
         now = time.monotonic()
         keys_to_remove = []
 
-        completing_grace = _INFLIGHT_TTL_SECONDS * 2
+        completing_grace = _INFLIGHT_TTL_SECONDS * _INFLIGHT_COMPLETING_GRACE_MULTIPLIER
         for key, entry in self._requests.items():
             age = now - entry.created_at
             if age > _INFLIGHT_TTL_SECONDS and not entry.completing:
@@ -136,7 +141,7 @@ class InFlightRegistry:
             entry = self._requests.pop(key)
             logger.warning(
                 "Cleaned up orphaned in-flight entry (key=%s, age=%.1fs, followers=%d)",
-                key[:16] + "...",
+                key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
                 now - entry.created_at,
                 entry.followers,
             )
@@ -168,7 +173,7 @@ class InFlightRegistry:
             self._requests.pop(key)
             logger.warning(
                 "Evicted in-flight entry due to max size (key=%s, followers=%d, age=%.1fs)",
-                key[:16] + "...",
+                key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
                 entry.followers,
                 time.monotonic() - entry.created_at,
             )
@@ -179,7 +184,7 @@ class InFlightRegistry:
         to_notify: list[InFlightEntry] = []
         with self._lock:
             now = time.monotonic()
-            if now - self._last_orphan_cleanup_at >= 30.0:
+            if now - self._last_orphan_cleanup_at >= _INFLIGHT_CLEANUP_INTERVAL_SECONDS:
                 to_notify = self._cleanup_orphaned_entries_locked()
                 self._last_orphan_cleanup_at = now
             count = len(self._requests)
@@ -224,7 +229,7 @@ class InFlightRegistry:
                 if len(self._requests) >= _INFLIGHT_MAX_SIZE:
                     logger.warning(
                         "In-flight registry saturated; skipping dedup registration for key=%s",
-                        request_key[:16] + "...",
+                        request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
                     )
                 else:
                     self._requests[request_key] = InFlightEntry(request_key=request_key)
@@ -248,7 +253,7 @@ class InFlightRegistry:
                     entry.leader_active = False
                     logger.error(
                         "Marked in-flight entry as inactive after timeout (key=%s, followers=%d)",
-                        request_key[:16] + "...",
+                        request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
                         entry.followers,
                     )
                     entry.condition.notify_all()
@@ -263,6 +268,33 @@ class InFlightRegistry:
                 raise RuntimeError("In-flight ingestion finished without result")
             return copy.deepcopy(entry.document)
 
+    def _handle_double_release_locked(
+        self,
+        entry: InFlightEntry,
+        request_key: str,
+        to_notify: list[InFlightEntry],
+    ) -> tuple[bool, int]:
+        """Called under self._lock. Acquires entry.condition to detect double-release.
+
+        Returns (should_bail, followers). If should_bail is True, caller must return followers.
+        Side effect: sets entry.completing = True when NOT bailing.
+        """
+        with entry.condition:
+            if not entry.done:
+                entry.completing = True
+                return False, 0
+            logger.warning(
+                "Double-release detected for request_key=%s, returning followers=%d",
+                request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
+                entry.followers,
+            )
+            followers = entry.followers
+            for e in to_notify:
+                with e.condition:
+                    e.leader_active = False
+                    e.condition.notify_all()
+            return True, followers
+
     def release(
         self,
         request_key: str,
@@ -275,24 +307,12 @@ class InFlightRegistry:
         with self._lock:
             to_notify.extend(self._cleanup_orphaned_entries_locked())
             entry = self._requests.get(request_key)
-            # Mark completing under _lock so concurrent cleanup skips this entry
             if entry is not None:
-                with entry.condition:
-                    # BUG FIX: Check for double-release - entry already completed
-                    if entry.done:
-                        logger.warning(
-                            "Double-release detected for request_key=%s, returning followers=%d",
-                            request_key[:16] + "...",
-                            entry.followers,
-                        )
-                        followers = entry.followers
-                        # Notify orphaned entries before returning
-                        for e in to_notify:
-                            with e.condition:
-                                e.leader_active = False
-                                e.condition.notify_all()
-                        return followers
-                    entry.completing = True
+                should_bail, followers = self._handle_double_release_locked(
+                    entry, request_key, to_notify
+                )
+                if should_bail:
+                    return followers
 
         for e in to_notify:
             with e.condition:

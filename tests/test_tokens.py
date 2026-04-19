@@ -1,6 +1,6 @@
 """Tests for token estimation"""
 
-from markdown_ingress.core.tokens import TokenEstimator
+from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 
 
 def test_token_estimation():

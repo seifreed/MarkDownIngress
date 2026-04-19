@@ -1,7 +1,7 @@
 """Ingestion orchestration entrypoint for the MarkDownIngress pipeline."""
 
 import time
-from typing import Any, Final
+from typing import Any
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.document_builder import process_fetched_content
@@ -22,13 +22,17 @@ from markdown_ingress.core.ingest_stats import (
 from markdown_ingress.core.ingest_stats import (
     reset_ingest_stats as _reset_ingest_stats,
 )
-from markdown_ingress.core.interfaces import IExtractor, INormalizer
+from markdown_ingress.core.interfaces import (
+    IExtractor,
+    IMarkdownConverter,
+    INormalizer,
+    ITokenEstimator,
+)
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
-from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
-from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.scoring import Scorer
 from markdown_ingress.models import FetchResult, SafeDocument
+
 
 def get_ingest_stats() -> dict[str, Any]:
     """Return aggregate in-process ingestion stats for observability."""
@@ -54,9 +58,9 @@ class IngestOrchestrator:
         self,
         extractor: IExtractor | None = None,
         normalizer: INormalizer | None = None,
-        md_converter: MarkdownConverter | None = None,
+        md_converter: IMarkdownConverter | None = None,
         hasher: Hasher | None = None,
-        token_estimator: TokenEstimator | None = None,
+        token_estimator: ITokenEstimator | None = None,
         scorer: Scorer | None = None,
         metadata_extractor: MetadataExtractor | None = None,
         link_analyzer: LinkAnalyzer | None = None,
@@ -77,9 +81,9 @@ class IngestOrchestrator:
         """
         self.extractor = extractor
         self.normalizer = normalizer
-        self.md_converter = md_converter
+        self.md_converter: IMarkdownConverter | None = md_converter
         self.hasher = hasher
-        self.token_estimator = token_estimator
+        self.token_estimator: ITokenEstimator | None = token_estimator
         self.scorer = scorer
         self.metadata_extractor = metadata_extractor
         self.link_analyzer = link_analyzer

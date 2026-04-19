@@ -19,6 +19,10 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import markdown_ingress.api_server as api_server
+from markdown_ingress.adapters.fetching.httpx_fetcher import (
+    DomainCircuitOpenError,
+    UnsupportedContentTypeError,
+)
 from markdown_ingress.api_server import (
     LEGACY_UNKNOWN_TTL_SECONDS,
     _get_job_queue,
@@ -35,7 +39,6 @@ from markdown_ingress.api_server_models import (
     IngestRequest,
     RetryIngestRequest,
 )
-from markdown_ingress.core.fetcher import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchErrorItem

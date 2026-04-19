@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from markdown_ingress import ingest
-from markdown_ingress.core.renderer import Renderer
+from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 
 # Skip all tests in this file if playwright is not available
 pytest.importorskip("playwright")
