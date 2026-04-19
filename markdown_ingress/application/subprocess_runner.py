@@ -8,7 +8,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from markdown_ingress.application.exceptions import _make_picklable
+from markdown_ingress.application.exceptions import _copy_batch_exception, _make_picklable
 
 if TYPE_CHECKING:
     from markdown_ingress.config_models import IngestConfig
@@ -34,7 +34,7 @@ def _execute_batch_ingest_in_subprocess(
         queue.put(("result", document))
     except Exception as exc:  # pragma: no cover - child process path
         try:
-            queue.put(("exception", exc))
+            queue.put(("exception", _copy_batch_exception(exc)))
         except Exception:
             queue.put(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
 

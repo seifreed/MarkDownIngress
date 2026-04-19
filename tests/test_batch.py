@@ -816,3 +816,92 @@ def test_resolve_batch_api_options_uses_batch_settings_from_converted_runtime_co
 
     assert resolved_timeout == 12.0
     assert resolved_max_concurrent == 9
+
+
+# --- Bug fix tests ---
+
+
+def test_make_picklable_preserves_keys_with_unpicklable_values():
+    """_make_picklable must convert unpicklable leaves to str, not drop them."""
+    from markdown_ingress.application.exceptions import _make_picklable
+
+    class _Unpicklable:
+        def __reduce__(self):
+            raise TypeError("cannot pickle")
+
+        def __str__(self):
+            return "unpicklable-sentinel"
+
+    result = _make_picklable({"key": _Unpicklable(), "safe": 42})
+    assert "key" in result, "unpicklable key must not be dropped"
+    assert result["key"] == "unpicklable-sentinel"
+    assert result["safe"] == 42
+
+
+def test_make_picklable_preserves_list_items_with_unpicklable_values():
+    from markdown_ingress.application.exceptions import _make_picklable
+
+    class _Unpicklable:
+        def __reduce__(self):
+            raise TypeError("cannot pickle")
+
+        def __str__(self):
+            return "item-sentinel"
+
+    result = _make_picklable([_Unpicklable(), "ok"])
+    assert len(result) == 2, "unpicklable list items must not be dropped"
+    assert result[0] == "item-sentinel"
+    assert result[1] == "ok"
+
+
+def test_inflight_followers_decremented_after_await():
+    """await_result must decrement followers on successful completion."""
+    import threading
+    import time
+
+    from markdown_ingress.core.inflight import InFlightRegistry
+    from markdown_ingress.models import SafeDocument
+
+    registry = InFlightRegistry()
+    request_key = "test-followers-decrement"
+
+    # Leader acquires — returns None (new entry created internally)
+    leader_result = registry.acquire(request_key)
+    assert leader_result is None
+
+    # Follower acquires the same key — returns the shared entry
+    follower_entry = registry.acquire(request_key)
+    assert follower_entry is not None
+    assert follower_entry.followers == 1
+
+    doc = SafeDocument(
+        markdown="# hi",
+        metadata={"url": "http://example.com"},
+        token_estimate=5,
+        content_hash="abc",
+        injection_score=0.0,
+    )
+
+    # Release from a background thread so await_result can unblock
+    def release():
+        time.sleep(0.05)
+        registry.release(request_key, document=doc)
+
+    t = threading.Thread(target=release, daemon=True)
+    t.start()
+
+    registry.await_result(follower_entry, request_key)
+    t.join(timeout=2)
+
+    assert follower_entry.followers == 0
+
+
+def test_decode_content_invalid_utf8_uses_replacement_char():
+    """_decode_content must use U+FFFD for invalid bytes, not corrupt via latin-1."""
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    # 0xFF is invalid in UTF-8 — latin-1 would produce 'ÿ', replacement char produces '\\ufffd'
+    invalid_utf8 = b"hello \xff world"
+    result = Fetcher._decode_content(invalid_utf8, None)
+    assert "\ufffd" in result, "replacement character expected for invalid UTF-8 byte"
+    assert "ÿ" not in result, "latin-1 mojibake must not appear"

@@ -70,9 +70,11 @@ def _is_picklable(obj: object) -> bool:
 
 
 def _make_picklable(value: object) -> object:
-    """Make an exception picklable by stripping non-picklable attrs."""
+    """Make a value picklable by converting non-picklable leaves to strings."""
     if isinstance(value, dict):
-        return {k: _make_picklable(v) for k, v in value.items() if _is_picklable(v)}
+        return {k: _make_picklable(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_make_picklable(v) for v in value if _is_picklable(v)]
+        return [_make_picklable(v) for v in value]
+    if not _is_picklable(value):
+        return str(value)
     return value

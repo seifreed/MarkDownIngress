@@ -607,7 +607,7 @@ class Fetcher(IFetcher):
         try:
             return content.decode(encoding)
         except (UnicodeDecodeError, LookupError):
-            return content.decode("latin-1")
+            return content.decode("utf-8", errors="replace")
 
     def _make_fetch_result(
         self,

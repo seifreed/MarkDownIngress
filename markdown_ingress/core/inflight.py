@@ -243,30 +243,33 @@ class InFlightRegistry:
 
     def await_result(self, entry: InFlightEntry, request_key: str) -> SafeDocument:
         with entry.condition:
-            while not entry.done:
-                if not entry.leader_active:
-                    raise RuntimeError("In-flight ingestion failed - leader was marked inactive")
+            try:
+                while not entry.done:
+                    if not entry.leader_active:
+                        raise RuntimeError("In-flight ingestion failed - leader was marked inactive")
 
-                if not entry.condition.wait(timeout=_INFLIGHT_WAIT_TIMEOUT):
-                    if entry.done:
-                        break
-                    entry.leader_active = False
-                    logger.error(
-                        "Marked in-flight entry as inactive after timeout (key=%s, followers=%d)",
-                        request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
-                        entry.followers,
-                    )
-                    entry.condition.notify_all()
-                    raise RuntimeError(
-                        "In-flight ingestion timed out waiting for leader — "
-                        "the leader may have crashed without calling release_inflight()"
-                    )
+                    if not entry.condition.wait(timeout=_INFLIGHT_WAIT_TIMEOUT):
+                        if entry.done:
+                            break
+                        entry.leader_active = False
+                        logger.error(
+                            "Marked in-flight entry as inactive after timeout (key=%s, followers=%d)",
+                            request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
+                            entry.followers,
+                        )
+                        entry.condition.notify_all()
+                        raise RuntimeError(
+                            "In-flight ingestion timed out waiting for leader — "
+                            "the leader may have crashed without calling release_inflight()"
+                        )
 
-            if entry.error is not None:
-                raise entry.error
-            if entry.document is None:
-                raise RuntimeError("In-flight ingestion finished without result")
-            return copy.deepcopy(entry.document)
+                if entry.error is not None:
+                    raise entry.error
+                if entry.document is None:
+                    raise RuntimeError("In-flight ingestion finished without result")
+                return copy.deepcopy(entry.document)
+            finally:
+                entry.followers -= 1
 
     def _handle_double_release_locked(
         self,
