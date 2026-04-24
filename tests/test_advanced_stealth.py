@@ -9,6 +9,8 @@ requiring external network access.
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -168,16 +170,15 @@ def test_advanced_stealth_config_avoids_immediate_repeat_with_explicit_signature
     ), "previous_signature must avoid immediate repetition"
 
 
-def test_advanced_stealth_allows_public_dns_pinning_result(monkeypatch):
+def test_advanced_stealth_rejects_public_dns_pinning_result(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.adapters.rendering.advanced_stealth_renderer.validate_http_url_no_ssrf",
         lambda url, **_kwargs: "https://93.184.216.34/page",
     )
     renderer = AdvancedStealthRenderer(allow_local_urls=False)
 
-    assert renderer._validate_render_url("https://rebind.example/page") == (
-        "https://rebind.example/page"
-    )
+    with pytest.raises(ValueError, match="DNS pinning"):
+        renderer._validate_render_url("https://rebind.example/page")
 
 
 def test_advanced_stealth_config_custom_inputs():

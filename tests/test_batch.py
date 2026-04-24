@@ -690,6 +690,35 @@ async def test_custom_batch_progress_callback_reports_completed_items():
 
 
 @pytest.mark.asyncio
+async def test_custom_batch_progress_callback_errors_do_not_fail_batch(caplog):
+    progress_calls = []
+
+    def on_progress(current, total, url):
+        progress_calls.append((current, total, url))
+        raise RuntimeError("progress callback failed")
+
+    class SimpleBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            return SafeDocument(
+                markdown=url,
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash=f"hash-{url}",
+            )
+
+    processor = SimpleBatchProcessor(mode="fast", timeout=5.0, on_progress=on_progress)
+    result = await processor.process_batch_async(["https://example.com/one"])
+
+    assert result.successful == 1
+    assert result.failed == 0
+    assert result.errors == []
+    assert result.documents[0] is not None
+    assert progress_calls == [(1, 1, "https://example.com/one")]
+    assert "Batch progress callback failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_default_batch_use_case_progress_reports_completed_items(monkeypatch):
     progress_calls = []
 
@@ -725,6 +754,45 @@ async def test_default_batch_use_case_progress_reports_completed_items(monkeypat
     assert [call[0] for call in progress_calls] == [1, 2]
     assert progress_calls[0][3] - started_at >= 0.08
     assert progress_calls[1][3] - started_at >= 0.18
+
+
+@pytest.mark.asyncio
+async def test_default_batch_progress_callback_errors_do_not_fail_batch(caplog):
+    progress_calls = []
+
+    def on_progress(current, total, url):
+        progress_calls.append((current, total, url))
+        raise RuntimeError("progress callback failed")
+
+    class SimpleIngestUseCase:
+        orchestrator = IngestOrchestrator()
+
+        def execute(self, url: str, config):
+            return SafeDocument(
+                markdown=url,
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash=f"hash-{url}",
+            )
+
+        def uses_default_runtime_dependencies(self):
+            return False
+
+    use_case = BatchIngestUseCase(ingest_use_case=SimpleIngestUseCase())
+    result = await use_case.execute(
+        ["https://example.com/one"],
+        config_builder=lambda: IngestConfig(mode="fast"),
+        max_concurrent=1,
+        on_progress=on_progress,
+    )
+
+    assert result.successful == 1
+    assert result.failed == 0
+    assert result.errors == []
+    assert result.documents[0] is not None
+    assert progress_calls == [(1, 1, "https://example.com/one")]
+    assert "Batch progress callback failed" in caplog.text
 
 
 @pytest.mark.asyncio

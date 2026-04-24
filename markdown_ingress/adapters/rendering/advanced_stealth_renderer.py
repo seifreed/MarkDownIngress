@@ -9,6 +9,7 @@ from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
+    validated_http_url_requires_dns_pinning,
 )
 from markdown_ingress.core.stealth import (
     AdvancedStealthConfig,
@@ -92,11 +93,13 @@ class AdvancedStealthRenderer:
             self.stealth_config = stealth_config
 
     def _validate_render_url(self, url: str) -> str:
-        validate_http_url_no_ssrf(
+        validated_url = validate_http_url_no_ssrf(
             url,
             allow_local=self.allow_local_urls,
             resolve_dns=True,
         )
+        if validated_http_url_requires_dns_pinning(url, validated_url):
+            raise ValueError("Render URL requires DNS pinning that cannot be preserved safely")
         return str(url).strip()
 
     async def render(self, url: str) -> FetchResult:

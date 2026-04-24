@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import Literal
 
@@ -10,6 +11,8 @@ from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUse
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
+
+_logger = logging.getLogger(__name__)
 
 try:
     from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_INSTALLED
@@ -111,7 +114,17 @@ class BatchProcessor:
                 return
             async with progress_lock:
                 completed += 1
-                self.on_progress(completed, total, url)
+                try:
+                    self.on_progress(completed, total, url)
+                except Exception as exc:
+                    _logger.warning(
+                        "Batch progress callback failed for %s (%d/%d): %s",
+                        url,
+                        completed,
+                        total,
+                        exc,
+                        exc_info=True,
+                    )
 
         async def process_one(index: int, url: str) -> bool:
             async with semaphore:

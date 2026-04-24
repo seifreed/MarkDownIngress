@@ -248,7 +248,7 @@ async def test_advanced_stealth_rejects_local_top_level_url():
 
 
 @pytest.mark.asyncio
-async def test_advanced_stealth_preserves_logical_public_top_level_url(monkeypatch):
+async def test_advanced_stealth_blocks_public_top_level_url_requiring_dns_pinning(monkeypatch):
     import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
 
     def fake_validate(url: str, **_kwargs) -> str:
@@ -265,7 +265,7 @@ async def test_advanced_stealth_preserves_logical_public_top_level_url(monkeypat
     renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
     monkeypatch.setattr(renderer, "_render_with_browser", fake_render)
 
-    result = await renderer.render("https://rebind.example/private")
+    with pytest.raises(ValueError, match="DNS pinning"):
+        await renderer.render("https://rebind.example/private")
 
-    assert result.url == "https://rebind.example/private"
-    assert rendered_urls == ["https://rebind.example/private"]
+    assert rendered_urls == []

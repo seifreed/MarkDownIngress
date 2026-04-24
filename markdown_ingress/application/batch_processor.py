@@ -99,7 +99,17 @@ class _BatchContext:
             return
         async with self.progress_lock:
             self.completed += 1
-            self.on_progress(self.completed, self.total, url)
+            try:
+                self.on_progress(self.completed, self.total, url)
+            except Exception as exc:
+                _logger.warning(
+                    "Batch progress callback failed for %s (%d/%d): %s",
+                    url,
+                    self.completed,
+                    self.total,
+                    exc,
+                    exc_info=True,
+                )
 
 
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:

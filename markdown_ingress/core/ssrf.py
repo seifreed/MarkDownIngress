@@ -373,3 +373,15 @@ def validate_http_url_no_ssrf(
         return reconstructed
 
     return normalized_url
+
+
+def validated_http_url_requires_dns_pinning(original_url: str, validated_url: str) -> bool:
+    """Return True when SSRF validation rewrote the URL host to a pinned address."""
+    try:
+        original_hostname = normalize_hostname(urlsplit(str(original_url).strip()).hostname or "")
+        validated_hostname = normalize_hostname(urlsplit(str(validated_url).strip()).hostname or "")
+    except Exception:
+        return True
+    if not original_hostname or not validated_hostname:
+        return True
+    return original_hostname != validated_hostname

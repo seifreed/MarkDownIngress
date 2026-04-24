@@ -31,6 +31,7 @@ from markdown_ingress.adapters.fetching.httpx_fetcher import UnsupportedContentT
 from markdown_ingress.application.use_cases import (
     BatchIngestUseCase,
     IngestUseCase,
+    RenderUrlRequiresDnsPinningError,
     _looks_like_auth_interstitial,
 )
 from markdown_ingress.config_models import DomainPolicy
@@ -1159,7 +1160,7 @@ def test_render_mode_validates_url_before_playwright(monkeypatch):
     assert calls["renderer"] == 0
 
 
-def test_render_mode_allows_public_dns_pinning_result(monkeypatch):
+def test_render_mode_rejects_public_dns_pinning_result(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
@@ -1179,16 +1180,16 @@ def test_render_mode_allows_public_dns_pinning_result(monkeypatch):
 
     use_case.renderer_factory = lambda config: FakeRenderer()
 
-    doc = use_case.execute(
-        "https://rebind.example/private",
-        IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
-    )
+    with pytest.raises(RenderUrlRequiresDnsPinningError):
+        use_case.execute(
+            "https://rebind.example/private",
+            IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
+        )
 
-    assert calls == ["https://rebind.example/private"]
-    assert doc.metadata["mode"] == "render"
+    assert calls == []
 
 
-def test_auto_mode_allows_public_dns_pinning_result_for_render(monkeypatch):
+def test_auto_mode_keeps_fast_when_render_requires_dns_pinning(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
@@ -1226,8 +1227,9 @@ def test_auto_mode_allows_public_dns_pinning_result_for_render(monkeypatch):
         ),
     )
 
-    assert calls["renderer"] == 1
-    assert doc.metadata["auto_mode_used"] == "render"
+    assert calls["renderer"] == 0
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert doc.metadata["auto_mode_reason"] == "render_blocked_ssrf"
 
 
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
@@ -1476,6 +1478,49 @@ def test_auto_mode_discards_temp_screenshot_when_fast_wins(tmp_path: Path):
     assert doc.metadata.get("auto_mode_reason") is None
     assert isinstance(captured["path"], str)
     assert not Path(captured["path"]).exists()
+
+
+def test_render_temp_screenshot_removed_when_capture_returns_no_path(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: url,
+    )
+    use_case = IngestUseCase(playwright_available=True)
+    captured = {}
+
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+            captured["path"] = config.screenshot
+
+        def render_sync(self, url: str):
+            screenshot_path = self.config.screenshot
+            if isinstance(screenshot_path, str):
+                Path(screenshot_path).write_bytes(b"orphaned screenshot placeholder")
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Rendered</h1><p>"
+                + ("content " * 20)
+                + "</p></article></body></html>",
+            )
+
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+
+    doc = use_case.execute(
+        "https://unit.test/temp-screenshot-no-path",
+        IngestConfig(
+            mode="render",
+            timeout=3.0,
+            screenshot=True,
+            extract_metadata=False,
+            extract_links=False,
+        ),
+    )
+
+    assert doc.screenshot_path is None
+    assert isinstance(captured["path"], str)
+    assert not Path(captured["path"]).exists()
+    assert doc.metadata["fetch_metadata"].get("screenshot_temp") is None
 
 
 def test_render_temp_screenshot_results_are_not_cached():
