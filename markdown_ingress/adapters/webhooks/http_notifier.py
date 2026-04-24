@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import socket
 import ssl
 import time
@@ -11,7 +12,12 @@ from urllib.parse import urlparse
 
 import httpx
 
-from markdown_ingress.core.ssrf import normalize_hostname, validate_http_url_no_ssrf
+from markdown_ingress.core.ssrf import (
+    is_blocked_ip_address,
+    normalize_hostname,
+    normalize_ip_for_ssrf,
+    validate_http_url_no_ssrf,
+)
 
 # Errors that should NOT be retried (client-side or configuration problems).
 # Note: URLError is intentionally NOT included - it includes transient network errors
@@ -24,6 +30,16 @@ def _format_host_header(hostname: str, port: int, scheme: str) -> str:
     host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
     default_port = 443 if scheme == "https" else 80
     return f"{host}:{port}" if port != default_port else host
+
+
+def _validate_pinned_ip_for_ssrf(validated_ip: str, *, allow_local: bool = False) -> str:
+    try:
+        ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(validated_ip))
+    except ValueError as exc:
+        raise ValueError(f"validated_ip must be an IP address: {validated_ip!r}") from exc
+    if not allow_local and is_blocked_ip_address(ip_obj):
+        raise ValueError(f"validated_ip is blocked by SSRF protection: {ip_obj}")
+    return str(ip_obj)
 
 
 class HTTPWebhookNotifier:
@@ -88,9 +104,29 @@ class HTTPWebhookNotifier:
         data = json.dumps(payload).encode("utf-8")
         last_error: Exception | None = None
 
+        try:
+            validate_http_url_no_ssrf(
+                webhook_url,
+                allow_local=self.allow_local_webhooks,
+                resolve_dns=False,
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Webhook delivery blocked by SSRF protection for {webhook_url}: {exc}"
+            ) from exc
+
         # If DNS pinning is requested, use low-level HTTP connection
         if validated_ip is not None:
-            return self._notify_with_dns_pinning(webhook_url, data, validated_ip)
+            try:
+                pinned_ip = _validate_pinned_ip_for_ssrf(
+                    validated_ip,
+                    allow_local=self.allow_local_webhooks,
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Webhook delivery blocked by SSRF protection for validated_ip: {exc}"
+                ) from exc
+            return self._notify_with_dns_pinning(webhook_url, data, pinned_ip)
 
         # Defense in depth: when the caller did NOT pre-validate the IP, apply
         # SSRF checks here so that direct use of the notifier (tests, plugins)
@@ -187,6 +223,10 @@ class HTTPWebhookNotifier:
         """
         parsed = urlparse(webhook_url)
         hostname = normalize_hostname(parsed.hostname or "")
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(
+                f"Invalid webhook URL scheme: {parsed.scheme!r}. Only http and https are allowed."
+            )
         try:
             port = parsed.port
         except ValueError as exc:

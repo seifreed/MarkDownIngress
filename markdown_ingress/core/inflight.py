@@ -211,6 +211,8 @@ class InFlightRegistry:
                     # Fall through to new leader path
                 elif existing.done:
                     if existing.document is not None:
+                        existing.followers += 1
+                        self._requests.move_to_end(request_key)
                         result = existing
                         skip_new_leader = True
                     else:

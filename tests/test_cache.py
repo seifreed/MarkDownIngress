@@ -466,6 +466,27 @@ def test_memory_cache_clear(sample_document):
     assert cache.stats()["size"] == 0
 
 
+def test_memory_cache_stats_uses_lock():
+    class TrackingLock:
+        def __init__(self):
+            self.entered = False
+
+        def __enter__(self):
+            self.entered = True
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    cache = MemoryCache()
+    lock = TrackingLock()
+    cache._lock = lock
+
+    stats = cache.stats()
+
+    assert lock.entered is True
+    assert stats["size"] == 0
+
+
 def test_sqlite_cache_basic(sample_document, tmp_path):
     """Test basic SQLite cache operations"""
     db_path = tmp_path / "test.db"

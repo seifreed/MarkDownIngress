@@ -202,8 +202,9 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
         Returns:
             Dictionary with cache stats
         """
-        return {
-            "size": len(self._cache),
-            "max_entries": self.max_entries,
-            "default_ttl": self.default_ttl,
-        }
+        with self._lock:
+            return {
+                "size": len(self._cache),
+                "max_entries": self.max_entries,
+                "default_ttl": self.default_ttl,
+            }

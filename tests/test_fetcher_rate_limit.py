@@ -834,6 +834,93 @@ def test_sync_ssl_bypass_preserves_sni_after_dns_pinning(monkeypatch):
     assert kwargs["extensions"]["sni_hostname"] == b"example.com"
 
 
+def test_sync_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    calls: list[tuple[str, dict]] = []
+
+    class FakeSSLFailureError(Exception):
+        pass
+
+    class MainClient:
+        def stream(self, method: str, url: str, **kwargs):
+            raise FakeSSLFailureError("SSL handshake failed")
+
+    class StreamResponse:
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
+            self.url = url
+            self.status_code = status_code
+            self.headers = headers
+            self._body = body
+            self.is_redirect = status_code in {301, 302, 303, 307, 308}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self._body
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self._body
+
+    class BypassClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method: str, url: str, **kwargs):
+            calls.append((url, kwargs))
+            if url == "https://93.184.216.34/start":
+                return StreamResponse(url, 302, {"location": "https://next.test/step"})
+            if url == "https://93.184.216.35/step":
+                return StreamResponse(url, 302, {"location": "https://final.test/final"})
+            return StreamResponse(
+                url,
+                200,
+                {"content-type": "text/html"},
+                b"<html><body><article><p>ok</p></article></body></html>",
+            )
+
+    def validate(url: str, *, allow_local_urls: bool = False) -> str:
+        mapping = {
+            "https://example.com/start": "https://93.184.216.34/start",
+            "https://next.test/step": "https://93.184.216.35/step",
+            "https://final.test/final": "https://93.184.216.36/final",
+        }
+        return mapping[url]
+
+    bypass_client = BypassClient()
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
+        lambda *args, **kwargs: bypass_client,
+    )
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: MainClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", validate)
+
+    result = fetcher.fetch_sync("https://example.com/start")
+
+    assert result.status_code == 200
+    assert [url for url, _ in calls] == [
+        "https://93.184.216.34/start",
+        "https://93.184.216.35/step",
+        "https://93.184.216.36/final",
+    ]
+    assert calls[-1][1]["headers"]["Host"] == "final.test"
+    assert calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
+
+
 def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -926,6 +1013,96 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
     assert main_client.calls == 2
     assert bypass_client.calls == 1
     assert len(sleep_calls) == 1
+
+
+def test_async_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    calls: list[tuple[str, dict]] = []
+
+    class FakeSSLFailureError(Exception):
+        pass
+
+    class MainClient:
+        def stream(self, method: str, url: str, **kwargs):
+            raise FakeSSLFailureError("SSL handshake failed")
+
+    class AsyncStreamResponse:
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
+            self.url = url
+            self.status_code = status_code
+            self.headers = headers
+            self._body = body
+            self.is_redirect = status_code in {301, 302, 303, 307, 308}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aread(self):
+            return self._body
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield self._body
+
+    class BypassClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method: str, url: str, **kwargs):
+            calls.append((url, kwargs))
+            if url == "https://93.184.216.34/start":
+                return AsyncStreamResponse(url, 302, {"location": "https://next.test/step"})
+            if url == "https://93.184.216.35/step":
+                return AsyncStreamResponse(url, 302, {"location": "https://final.test/final"})
+            return AsyncStreamResponse(
+                url,
+                200,
+                {"content-type": "text/html"},
+                b"<html><body><article><p>ok</p></article></body></html>",
+            )
+
+    def validate(url: str, *, allow_local_urls: bool = False) -> str:
+        mapping = {
+            "https://example.com/start": "https://93.184.216.34/start",
+            "https://next.test/step": "https://93.184.216.35/step",
+            "https://final.test/final": "https://93.184.216.36/final",
+        }
+        return mapping[url]
+
+    async def get_async_client():
+        return MainClient()
+
+    bypass_client = BypassClient()
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient",
+        lambda *args, **kwargs: bypass_client,
+    )
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
+    monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", validate)
+
+    result = asyncio.run(fetcher.fetch("https://example.com/start"))
+
+    assert result.status_code == 200
+    assert [url for url, _ in calls] == [
+        "https://93.184.216.34/start",
+        "https://93.184.216.35/step",
+        "https://93.184.216.36/final",
+    ]
+    assert calls[-1][1]["headers"]["Host"] == "final.test"
+    assert calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
 
 
 def test_fetcher_sync_rechecks_circuit_breaker_after_rate_limit_sleep(monkeypatch):

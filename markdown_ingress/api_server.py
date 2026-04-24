@@ -661,6 +661,7 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
     current_pending = read_pending(current_queue)
     legacy_pending = 0
     legacy_unknown_ttl_jobs = 0
+    legacy_visible_queues = 0
     legacy_db_paths: list[str] = []
     seen_db_paths = set()
     if current_queue is not None:
@@ -668,17 +669,21 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
     pending_unknown = current_pending is None
     current_unknown_ttl_jobs = count_unknown_ttl_jobs(current_queue)
     for legacy_queue in history:
-        legacy_db_path = str(legacy_queue.db_path)
-        if legacy_db_path in seen_db_paths:
-            continue
-        seen_db_paths.add(legacy_db_path)
+        raw_legacy_db_path = getattr(legacy_queue, "db_path", None)
+        legacy_db_path = str(raw_legacy_db_path) if raw_legacy_db_path is not None else None
+        if legacy_db_path is not None:
+            if legacy_db_path in seen_db_paths:
+                continue
+            seen_db_paths.add(legacy_db_path)
         legacy_value = read_pending(legacy_queue)
         if legacy_value is None:
             pending_unknown = True
             continue
         legacy_pending += legacy_value
         legacy_unknown_ttl_jobs += count_unknown_ttl_jobs(legacy_queue)
-        legacy_db_paths.append(legacy_db_path)
+        legacy_visible_queues += 1
+        if legacy_db_path is not None:
+            legacy_db_paths.append(legacy_db_path)
 
     return {
         "status": "healthy" if current_state == "open" and not pending_unknown else "degraded",
@@ -691,7 +696,7 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         "pending_visible_total": (
             None if pending_unknown or current_pending is None else current_pending + legacy_pending
         ),
-        "legacy_visible_queues": len(legacy_db_paths),
+        "legacy_visible_queues": legacy_visible_queues,
         "legacy_db_paths": legacy_db_paths,
         "pending_unknown": pending_unknown,
         "current_unknown_ttl_jobs": current_unknown_ttl_jobs,

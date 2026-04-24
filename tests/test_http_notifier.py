@@ -58,9 +58,9 @@ def test_https_dns_pinning_uses_original_hostname_for_sni(monkeypatch):
     monkeypatch.setattr(http_notifier_module.HTTPSConnection, "getresponse", fake_getresponse)
 
     notifier = HTTPWebhookNotifier(max_retries=1, retry_delay_seconds=0.0, timeout_seconds=3.0)
-    notifier.notify("https://EXAMPLE.COM./hook?x=1", {"ok": True}, validated_ip="203.0.113.10")
+    notifier.notify("https://EXAMPLE.COM./hook?x=1", {"ok": True}, validated_ip="93.184.216.34")
 
-    assert captured["address"] == ("203.0.113.10", 443)
+    assert captured["address"] == ("93.184.216.34", 443)
     assert captured["server_hostname"] == "example.com"
     assert captured["sent"] is True
     assert captured["socket_closed"] is True
@@ -75,6 +75,20 @@ def test_https_dns_pinning_rejects_invalid_port_zero():
         assert "port" in str(exc).lower()
     else:
         raise AssertionError("expected ValueError for invalid webhook port 0")
+
+
+def test_validated_ip_path_still_rejects_non_http_scheme():
+    notifier = HTTPWebhookNotifier(max_retries=0, retry_delay_seconds=0.0, timeout_seconds=3.0)
+
+    with pytest.raises(RuntimeError, match="SSRF protection"):
+        notifier.notify("ftp://example.com/hook", {"ok": True}, validated_ip="93.184.216.34")
+
+
+def test_validated_ip_path_rejects_blocked_ip():
+    notifier = HTTPWebhookNotifier(max_retries=0, retry_delay_seconds=0.0, timeout_seconds=3.0)
+
+    with pytest.raises(RuntimeError, match="validated_ip"):
+        notifier.notify("https://example.com/hook", {"ok": True}, validated_ip="127.0.0.1")
 
 
 def test_notify_uses_validated_dns_pinned_url_when_validation_rewrites_host(monkeypatch):

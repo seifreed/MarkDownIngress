@@ -977,6 +977,33 @@ def test_inflight_followers_decremented_after_await():
     assert follower_entry.followers == 0
 
 
+def test_inflight_late_done_entry_counts_follower_before_await():
+    """A late duplicate that sees a done entry must not drive followers negative."""
+    from markdown_ingress.core.inflight import InFlightEntry, InFlightRegistry
+    from markdown_ingress.models import SafeDocument
+
+    registry = InFlightRegistry()
+    request_key = "test-late-done-entry"
+    doc = SafeDocument(
+        markdown="# hi",
+        metadata={"url": "http://example.com"},
+        token_estimate=5,
+        content_hash="abc",
+        injection_score=0.0,
+    )
+    entry = InFlightEntry(request_key=request_key)
+    entry.done = True
+    entry.document = doc
+    registry._requests[request_key] = entry
+
+    late_entry = registry.acquire(request_key)
+
+    assert late_entry is entry
+    assert entry.followers == 1
+    registry.await_result(late_entry, request_key)
+    assert entry.followers == 0
+
+
 def test_decode_content_invalid_utf8_uses_replacement_char():
     """_decode_content must use U+FFFD for invalid bytes, not corrupt via latin-1."""
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher

@@ -2032,6 +2032,30 @@ def test_snapshot_job_subsystem_counts_legacy_queue_when_current_queue_is_none(m
     assert snapshot["legacy_db_paths"] == ["artifacts/api_jobs/jobs.sqlite3"]
 
 
+def test_snapshot_job_subsystem_handles_legacy_queue_without_db_path(monkeypatch):
+    class CurrentQueue:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 2
+
+    class LegacyQueueWithoutPath:
+        def pending_count(self, cleanup_expired=True):
+            return 3
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueueWithoutPath()])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    snapshot = _snapshot_job_subsystem(start_repair=False)
+
+    assert snapshot["legacy_pending"] == 3
+    assert snapshot["pending_visible_total"] == 5
+    assert snapshot["legacy_visible_queues"] == 1
+    assert snapshot["legacy_db_paths"] == []
+
+
 def test_snapshot_job_subsystem_does_not_cleanup_expired_jobs(monkeypatch):
     class ReadOnlyQueue:
         state = "open"
