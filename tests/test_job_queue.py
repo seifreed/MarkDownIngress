@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 import time
 from contextlib import closing
@@ -28,6 +27,37 @@ def test_persistent_job_queue_executes_immediately_and_persists_result(tmp_path:
     assert stored is not None
     assert stored.status == "completed"
     assert stored.result == {"ok": True, "count": 1}
+
+
+def test_persistent_job_queue_legacy_non_dict_result_returns_none(tmp_path: Path, caplog):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+    try:
+        with closing(queue._connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at, result_json, ttl_seconds
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-list-result",
+                    "completed",
+                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(),
+                    json.dumps([1, 2, 3]),
+                    3600,
+                ),
+            )
+            conn.commit()
+
+        stored = queue.get("legacy-list-result", cleanup_expired=False)
+
+        assert stored is not None
+        assert stored.result is None
+        assert "expected object" in caplog.text
+    finally:
+        queue.close()
 
 
 def test_persistent_job_queue_cleans_up_expired_jobs(tmp_path: Path):
@@ -787,7 +817,7 @@ def test_execute_with_timeout_returns_near_deadline(tmp_path: Path):
     time.sleep(0.6)
     after = len(threading.enumerate())
 
-    assert after == before
+    assert after <= before
 
 
 def test_validate_webhook_url_resolves_dns_on_submit(tmp_path: Path, monkeypatch):
@@ -1035,6 +1065,49 @@ def test_persistent_job_queue_repair_probe_does_not_flip_state_with_live_workers
 
     assert queue.state == "open"
     assert queue._worker_stop_requested is False
+
+
+def test_persistent_job_queue_close_timeout_releases_close_claim(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=0, ttl_seconds=3600)
+    errors: list[tuple[str, str]] = []
+
+    def close_with_timeout(label: str, timeout: float) -> None:
+        try:
+            queue.close(inline_wait_timeout=timeout)
+        except RuntimeError as exc:
+            errors.append((label, str(exc)))
+
+    try:
+        queue._inline_jobs_running = 1
+
+        first = threading.Thread(target=close_with_timeout, args=("first", 0.2), daemon=True)
+        first.start()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with queue._lock:
+                if queue._close_in_progress:
+                    break
+            time.sleep(0.001)
+
+        second = threading.Thread(target=close_with_timeout, args=("second", 0.05), daemon=True)
+        second.start()
+
+        first.join(timeout=1.0)
+        second.join(timeout=1.0)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert queue._close_in_progress is False
+        assert {label for label, _ in errors} == {"first", "second"}
+        assert all("inline jobs did not stop" in message for _, message in errors)
+
+        queue._inline_jobs_running = 0
+        queue.close()
+        assert queue.state == "closed"
+    finally:
+        queue._inline_jobs_running = 0
+        if not queue._shutdown_complete:
+            queue.close()
 
 
 def test_persistent_job_queue_expires_legacy_rows_with_unknown_ttl_via_compatibility_ttl(

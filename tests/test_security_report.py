@@ -13,8 +13,12 @@ import pytest
 
 from markdown_ingress import generate_security_report
 from markdown_ingress.core.config import Config
-from markdown_ingress.models import SecurityReport
-from markdown_ingress.reporting import persist_security_report, report_filename
+from markdown_ingress.models import SafeDocument, SecurityReport
+from markdown_ingress.reporting import (
+    persist_report_for_document,
+    persist_security_report,
+    report_filename,
+)
 
 
 @pytest.fixture(scope="module")
@@ -255,6 +259,20 @@ class TestSecurityReport:
 
         with pytest.raises(ValueError, match="must be relative"):
             persist_security_report(report, str(tmp_path / "outside"), base_dir=tmp_path)
+
+    def test_persist_report_for_document_honors_base_dir(self, tmp_path):
+        doc = SafeDocument(
+            markdown="# Example",
+            metadata={"url": "https://example.com", "title": "Example"},
+            token_estimate=2,
+            content_hash="sha256:abc",
+            injection_score=0.0,
+        )
+
+        path = persist_report_for_document(doc, "nested/reports", base_dir=tmp_path)
+
+        assert path.resolve().is_relative_to(tmp_path.resolve())
+        assert path.parent == tmp_path / "nested" / "reports"
 
     def test_generate_security_report_save_failure_raises(self, local_server, tmp_path):
         with patch.object(SecurityReport, "save", side_effect=OSError("disk full")):

@@ -686,41 +686,45 @@ class PersistentJobQueue:
         if self._shutdown_complete:
             return
         claimed_close = False
-        with self._lock:
-            if self._shutdown_complete:
-                return
-            if getattr(self, "_close_in_progress", False):
-                while not self._shutdown_complete:
-                    self._state_changed.wait(timeout=0.1)
-                return
-            if preserve_state_on_inline_timeout and self._inline_jobs_running > 0:
-                raise RuntimeError("Job queue inline jobs did not stop before lease release")
-            if preserve_state_on_inline_timeout and any(
-                worker.is_alive() for worker in self._workers
-            ):
-                raise RuntimeError("Job queue workers did not stop before lease release")
-            self._close_in_progress = True
-            claimed_close = True
-            self._closing = True
-            if not self._worker_stop_requested:
-                worker_count = len(self._workers)
-                for _ in range(worker_count):
-                    self._queue.put(_STOP_WORKER)
-                self._worker_stop_requested = True
-            deadline = (
-                None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
-            )
-            while self._inline_jobs_running > 0:
-                if deadline is not None:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise RuntimeError(
-                            "Job queue inline jobs did not stop before lease release"
-                        )
-                    self._state_changed.wait(timeout=min(0.1, remaining))
-                else:
-                    self._state_changed.wait(timeout=0.1)
         try:
+            with self._lock:
+                if self._shutdown_complete:
+                    return
+                if getattr(self, "_close_in_progress", False):
+                    while (
+                        getattr(self, "_close_in_progress", False)
+                        and not self._shutdown_complete
+                    ):
+                        self._state_changed.wait(timeout=0.1)
+                    if self._shutdown_complete:
+                        return
+                if preserve_state_on_inline_timeout and self._inline_jobs_running > 0:
+                    raise RuntimeError("Job queue inline jobs did not stop before lease release")
+                if preserve_state_on_inline_timeout and any(
+                    worker.is_alive() for worker in self._workers
+                ):
+                    raise RuntimeError("Job queue workers did not stop before lease release")
+                self._close_in_progress = True
+                claimed_close = True
+                self._closing = True
+                if not self._worker_stop_requested:
+                    worker_count = len(self._workers)
+                    for _ in range(worker_count):
+                        self._queue.put(_STOP_WORKER)
+                    self._worker_stop_requested = True
+                deadline = (
+                    None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
+                )
+                while self._inline_jobs_running > 0:
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise RuntimeError(
+                                "Job queue inline jobs did not stop before lease release"
+                            )
+                        self._state_changed.wait(timeout=min(0.1, remaining))
+                    else:
+                        self._state_changed.wait(timeout=0.1)
             for worker in list(self._workers):
                 worker.join(timeout=2.0)
             still_alive = [worker for worker in self._workers if worker.is_alive()]
@@ -875,14 +879,23 @@ class PersistentJobQueue:
         return int(row["count"]) if row else 0
 
     @staticmethod
-    def _safe_json_loads(raw: str | None):
+    def _safe_json_loads(raw: str | None) -> dict[str, Any] | None:
         if raw is None:
             return None
         try:
-            return json.loads(raw)
+            result = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             _logger.warning("Corrupt result_json in job record, returning None")
             return None
+        if result is None:
+            return None
+        if not isinstance(result, dict):
+            _logger.warning(
+                "Job result_json decoded to %s, expected object; returning None",
+                type(result).__name__,
+            )
+            return None
+        return result
 
     def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
         if cleanup_expired:

@@ -206,11 +206,12 @@ def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     captured: dict[str, object] = {}
+    reserved_hosts: list[str] = []
 
     class StreamResponse:
         status_code = 200
         headers = {"content-type": "text/html"}
-        url = "https://93.184.216.34/pinned"
+        url = "https://93.184.216.34:8443/pinned"
         charset_encoding = "utf-8"
 
         def __enter__(self):
@@ -234,20 +235,27 @@ def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
     monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
-    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(
+        fetcher,
+        "_reserve_domain_slot",
+        lambda host: reserved_hosts.append(host) or 0.0,
+    )
     monkeypatch.setattr(
         fetcher,
         "_validate_url",
-        lambda url, allow_local_urls=False: "https://93.184.216.34/pinned",
+        lambda url, allow_local_urls=False: "https://93.184.216.34:8443/pinned",
     )
 
-    result = fetcher.fetch_sync("https://example.com/pinned")
+    result = fetcher.fetch_sync("https://example.com:8443/pinned")
 
     kwargs = captured["kwargs"]
     assert result.status_code == 200
-    assert captured["url"] == "https://93.184.216.34/pinned"
-    assert kwargs["headers"]["Host"] == "example.com"
+    assert captured["url"] == "https://93.184.216.34:8443/pinned"
+    assert result.url == "https://example.com:8443/pinned"
+    assert result.final_url == "https://example.com:8443/pinned"
+    assert kwargs["headers"]["Host"] == "example.com:8443"
     assert kwargs["extensions"]["sni_hostname"] == b"example.com"
+    assert reserved_hosts == ["example.com"]
 
 
 def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
@@ -287,7 +295,7 @@ def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypa
                 return StreamResponse(
                     url,
                     302,
-                    {"location": "https://target.test/final"},
+                    {"location": "https://target.test:9443/final"},
                 )
             return StreamResponse(
                 url,
@@ -297,8 +305,8 @@ def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypa
             )
 
     def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        if url == "https://target.test/final":
-            return "https://203.0.113.10/final"
+        if url == "https://target.test:9443/final":
+            return "https://203.0.113.10:9443/final"
         return url
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
@@ -309,9 +317,11 @@ def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypa
     result = fetcher.fetch_sync("https://start.test/page")
 
     assert result.status_code == 200
+    assert result.url == "https://start.test/page"
+    assert result.final_url == "https://target.test:9443/final"
     assert calls[0][0] == "https://start.test/page"
-    assert calls[1][0] == "https://203.0.113.10/final"
-    assert calls[1][1]["headers"]["Host"] == "target.test"
+    assert calls[1][0] == "https://203.0.113.10:9443/final"
+    assert calls[1][1]["headers"]["Host"] == "target.test:9443"
     assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
 
 
@@ -418,7 +428,7 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
                 return AsyncStreamResponse(
                     url,
                     302,
-                    {"location": "https://target.test/final"},
+                    {"location": "https://target.test:9443/final"},
                 )
             return AsyncStreamResponse(
                 url,
@@ -428,8 +438,8 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
             )
 
     def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        if url == "https://target.test/final":
-            return "https://203.0.113.10/final"
+        if url == "https://target.test:9443/final":
+            return "https://203.0.113.10:9443/final"
         return url
 
     async def get_async_client():
@@ -445,9 +455,11 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
     result = asyncio.run(run())
 
     assert result.status_code == 200
+    assert result.url == "https://start.test/page"
+    assert result.final_url == "https://target.test:9443/final"
     assert calls[0][0] == "https://start.test/page"
-    assert calls[1][0] == "https://203.0.113.10/final"
-    assert calls[1][1]["headers"]["Host"] == "target.test"
+    assert calls[1][0] == "https://203.0.113.10:9443/final"
+    assert calls[1][1]["headers"]["Host"] == "target.test:9443"
     assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
 
 
@@ -830,6 +842,8 @@ def test_sync_ssl_bypass_preserves_sni_after_dns_pinning(monkeypatch):
     kwargs = captured["kwargs"]
     assert result.status_code == 200
     assert captured["url"] == "https://93.184.216.34/ssl"
+    assert result.url == "https://example.com/ssl"
+    assert result.final_url == "https://example.com/ssl"
     assert kwargs["headers"]["Host"] == "example.com"
     assert kwargs["extensions"]["sni_hostname"] == b"example.com"
 
@@ -912,6 +926,8 @@ def test_sync_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
     result = fetcher.fetch_sync("https://example.com/start")
 
     assert result.status_code == 200
+    assert result.url == "https://example.com/start"
+    assert result.final_url == "https://final.test/final"
     assert [url for url, _ in calls] == [
         "https://93.184.216.34/start",
         "https://93.184.216.35/step",
@@ -1096,6 +1112,8 @@ def test_async_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
     result = asyncio.run(fetcher.fetch("https://example.com/start"))
 
     assert result.status_code == 200
+    assert result.url == "https://example.com/start"
+    assert result.final_url == "https://final.test/final"
     assert [url for url, _ in calls] == [
         "https://93.184.216.34/start",
         "https://93.184.216.35/step",

@@ -192,6 +192,15 @@ def test_batch_request_rejects_empty_reports_dir_early():
         BatchIngestRequest(urls=["https://example.com"], reports_dir="")
 
 
+@pytest.mark.parametrize("reports_dir", ["/tmp/markdown-ingress", r"C:\tmp\markdown-ingress"])
+def test_requests_reject_absolute_reports_dir_early(reports_dir: str):
+    with pytest.raises(ValueError, match="reports_dir must be relative"):
+        IngestRequest(url="https://example.com", reports_dir=reports_dir)
+
+    with pytest.raises(ValueError, match="reports_dir must be relative"):
+        BatchIngestRequest(urls=["https://example.com"], reports_dir=reports_dir)
+
+
 def test_ingest_request_rejects_unknown_extra_fields():
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         IngestRequest(url="https://example.com", ouput_profile="bogus")
@@ -1353,9 +1362,43 @@ def test_batch_job_polling_completes_and_returns_result(mock_ingest_many, monkey
         queue.close()
 
 
-def test_batch_job_polling_returns_404_for_unknown_job():
+def test_batch_job_polling_returns_404_for_unknown_job(monkeypatch):
+    class EmptyQueue:
+        state = "open"
+
+        def get(self, job_id, cleanup_expired=True):
+            return None
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", EmptyQueue())
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
     response = client.get("/api/v1/jobs/does-not-exist")
     assert response.status_code == 404
+
+
+def test_batch_job_submit_returns_503_when_queue_unavailable(monkeypatch):
+    monkeypatch.setattr(api_server, "JOB_QUEUE", None)
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+
+    response = client.post(
+        "/api/v1/jobs/batch",
+        json={"urls": ["https://example.com"], "mode": "fast"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Job queue is unavailable"
+
+
+def test_batch_job_status_returns_503_when_queue_unavailable(monkeypatch):
+    monkeypatch.setattr(api_server, "JOB_QUEUE", None)
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+
+    response = client.get("/api/v1/jobs/some-job")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Job queue is unavailable"
 
 
 def test_batch_ingest_empty_urls():

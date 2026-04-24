@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     LEGACY_UNKNOWN_TTL_SECONDS,
@@ -40,6 +40,7 @@ from markdown_ingress.api_server_env import (
     _read_positive_int_env,
 )
 from markdown_ingress.api_server_handlers import (
+    _is_queue_unavailable_error,
     handle_batch_status,
     handle_batch_submit,
     handle_extractor_comparison,
@@ -578,11 +579,7 @@ def _get_job_queue():
 
 
 def _get_job_record(job_id: str):
-    try:
-        queue = _get_job_queue()
-    except RuntimeError:
-        # Queue unavailable — treat as "job not found" so caller gets 404
-        return None
+    queue = _get_job_queue()
     unavailable_error: RuntimeError | None = None
     try:
         job = _read_job_from_queue(queue, job_id)
@@ -748,7 +745,12 @@ async def batch_ingest_endpoint(request: BatchIngestRequest):
 )
 async def batch_job_submit(request: BatchIngestRequest):
     """Queue a batch ingestion job and return a polling handle."""
-    job_queue = _get_job_queue()
+    try:
+        job_queue = _get_job_queue()
+    except Exception as exc:
+        if _is_queue_unavailable_error(exc):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise
     return await handle_batch_submit(
         request,
         ingest_many,

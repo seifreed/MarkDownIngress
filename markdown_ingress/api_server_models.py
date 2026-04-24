@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
@@ -69,6 +70,8 @@ def _validate_reports_dir_value(value: str) -> str:
         raise ValueError("reports_dir cannot be empty")
     if "\x00" in value:
         raise ValueError("reports_dir contains null byte")
+    if Path(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        raise ValueError("reports_dir must be relative")
     if ".." in value.split("/") or ".." in value.split("\\"):
         raise ValueError("reports_dir must not contain '..' path segments")
     return value

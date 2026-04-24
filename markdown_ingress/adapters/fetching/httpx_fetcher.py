@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 import httpx
@@ -56,6 +56,20 @@ _DEFAULT_MAX_HOSTS = 10000
 _DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 
 _rng = random.SystemRandom()
+
+
+class _PreparedRequest(NamedTuple):
+    transport_url: str
+    logical_url: str
+    host_header: str | None
+    sni_hostname: str | None
+    logical_host: str
+
+
+def _format_host_header(hostname: str, port: int | None, scheme: str) -> str:
+    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    default_port = 443 if scheme.lower() == "https" else 80
+    return f"{host}:{port}" if port is not None and port != default_port else host
 
 
 
@@ -224,22 +238,36 @@ class Fetcher(IFetcher):
             or response.status_code in _FOLLOW_REDIRECT_STATUS
         )
 
-    def _prepare_request_url(self, url: str) -> tuple[str, str, str | None]:
+    def _prepare_request_url(self, url: str) -> _PreparedRequest:
         logical_url = str(url).strip()
         validated_url = self._validate_url(logical_url, allow_local_urls=self.allow_local_urls)
-        original_hostname = urlsplit(logical_url).hostname or ""
+        original_parts = urlsplit(logical_url)
+        original_hostname = original_parts.hostname or ""
         validated_hostname = urlsplit(validated_url).hostname or ""
         host_header: str | None = None
+        sni_hostname: str | None = None
         if original_hostname and original_hostname != validated_hostname:
-            host_header = original_hostname
-        return validated_url, logical_url, host_header
+            host_header = _format_host_header(
+                original_hostname,
+                original_parts.port,
+                original_parts.scheme,
+            )
+            sni_hostname = original_hostname
+        logical_host = self._host_key(logical_url)
+        return _PreparedRequest(
+            validated_url,
+            logical_url,
+            host_header,
+            sni_hostname,
+            logical_host,
+        )
 
     def _prepare_redirect_url(
         self,
         response: httpx.Response,
         logical_url: str,
         redirect_count: int,
-    ) -> tuple[str, str, str | None] | None:
+    ) -> _PreparedRequest | None:
         location = response.headers.get("location")
         if not location:
             return None
@@ -629,7 +657,8 @@ class Fetcher(IFetcher):
     def _make_fetch_result(
         self,
         content: bytes,
-        url: str,
+        requested_url: str,
+        final_url: str,
         response,
         elapsed_ms: float,
         ua: str,
@@ -644,9 +673,9 @@ class Fetcher(IFetcher):
             metadata["ssl_bypass"] = True
         return FetchResult(
             html=html,
-            url=url,
+            url=requested_url,
             status_code=response.status_code,
-            final_url=str(response.url),
+            final_url=final_url,
             headers=response.headers,
             timing_ms=elapsed_ms,
             metadata=metadata,
@@ -662,10 +691,10 @@ class Fetcher(IFetcher):
             self._record_failure(response_host)
 
     async def fetch(self, url: str) -> FetchResult:
-        url, logical_url, host_header = self._prepare_request_url(url)
+        url, logical_url, host_header, sni_hostname, host = self._prepare_request_url(url)
+        requested_logical_url = logical_url
 
         last_exc: Exception | None = None
-        host = self._host_key(url)
         ssl_retried = self._is_ssl_bypass_active(host)
         verify: bool | str = not ssl_retried
         attempt = 0
@@ -685,10 +714,10 @@ class Fetcher(IFetcher):
 
             try:
                 _stream_kw: dict[str, object] = {"headers": self._build_headers(ua, host_header=host_header)}
-                if host_header:
-                    _stream_kw["extensions"] = {"sni_hostname": host_header.encode("ascii")}
+                if sni_hostname:
+                    _stream_kw["extensions"] = {"sni_hostname": sni_hostname.encode("ascii")}
                 async with client.stream("GET", url, **_stream_kw) as response:
-                    response_host = self._effective_host(str(response.url), host)
+                    response_host = host
 
                     if self._should_follow_redirect(response):
                         redirect_target = self._prepare_redirect_url(
@@ -700,8 +729,7 @@ class Fetcher(IFetcher):
                             await response.aread()
                         except Exception:
                             logger.debug("Failed to read redirect response body", exc_info=True)
-                        url, logical_url, host_header = redirect_target
-                        host = self._host_key(url)
+                        url, logical_url, host_header, sni_hostname, host = redirect_target
                         redirect_count += 1
                         continue
 
@@ -729,7 +757,15 @@ class Fetcher(IFetcher):
                         content = b"".join(chunks)
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
                         self._record_success(response_host)
-                        return self._make_fetch_result(content, url, response, elapsed_ms, ua, attempt)
+                        return self._make_fetch_result(
+                            content,
+                            requested_logical_url,
+                            logical_url,
+                            response,
+                            elapsed_ms,
+                            ua,
+                            attempt,
+                        )
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
                         retry_delay = _retry_delay_seconds(response, attempt)
@@ -766,12 +802,20 @@ class Fetcher(IFetcher):
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
-                return self._make_fetch_result(content, url, response, elapsed_ms, ua, attempt)
+                return self._make_fetch_result(
+                    content,
+                    requested_logical_url,
+                    logical_url,
+                    response,
+                    elapsed_ms,
+                    ua,
+                    attempt,
+                )
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 status_code = exc.response.status_code
-                response_host = self._effective_host(str(exc.response.url), host)
+                response_host = host
                 if status_code not in _RETRYABLE_STATUS:
                     self._record_failure(response_host)
                     raise
@@ -845,12 +889,12 @@ class Fetcher(IFetcher):
                             _ssl_stream_kw: dict[str, object] = {
                                 "headers": self._build_headers(ua, host_header=host_header)
                             }
-                            if host_header:
+                            if sni_hostname:
                                 _ssl_stream_kw["extensions"] = {
-                                    "sni_hostname": host_header.encode("ascii")
+                                    "sni_hostname": sni_hostname.encode("ascii")
                                 }
                             async with client.stream("GET", url, **_ssl_stream_kw) as response:
-                                response_host = self._effective_host(str(response.url), host)
+                                response_host = host
 
                                 if self._should_follow_redirect(response):
                                     redirect_target = self._prepare_redirect_url(
@@ -864,8 +908,7 @@ class Fetcher(IFetcher):
                                         logger.debug(
                                             "Failed to read redirect response body", exc_info=True
                                         )
-                                    url, logical_url, host_header = redirect_target
-                                    host = self._host_key(url)
+                                    url, logical_url, host_header, sni_hostname, host = redirect_target
                                     redirect_count += 1
                                     continue
 
@@ -902,7 +945,8 @@ class Fetcher(IFetcher):
                                         )
                                     return self._make_fetch_result(
                                         ssl_content,
-                                        url,
+                                        requested_logical_url,
+                                        logical_url,
                                         response,
                                         elapsed_ms,
                                         ua,
@@ -937,7 +981,8 @@ class Fetcher(IFetcher):
                                 )
                             return self._make_fetch_result(
                                 ssl_content,
-                                url,
+                                requested_logical_url,
+                                logical_url,
                                 response,
                                 elapsed_ms,
                                 ua,
@@ -950,7 +995,7 @@ class Fetcher(IFetcher):
                         ssl_last_exc = exc
                         status_code = exc.response.status_code
                         retry_delay = _retry_delay_seconds(exc.response, ssl_attempt)
-                        response_host = self._effective_host(str(exc.response.url), host)
+                        response_host = host
 
                         if (
                             status_code in _RETRYABLE_STATUS
@@ -1007,10 +1052,10 @@ class Fetcher(IFetcher):
         )  # pragma: no cover
 
     def fetch_sync(self, url: str) -> FetchResult:
-        url, logical_url, host_header = self._prepare_request_url(url)
+        url, logical_url, host_header, sni_hostname, host = self._prepare_request_url(url)
+        requested_logical_url = logical_url
 
         last_exc: Exception | None = None
-        host = self._host_key(url)
         ssl_retried = self._is_ssl_bypass_active(host)
         verify: bool | str = not ssl_retried
         attempt = 0
@@ -1032,10 +1077,10 @@ class Fetcher(IFetcher):
                 _stream_kw: dict[str, object] = {
                     "headers": self._build_headers(ua, host_header=host_header)
                 }
-                if host_header:
-                    _stream_kw["extensions"] = {"sni_hostname": host_header.encode("ascii")}
+                if sni_hostname:
+                    _stream_kw["extensions"] = {"sni_hostname": sni_hostname.encode("ascii")}
                 with client.stream("GET", url, **_stream_kw) as response:
-                    response_host = self._effective_host(str(response.url), host)
+                    response_host = host
                     if self._should_follow_redirect(response):
                         redirect_target = self._prepare_redirect_url(
                             response, logical_url, redirect_count
@@ -1046,8 +1091,7 @@ class Fetcher(IFetcher):
                             response.read()
                         except Exception:
                             logger.debug("Failed to read redirect response body", exc_info=True)
-                        url, logical_url, host_header = redirect_target
-                        host = self._host_key(url)
+                        url, logical_url, host_header, sni_hostname, host = redirect_target
                         redirect_count += 1
                         continue
 
@@ -1076,7 +1120,13 @@ class Fetcher(IFetcher):
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
                         self._record_success(response_host)
                         return self._make_fetch_result(
-                            sync_content, url, response, elapsed_ms, ua, attempt
+                            sync_content,
+                            requested_logical_url,
+                            logical_url,
+                            response,
+                            elapsed_ms,
+                            ua,
+                            attempt,
                         )
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
@@ -1114,12 +1164,20 @@ class Fetcher(IFetcher):
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
-                return self._make_fetch_result(sync_content, url, response, elapsed_ms, ua, attempt)
+                return self._make_fetch_result(
+                    sync_content,
+                    requested_logical_url,
+                    logical_url,
+                    response,
+                    elapsed_ms,
+                    ua,
+                    attempt,
+                )
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 status_code = exc.response.status_code
-                response_host = self._effective_host(str(exc.response.url), host)
+                response_host = host
                 if status_code not in _RETRYABLE_STATUS:
                     self._record_failure(response_host)
                     raise
@@ -1193,12 +1251,12 @@ class Fetcher(IFetcher):
                             _ssl_stream_kw: dict[str, object] = {
                                 "headers": self._build_headers(ua, host_header=host_header)
                             }
-                            if host_header:
+                            if sni_hostname:
                                 _ssl_stream_kw["extensions"] = {
-                                    "sni_hostname": host_header.encode("ascii")
+                                    "sni_hostname": sni_hostname.encode("ascii")
                                 }
                             with client.stream("GET", url, **_ssl_stream_kw) as response:
-                                response_host = self._effective_host(str(response.url), host)
+                                response_host = host
 
                                 if self._should_follow_redirect(response):
                                     redirect_target = self._prepare_redirect_url(
@@ -1212,8 +1270,7 @@ class Fetcher(IFetcher):
                                         logger.debug(
                                             "Failed to read redirect response body", exc_info=True
                                         )
-                                    url, logical_url, host_header = redirect_target
-                                    host = self._host_key(url)
+                                    url, logical_url, host_header, sni_hostname, host = redirect_target
                                     redirect_count += 1
                                     continue
 
@@ -1250,7 +1307,8 @@ class Fetcher(IFetcher):
                                         )
                                     return self._make_fetch_result(
                                         ssl_sync_content,
-                                        url,
+                                        requested_logical_url,
+                                        logical_url,
                                         response,
                                         elapsed_ms,
                                         ua,
@@ -1285,7 +1343,8 @@ class Fetcher(IFetcher):
                                 )
                             return self._make_fetch_result(
                                 ssl_sync_content,
-                                url,
+                                requested_logical_url,
+                                logical_url,
                                 response,
                                 elapsed_ms,
                                 ua,
@@ -1298,7 +1357,7 @@ class Fetcher(IFetcher):
                         ssl_last_exc = exc
                         status_code = exc.response.status_code
                         retry_delay = _retry_delay_seconds(exc.response, ssl_attempt)
-                        response_host = self._effective_host(str(exc.response.url), host)
+                        response_host = host
 
                         if (
                             status_code in _RETRYABLE_STATUS

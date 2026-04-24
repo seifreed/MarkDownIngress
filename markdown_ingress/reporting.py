@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 from markdown_ingress.models import SafeDocument, SecurityReport
@@ -43,7 +43,7 @@ def persist_security_report(
             f"reports_dir must not contain '..' path segments: {reports_dir!r}"
         )
     if base_dir is not None:
-        if reports_path.is_absolute():
+        if reports_path.is_absolute() or PureWindowsPath(reports_dir).is_absolute():
             raise ValueError(
                 f"reports_dir must be relative to the allowed base directory: {reports_dir!r}"
             )
@@ -104,6 +104,15 @@ def security_report_from_document(doc: SafeDocument) -> SecurityReport:
     )
 
 
-def persist_report_for_document(doc: SafeDocument, reports_dir: str) -> Path:
+def persist_report_for_document(
+    doc: SafeDocument,
+    reports_dir: str,
+    *,
+    base_dir: Path | None = None,
+) -> Path:
     """Persist a report derived from a SafeDocument."""
-    return persist_security_report(security_report_from_document(doc), reports_dir)
+    return persist_security_report(
+        security_report_from_document(doc),
+        reports_dir,
+        base_dir=base_dir,
+    )
