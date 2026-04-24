@@ -274,14 +274,24 @@ class TestSecurityReport:
         assert path.resolve().is_relative_to(tmp_path.resolve())
         assert path.parent == tmp_path / "nested" / "reports"
 
-    def test_generate_security_report_save_failure_raises(self, local_server, tmp_path):
-        with patch.object(SecurityReport, "save", side_effect=OSError("disk full")):
-            with pytest.raises(OSError, match="disk full"):
-                generate_security_report(
-                    local_server,
-                    config=Config(save_reports=True, reports_dir=str(tmp_path / "reports")),
-                    mode="fast",
-                )
+    def test_generate_security_report_save_failure_is_fail_open(
+        self,
+        local_server,
+        tmp_path,
+        caplog,
+    ):
+        with (
+            patch.object(SecurityReport, "save", side_effect=OSError("disk full")),
+            caplog.at_level("WARNING"),
+        ):
+            report = generate_security_report(
+                local_server,
+                config=Config(save_reports=True, reports_dir=str(tmp_path / "reports")),
+                mode="fast",
+            )
+
+        assert isinstance(report, SecurityReport)
+        assert "Failed to persist security report" in caplog.text
 
     def test_security_report_with_pattern_matches(self):
         """SecurityReport can store pattern match details"""

@@ -52,6 +52,7 @@ def build_renderer_config(
     block_ads: bool | None = None,
     block_trackers: bool | None = None,
     screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
+    allow_local_urls: bool | None = None,
 ) -> RenderConfig:
     """Normalize init inputs into a concrete RenderConfig."""
     if config is None:
@@ -70,6 +71,7 @@ def build_renderer_config(
             block_ads=block_ads if block_ads is not None else True,
             block_trackers=block_trackers if block_trackers is not None else True,
             screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
+            allow_local_urls=allow_local_urls,
         )
 
     from dataclasses import replace
@@ -103,6 +105,8 @@ def build_renderer_config(
         overrides["block_trackers"] = block_trackers
     if screenshot is not _SCREENSHOT_UNSET:
         overrides["screenshot"] = screenshot
+    if allow_local_urls is not None:
+        overrides["allow_local_urls"] = allow_local_urls
     return replace(config, **overrides) if overrides else config
 
 

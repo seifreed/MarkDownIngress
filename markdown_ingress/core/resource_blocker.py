@@ -10,7 +10,12 @@ import re
 import threading
 from urllib.parse import unquote, urlsplit
 
-from markdown_ingress.core.ssrf import normalize_domain_pattern
+from markdown_ingress.core.ssrf import (
+    normalize_domain_pattern,
+    normalize_hostname,
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +116,8 @@ _TRACKER_PATH_PATTERNS = [
 
 _DOMAIN_ONLY_PATTERNS = _AD_DOMAIN_ONLY_PATTERNS + _TRACKER_DOMAIN_ONLY_PATTERNS
 _PATH_PATTERNS = list(_TRACKER_PATH_PATTERNS)
+_BROWSER_INTERNAL_SCHEMES = frozenset({"about", "blob", "data"})
+_SSRF_BLOCK_REASON = "ssrf_protection"
 
 
 class ResourceBlocker:
@@ -130,6 +137,8 @@ class ResourceBlocker:
         block_ads: bool = True,
         block_trackers: bool = True,
         custom_blocked_domains: list[str] | None = None,
+        allow_local_urls: bool | None = None,
+        validate_ssrf: bool = True,
     ):
         """
         Initialize the resource blocker.
@@ -142,6 +151,8 @@ class ResourceBlocker:
             block_ads: Block advertising domains
             block_trackers: Block analytics and tracking domains
             custom_blocked_domains: Additional domain patterns to block
+            allow_local_urls: Opt-in override for SSRF checks on local/private URLs
+            validate_ssrf: Validate allowed HTTP(S) requests against SSRF destinations
         """
         self.block_images = block_images
         self.block_fonts = block_fonts
@@ -149,6 +160,8 @@ class ResourceBlocker:
         self.block_css = block_css
         self.block_ads = block_ads
         self.block_trackers = block_trackers
+        self.allow_local_urls = resolve_allow_local_urls(allow_local_urls)
+        self.validate_ssrf = validate_ssrf
 
         self._custom_blocked_domains = [
             normalized
@@ -239,6 +252,10 @@ class ResourceBlocker:
             Tuple of (should_block, matched_domain) where matched_domain is the
             domain pattern that triggered the block, or None if not blocked by domain.
         """
+        scheme_decision = self._should_block_non_http_scheme(url)
+        if scheme_decision is not None:
+            return scheme_decision
+
         # Block by resource type
         if self.block_images and resource_type == "image":
             return True, None
@@ -305,7 +322,52 @@ class ResourceBlocker:
                 if matched is not None:
                     return True, matched
 
+        ssrf_decision = self._should_block_http_for_ssrf(url)
+        if ssrf_decision is not None:
+            return ssrf_decision
+
         return False, None
+
+    def _should_block_non_http_scheme(self, url: str) -> tuple[bool, str | None] | None:
+        """Classify schemes that Playwright may route before HTTP(S) validation."""
+        if not self.validate_ssrf:
+            return None
+        try:
+            scheme = urlsplit(url).scheme.lower()
+        except Exception:
+            return True, _SSRF_BLOCK_REASON
+        if scheme in _BROWSER_INTERNAL_SCHEMES:
+            return False, None
+        if scheme not in {"http", "https"}:
+            return True, _SSRF_BLOCK_REASON
+        return None
+
+    def _should_block_http_for_ssrf(self, url: str) -> tuple[bool, str | None] | None:
+        """Block HTTP(S) requests that fail SSRF validation or require DNS pinning."""
+        if not self.validate_ssrf:
+            return None
+        try:
+            validated_url = validate_http_url_no_ssrf(
+                url,
+                allow_local=self.allow_local_urls,
+                resolve_dns=True,
+            )
+        except ValueError:
+            return True, _SSRF_BLOCK_REASON
+        if self._hostname_changed(url, validated_url):
+            return True, _SSRF_BLOCK_REASON
+        return None
+
+    @staticmethod
+    def _hostname_changed(original_url: str, validated_url: str) -> bool:
+        try:
+            original_host = urlsplit(original_url).hostname or ""
+            validated_host = urlsplit(validated_url).hostname or ""
+        except Exception:
+            return original_url != validated_url
+        if not original_host or not validated_host:
+            return original_url != validated_url
+        return normalize_hostname(original_host) != normalize_hostname(validated_host)
 
     @staticmethod
     def _match_host_patterns(domain: str, patterns: list[str]) -> str | None:

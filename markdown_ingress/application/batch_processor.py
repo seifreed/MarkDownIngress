@@ -307,7 +307,7 @@ class _BatchUrlProcessor:
                     exc.document,
                     prepared.resolved_config.reports_dir,
                 )
-            except OSError as persist_exc:
+            except Exception as persist_exc:
                 _logger.warning(
                     "Failed to persist security report for %s: %s",
                     prepared.url,

@@ -99,6 +99,86 @@ class TestResourceBlocker:
         assert "custom-blocked.example" in blocker._custom_blocked_domains
         assert blocker._should_block("script", "https://custom-blocked.example/app.js")[0] is True
 
+    @pytest.mark.parametrize("resource_type", ["xhr", "fetch", "script", "document"])
+    def test_should_block_ssrf_subresources(self, resource_type):
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+        )
+
+        should_block, reason = blocker._should_block(
+            resource_type,
+            "http://127.0.0.1:12345/private",
+        )
+
+        assert should_block is True
+        assert reason == "ssrf_protection"
+
+    def test_should_block_subresource_that_requires_dns_pinning(self, monkeypatch):
+        monkeypatch.setattr(
+            "markdown_ingress.core.resource_blocker.validate_http_url_no_ssrf",
+            lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/app.js",
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+        )
+
+        should_block, reason = blocker._should_block(
+            "script",
+            "https://rebind.example/app.js",
+        )
+
+        assert should_block is True
+        assert reason == "ssrf_protection"
+
+    @pytest.mark.parametrize(
+        "url",
+        ["about:blank", "data:text/plain,hello", "blob:https://example.com/id"],
+    )
+    def test_should_allow_browser_internal_non_network_schemes(self, url):
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+        )
+
+        assert blocker._should_block("script", url)[0] is False
+
+    @pytest.mark.parametrize(
+        "url",
+        ["ftp://example.com/file", "file:///etc/passwd", "ws://example.com/socket"],
+    )
+    def test_should_block_non_http_network_or_file_schemes(self, url):
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+        )
+
+        should_block, reason = blocker._should_block("script", url)
+
+        assert should_block is True
+        assert reason == "ssrf_protection"
+
     def test_should_block_images(self):
         """Test blocking image resources"""
         blocker = ResourceBlocker(block_images=True)

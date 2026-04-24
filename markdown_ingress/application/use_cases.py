@@ -9,6 +9,7 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from markdown_ingress.application.batch_processor import (
     _BatchContext,
@@ -66,7 +67,11 @@ from markdown_ingress.core.policy import (
     PolicyBlockedError,
     UnsupportedContentTypeError,
 )
-from markdown_ingress.core.ssrf import resolve_allow_local_urls, validate_http_url_no_ssrf
+from markdown_ingress.core.ssrf import (
+    normalize_hostname,
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf,
+)
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
@@ -87,6 +92,25 @@ except ImportError:
 
 _AUTO_RENDER_MIN_IMPROVEMENT = 0.10
 _RENDER_COST_BUDGET_CEILING: int = 5
+
+
+class RenderUrlRequiresDnsPinningError(ValueError):
+    """Raised when browser render cannot safely preserve DNS pinning semantics."""
+
+
+def _url_host(url: str) -> str | None:
+    try:
+        return urlsplit(url).hostname
+    except Exception:
+        return None
+
+
+def _url_hostname_changed(original_url: str, validated_url: str) -> bool:
+    original_host = _url_host(original_url)
+    validated_host = _url_host(validated_url)
+    if not original_host or not validated_host:
+        return original_url != validated_url
+    return normalize_hostname(original_host) != normalize_hostname(validated_host)
 
 
 def _cleanup_screenshot(path: str | None) -> None:
@@ -406,13 +430,19 @@ class _FetchPipeline:
         self._playwright_available = playwright_available
 
     @staticmethod
-    def _validate_render_url(url: str, config: IngestConfig) -> None:
+    def _validate_render_url(url: str, config: IngestConfig) -> str:
         """Apply the fetcher SSRF policy before handing a URL to Playwright."""
-        validate_http_url_no_ssrf(
+        validated_url = validate_http_url_no_ssrf(
             url,
             allow_local=resolve_allow_local_urls(config.allow_local_urls),
             resolve_dns=True,
         )
+        if _url_hostname_changed(url, validated_url):
+            raise RenderUrlRequiresDnsPinningError(
+                "Render URL requires DNS pinning that Playwright cannot safely preserve "
+                f"(SSRF protection): {url}"
+            )
+        return validated_url
 
     def execute_mode(
         self,
@@ -456,6 +486,7 @@ class _FetchPipeline:
             disable_http2=config.disable_http2,
             extreme_mode=config.extreme_mode,
             screenshot=config.screenshot,
+            allow_local_urls=config.allow_local_urls,
         )
         screenshot_temp_path: str | None = None
         screenshot_was_temp = False
@@ -635,7 +666,12 @@ class _AutoModeSelector:
         render_config = config.clone()
         render_config.mode = "render"
         render_config.extreme_mode = True
-        render_doc = self._pipeline.execute_mode(url, render_config, matched_domain_policy, budget)
+        try:
+            render_doc = self._pipeline.execute_mode(
+                url, render_config, matched_domain_policy, budget
+            )
+        except RenderUrlRequiresDnsPinningError as render_exc:
+            raise exc from render_exc
         render_doc.metadata[AUTO_MODE_USED] = "render"
         render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
         return render_doc
@@ -664,6 +700,14 @@ class _AutoModeSelector:
             render_doc = self._pipeline.execute_mode(
                 url, render_config, matched_domain_policy, budget
             )
+        except RenderUrlRequiresDnsPinningError as exc:
+            _logger.warning(
+                "auto mode: render skipped because URL cannot be safely DNS-pinned. Error: %s",
+                exc,
+            )
+            fast_doc.metadata[AUTO_MODE_USED] = "fast"
+            fast_doc.metadata[AUTO_MODE_REASON] = "render_blocked_ssrf"
+            return fast_doc
         except Exception as exc:
             if not _should_attempt_fast_degraded_fallback(exc):
                 raise

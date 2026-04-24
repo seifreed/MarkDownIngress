@@ -1125,6 +1125,68 @@ def test_render_mode_validates_url_before_playwright(monkeypatch):
     assert calls["renderer"] == 0
 
 
+def test_render_mode_rejects_url_that_requires_dns_pinning(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
+    )
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            raise AssertionError("render should not receive DNS-pinned URLs")
+
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    with pytest.raises(ValueError, match="requires DNS pinning"):
+        use_case.execute(
+            "https://rebind.example/private",
+            IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
+        )
+
+    assert calls["renderer"] == 0
+
+
+def test_auto_mode_keeps_fast_result_when_render_requires_dns_pinning(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
+    )
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fast</h1><p>short</p></article></body></html>",
+            )
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            raise AssertionError("render should be skipped when DNS pinning is required")
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    doc = use_case.execute(
+        "https://rebind.example/private",
+        IngestConfig(
+            mode="auto",
+            timeout=3.0,
+            allow_local_urls=False,
+            auto_render_threshold=10_000,
+        ),
+    )
+
+    assert calls["renderer"] == 0
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert doc.metadata["auto_mode_reason"] == "render_blocked_ssrf"
+
+
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
     use_case = IngestUseCase(playwright_available=True)
 

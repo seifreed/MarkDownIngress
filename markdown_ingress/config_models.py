@@ -183,6 +183,9 @@ class RenderConfig:
     screenshot: bool | str | None = None
     """Screenshot path (str) or True for temp file, None to disable"""
 
+    allow_local_urls: bool | None = None
+    """Opt-in override allowing local/private URLs in renderer SSRF checks"""
+
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         if self.wait_until not in VALID_WAIT_UNTIL:

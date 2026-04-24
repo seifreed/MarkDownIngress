@@ -39,7 +39,7 @@ def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> 
         return
     try:
         _persist_report_for_document(doc, config.reports_dir)
-    except OSError as exc:
+    except Exception as exc:
         logger.warning("Failed to persist security report for %s: %s", url, exc)
 
 
@@ -133,7 +133,7 @@ async def ingest_many_async_impl(
                         doc,
                         runtime_config.reports_dir,
                     )
-                except OSError as exc:
+                except Exception as exc:
                     target_url = url_list[index] if index < len(url_list) else "<unknown>"
                     logger.warning(
                         "Failed to persist security report for %s: %s",
@@ -283,5 +283,8 @@ def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     finally:
         use_case.close()
     if config.save_reports:
-        _persist_security_report(report, config.reports_dir)
+        try:
+            _persist_security_report(report, config.reports_dir)
+        except Exception as exc:
+            logger.warning("Failed to persist security report for %s: %s", url, exc)
     return report

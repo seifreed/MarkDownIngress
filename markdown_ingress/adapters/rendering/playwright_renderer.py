@@ -107,6 +107,7 @@ class Renderer(IRenderer):
         block_ads: bool | None = None,
         block_trackers: bool | None = None,
         screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
+        allow_local_urls: bool | None = None,
     ):
         config = build_renderer_config(
             self.DEFAULT_WAIT_UNTIL,
@@ -125,6 +126,7 @@ class Renderer(IRenderer):
             block_ads=block_ads,
             block_trackers=block_trackers,
             screenshot=screenshot,
+            allow_local_urls=allow_local_urls,
         )
 
         self.timeout = int(config.timeout * 1000)
@@ -144,6 +146,7 @@ class Renderer(IRenderer):
         self.block_ads = config.block_ads
         self.block_trackers = config.block_trackers
         self.screenshot = config.screenshot
+        self.allow_local_urls = config.allow_local_urls
 
     async def render(self, url: str) -> FetchResult:
         if self.extreme_mode:
@@ -177,6 +180,7 @@ class Renderer(IRenderer):
                     block_ads=self.block_ads,
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
+                    allow_local_urls=self.allow_local_urls,
                 )
                 retry_renderer = Renderer(config=retry_config)
                 result = await retry_renderer._render_with_browser(url)
@@ -233,6 +237,7 @@ class Renderer(IRenderer):
             block_media=self.block_media,
             block_ads=self.block_ads,
             block_trackers=self.block_trackers,
+            allow_local_urls=self.allow_local_urls,
         )
         await blocker.setup_blocking(page)
         return blocker
@@ -323,6 +328,7 @@ class Renderer(IRenderer):
                     block_ads=self.block_ads,
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
+                    allow_local_urls=self.allow_local_urls,
                 )
                 temp_renderer = Renderer(config=temp_config)
                 result = await temp_renderer._render_with_smart_wait(url, timeout_ms)

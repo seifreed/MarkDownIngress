@@ -578,7 +578,11 @@ def test_ingest_persists_security_report_when_requested(tmp_path):
     assert reports_dir == str(tmp_path)
 
 
-def test_ingest_save_reports_is_fail_open_on_persist_error(caplog):
+@pytest.mark.parametrize(
+    "persist_exc",
+    [OSError("disk full"), ValueError("reports_dir must not contain '..' path segments")],
+)
+def test_ingest_save_reports_is_fail_open_on_persist_error(caplog, persist_exc):
     doc = SafeDocument(
         markdown="saved",
         metadata={"url": "https://example.com", "risk_level": "LOW"},
@@ -593,7 +597,7 @@ def test_ingest_save_reports_is_fail_open_on_persist_error(caplog):
         patch("markdown_ingress.api_facade.IngestUseCase.execute", return_value=doc),
         patch(
             "markdown_ingress.api_facade._persist_report_for_document",
-            side_effect=OSError("disk full"),
+            side_effect=persist_exc,
         ),
         caplog.at_level("WARNING"),
     ):
@@ -705,6 +709,74 @@ def test_ingest_many_persists_policy_blocked_documents(tmp_path):
     assert result.successful == 0
     assert result.failed == 1
     persist.assert_called_once_with(doc, str(tmp_path))
+
+
+def test_ingest_many_save_reports_is_fail_open_on_persist_value_error(caplog):
+    doc = SafeDocument(
+        markdown="one",
+        metadata={"url": "https://example.com/1", "risk_level": "LOW"},
+        token_estimate=5,
+        content_hash="sha256:1",
+        injection_score=0.0,
+        flags=[],
+        removed_elements={"hidden_elements": 0},
+    )
+    batch_result = BatchResult(
+        total=1,
+        successful=1,
+        failed=0,
+        documents=[doc],
+        errors=[],
+    )
+
+    async def fake_execute(self, urls, config_builder, max_concurrent, on_progress):
+        return batch_result
+
+    with (
+        patch("markdown_ingress.api_facade.BatchIngestUseCase.execute", new=fake_execute),
+        patch(
+            "markdown_ingress.api_facade._persist_report_for_document",
+            side_effect=ValueError("bad reports_dir"),
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        result = ingest_many(["https://example.com/1"], save_reports=True)
+
+    assert result is batch_result
+    assert "Failed to persist security report" in caplog.text
+
+
+def test_ingest_many_policy_blocked_report_persist_value_error_is_fail_open(caplog):
+    doc = SafeDocument(
+        markdown="blocked",
+        metadata={"url": "https://example.com/blocked", "risk_level": "HIGH"},
+        token_estimate=4,
+        content_hash="sha256:blocked",
+        injection_score=1.0,
+        flags=["policy_block"],
+        removed_elements={"hidden_elements": 1},
+    )
+
+    with (
+        patch(
+            "markdown_ingress.api_facade.IngestUseCase.execute",
+            side_effect=PolicyBlockedError("blocked", document=doc),
+        ),
+        patch(
+            "markdown_ingress.application.use_cases._select_execution_strategy",
+            return_value=("local", None),
+        ),
+        patch(
+            "markdown_ingress.application.batch_processor.persist_report_for_document",
+            side_effect=ValueError("bad reports_dir"),
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        result = ingest_many(["https://example.com/blocked"], save_reports=True)
+
+    assert result.successful == 0
+    assert result.failed == 1
+    assert "Failed to persist security report" in caplog.text
 
 
 def test_build_runtime_config_rejects_explicit_empty_output_formats_override():
