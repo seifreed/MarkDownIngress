@@ -32,7 +32,7 @@ from markdown_ingress.api_server import (
     _start_job_queue_repair_loop,
     app,
 )
-from markdown_ingress.api_server_handlers import handle_sync_batch
+from markdown_ingress.api_server_handlers import handle_batch_submit, handle_sync_batch
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     DomainPolicyModel,
@@ -169,6 +169,27 @@ def test_retry_request_rejects_client_supplied_allow_local_urls():
 @pytest.mark.parametrize(
     ("factory", "kwargs"),
     [
+        (IngestRequest, {"url": "https://example.com"}),
+        (BatchIngestRequest, {"urls": ["https://example.com"]}),
+    ],
+)
+def test_request_models_reject_client_screenshot_paths(factory, kwargs):
+    with pytest.raises(ValueError, match="screenshot must be a boolean or null"):
+        factory(**kwargs, screenshot="/tmp/mdingress-owned.png")
+
+
+@pytest.mark.parametrize("screenshot", [True, False, None])
+def test_request_models_accept_server_managed_screenshot_values(screenshot: bool | None):
+    ingest_request = IngestRequest(url="https://example.com", screenshot=screenshot)
+    batch_request = BatchIngestRequest(urls=["https://example.com"], screenshot=screenshot)
+
+    assert ingest_request.screenshot is screenshot
+    assert batch_request.screenshot is screenshot
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [
         (IngestRequest, {"url": "http://127.0.0.1:8000"}),
         (BatchIngestRequest, {"urls": ["http://127.0.0.1:8000"]}),
         (RetryIngestRequest, {"url": "http://127.0.0.1:8000"}),
@@ -234,6 +255,23 @@ def test_handle_sync_batch_maps_value_error_to_http_400():
     # so the handler masks them with a generic detail.
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Invalid request"
+
+
+def test_handle_batch_submit_maps_webhook_validation_error_to_http_400():
+    request = BatchIngestRequest(
+        urls=["https://example.com"],
+        webhook_url="https://hooks.example.com/notify",
+    )
+
+    class BadQueue:
+        def submit(self, *args, **kwargs):
+            raise ValueError("webhook_url blocked: hostname resolves to blocked IP")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(handle_batch_submit(request, lambda **kwargs: None, BadQueue(), 3600))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "webhook_url blocked: hostname resolves to blocked IP"
 
 
 def test_handle_sync_batch_maps_policy_block_to_http_403():

@@ -77,6 +77,13 @@ def _validate_reports_dir_value(value: str) -> str:
     return value
 
 
+def _validate_api_screenshot_value(value: Any) -> bool | None:
+    """Restrict HTTP API screenshot requests to server-managed captures."""
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError("screenshot must be a boolean or null in the HTTP API")
+
+
 class DomainPolicyModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -128,7 +135,7 @@ class IngestRequest(BaseModel):
     chunk_size: int = Field(default=1200, ge=100, le=MAX_CHUNK_SIZE)
     chunk_overlap: int = Field(default=120, ge=0, le=5000)
     auto_render_threshold: int = Field(default=50, ge=1, le=5000)
-    screenshot: bool | str | None = None
+    screenshot: bool | None = None
     extract_metadata: bool = Field(default=True)
     extract_links: bool = Field(default=True)
     advanced_security: bool = Field(default=False)
@@ -154,6 +161,11 @@ class IngestRequest(BaseModel):
     @classmethod
     def validate_output_formats(cls, value: list[str]) -> list[str]:
         return _validate_output_formats_value(value)
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def validate_screenshot(cls, value: Any) -> bool | None:
+        return _validate_api_screenshot_value(value)
 
     @field_validator("policy_name")
     @classmethod
@@ -216,7 +228,7 @@ class BatchIngestRequest(BaseModel):
     stealth: bool = Field(default=False)
     disable_http2: bool = Field(default=False)
     extreme_mode: bool = Field(default=False)
-    screenshot: bool | str | None = None
+    screenshot: bool | None = None
     extract_metadata: bool = Field(default=True)
     extract_links: bool = Field(default=True)
     advanced_security: bool = Field(default=False)
@@ -249,6 +261,11 @@ class BatchIngestRequest(BaseModel):
     @classmethod
     def validate_output_formats(cls, value: list[str]) -> list[str]:
         return _validate_output_formats_value(value)
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def validate_screenshot(cls, value: Any) -> bool | None:
+        return _validate_api_screenshot_value(value)
 
     @field_validator("policy_name")
     @classmethod

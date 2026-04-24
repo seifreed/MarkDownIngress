@@ -66,6 +66,7 @@ from markdown_ingress.core.policy import (
     PolicyBlockedError,
     UnsupportedContentTypeError,
 )
+from markdown_ingress.core.ssrf import resolve_allow_local_urls, validate_http_url_no_ssrf
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
@@ -404,6 +405,15 @@ class _FetchPipeline:
         self._get_shared_fetcher = get_shared_fetcher
         self._playwright_available = playwright_available
 
+    @staticmethod
+    def _validate_render_url(url: str, config: IngestConfig) -> None:
+        """Apply the fetcher SSRF policy before handing a URL to Playwright."""
+        validate_http_url_no_ssrf(
+            url,
+            allow_local=resolve_allow_local_urls(config.allow_local_urls),
+            resolve_dns=True,
+        )
+
     def execute_mode(
         self,
         url: str,
@@ -540,6 +550,7 @@ class _FetchPipeline:
             raise UnsupportedContentTypeError(
                 f"URL appears to target a non-HTML resource and should not be rendered: {url}"
             )
+        self._validate_render_url(url, config)
         # The render cost budget is an upper bound on the combined
         # fast+render spend, so we only charge the delta up to 5 units.
         # A previous audit flagged this as undercharging, but the test

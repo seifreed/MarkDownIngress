@@ -90,6 +90,23 @@ def _should_attempt_render_fallback(exc: Exception) -> bool:
     if isinstance(exc, httpx.TimeoutException):
         return False
     message = str(exc).lower()
+    url_validation_tokens = (
+        "ssrf protection",
+        "blocked ip",
+        "blocked range",
+        "hostname blocked",
+        "host could not be resolved",
+        "invalid url",
+        "url cannot be empty",
+        "valid network location",
+        "valid host",
+        "invalid url scheme",
+        "invalid url port",
+        "forbidden crlf",
+        "null byte",
+    )
+    if any(token in message for token in url_validation_tokens):
+        return False
     if "name or service not known" in message or "nodename nor servname" in message:
         return False
     if "request url has an unsupported protocol" in message:

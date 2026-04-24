@@ -1029,6 +1029,62 @@ def test_auto_mode_does_not_fallback_to_render_for_not_found():
     assert calls["renderer"] == 0
 
 
+def test_auto_mode_does_not_fallback_to_render_for_ssrf_validation_error(monkeypatch):
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "false")
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            raise ValueError("URL IP in blocked range (SSRF protection): 127.0.0.1")
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            raise AssertionError("render should not be attempted after SSRF validation failure")
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        use_case.execute(
+            "http://127.0.0.1:12345/private",
+            IngestConfig(mode="auto", timeout=3.0),
+        )
+
+    assert calls["renderer"] == 0
+
+
+def test_auto_mode_still_falls_back_to_render_for_retryable_http_status():
+    use_case = IngestUseCase(playwright_available=True)
+
+    request = httpx.Request("GET", "https://example.com/protected")
+    response = httpx.Response(403, request=request)
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            raise httpx.HTTPStatusError("forbidden", request=request, response=response)
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Rendered</h1><p>"
+                + ("fallback content " * 40)
+                + "</p></article></body></html>",
+            )
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    doc = use_case.execute(
+        "https://example.com/protected",
+        IngestConfig(mode="auto", timeout=3.0),
+    )
+
+    assert doc.metadata["auto_mode_used"] == "render"
+
+
 def test_render_mode_rejects_known_download_urls_before_playwright():
     use_case = IngestUseCase(playwright_available=True)
     calls = {"renderer": 0}
@@ -1043,6 +1099,27 @@ def test_render_mode_rejects_known_download_urls_before_playwright():
     with pytest.raises(UnsupportedContentTypeError, match="non-HTML resource"):
         use_case.execute(
             "https://unit.test/files/guide.pdf", IngestConfig(mode="render", timeout=3.0)
+        )
+
+    assert calls["renderer"] == 0
+
+
+def test_render_mode_validates_url_before_playwright(monkeypatch):
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "false")
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            raise AssertionError("render should not start for SSRF-blocked URLs")
+
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        use_case.execute(
+            "http://127.0.0.1:12345/private",
+            IngestConfig(mode="render", timeout=3.0),
         )
 
     assert calls["renderer"] == 0
