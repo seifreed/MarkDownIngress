@@ -9,13 +9,15 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from markdown_ingress.application.batch_processor import (
     _BatchContext,
     _BatchUrlProcessor,
     _CostBudget,
     _PreparedBatchRequest,
+)
+from markdown_ingress.application.bootstrap import (
+    register_all_factories as _register_all_factories,
 )
 from markdown_ingress.application.fetcher_manager import (
     _ensure_fetcher_user_agent,
@@ -68,7 +70,6 @@ from markdown_ingress.core.policy import (
     UnsupportedContentTypeError,
 )
 from markdown_ingress.core.ssrf import (
-    normalize_hostname,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
 )
@@ -79,12 +80,12 @@ from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 _logger = logging.getLogger(__name__)
 
 # --- Bootstrap: register concrete adapters into core registries -----------------
-from markdown_ingress.application.bootstrap import register_all_factories as _register_all_factories
 _register_all_factories()
 # -------------------------------------------------------------------------------
 
 try:
     import playwright.async_api as _playwright_check  # noqa: F401
+
     PLAYWRIGHT_AVAILABLE: bool = True
     del _playwright_check
 except ImportError:
@@ -96,21 +97,6 @@ _RENDER_COST_BUDGET_CEILING: int = 5
 
 class RenderUrlRequiresDnsPinningError(ValueError):
     """Raised when browser render cannot safely preserve DNS pinning semantics."""
-
-
-def _url_host(url: str) -> str | None:
-    try:
-        return urlsplit(url).hostname
-    except Exception:
-        return None
-
-
-def _url_hostname_changed(original_url: str, validated_url: str) -> bool:
-    original_host = _url_host(original_url)
-    validated_host = _url_host(validated_url)
-    if not original_host or not validated_host:
-        return original_url != validated_url
-    return normalize_hostname(original_host) != normalize_hostname(validated_host)
 
 
 def _cleanup_screenshot(path: str | None) -> None:
@@ -244,12 +230,15 @@ class IngestUseCase:
         _used_default_orchestrator = orchestrator is None
         if _used_default_orchestrator:
             from markdown_ingress.core.orchestrator import IngestOrchestrator
+
             orchestrator = IngestOrchestrator()
         self.orchestrator: IIngestOrchestrator = orchestrator
         self._used_default_orchestrator = _used_default_orchestrator
         self.fetcher_factory = fetcher_factory or self._default_fetcher_factory
         self.renderer_factory = renderer_factory or self._default_renderer_factory
-        self.playwright_available = PLAYWRIGHT_AVAILABLE if playwright_available is None else playwright_available
+        self.playwright_available = (
+            PLAYWRIGHT_AVAILABLE if playwright_available is None else playwright_available
+        )
         # Lambda defers to self.fetcher_factory so reassigning it after __init__ is honoured.
         self._fetcher_mgr = _SharedFetcherManager(lambda config: self.fetcher_factory(config))
         self._cache_resolver = _CacheResolutionHelper(self.orchestrator)
@@ -257,6 +246,7 @@ class IngestUseCase:
     @staticmethod
     def _default_fetcher_factory(config: IngestConfig) -> IFetcher:
         from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
         return Fetcher(
             timeout=config.timeout,
             user_agent=getattr(config, "fetcher_user_agent", None),
@@ -269,6 +259,7 @@ class IngestUseCase:
     @staticmethod
     def _default_renderer_factory(config: RenderConfig) -> IRenderer:
         from markdown_ingress.adapters.rendering.playwright_renderer import PlaywrightRenderer
+
         return PlaywrightRenderer(config=config)
 
     def close(self) -> None:
@@ -347,14 +338,24 @@ class IngestUseCase:
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
         _ensure_fetcher_user_agent(url, resolved_config, matched_domain_policy)
         try:
-            cache_backend = cast(Cache | None, config.cache)
-            request_key = self.orchestrator.make_request_key(url, resolved_config, matched_domain_policy)
-            early_return, cache_key = self._cache_resolver.resolve(
-                url, resolved_config, matched_domain_policy, cache_backend, request_key, requested_mode
-            )
-            if early_return is not None:
-                return early_return
-            leader_slot_acquired = True
+            uses_temp_screenshot = resolved_config.screenshot is True
+            cache_backend = None if uses_temp_screenshot else cast(Cache | None, config.cache)
+            cache_key: str | None = None
+            if not uses_temp_screenshot:
+                request_key = self.orchestrator.make_request_key(
+                    url, resolved_config, matched_domain_policy
+                )
+                early_return, cache_key = self._cache_resolver.resolve(
+                    url,
+                    resolved_config,
+                    matched_domain_policy,
+                    cache_backend,
+                    request_key,
+                    requested_mode,
+                )
+                if early_return is not None:
+                    return early_return
+                leader_slot_acquired = True
             bump_ingest_stat("leader_executions")
             document = self._execute_uncached(
                 url, resolved_config, matched_domain_policy, cache_backend, cache_key
@@ -371,7 +372,9 @@ class IngestUseCase:
             record_mode_timing(requested_mode, (time.perf_counter() - started_at) * 1000.0)
 
         document.metadata[REQUESTED_MODE] = requested_mode
-        shared_count = self.orchestrator.release_inflight(request_key, document=document)
+        shared_count = 0
+        if request_key is not None and leader_slot_acquired:
+            shared_count = self.orchestrator.release_inflight(request_key, document=document)
         document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
         record_mode_result(requested_mode, success=True)
         return document
@@ -432,18 +435,13 @@ class _FetchPipeline:
 
     @staticmethod
     def _validate_render_url(url: str, config: IngestConfig) -> str:
-        """Apply the fetcher SSRF policy before handing a URL to Playwright."""
-        validated_url = validate_http_url_no_ssrf(
+        """Apply SSRF validation before handing the logical URL to Playwright."""
+        validate_http_url_no_ssrf(
             url,
             allow_local=resolve_allow_local_urls(config.allow_local_urls),
             resolve_dns=True,
         )
-        if _url_hostname_changed(url, validated_url):
-            raise RenderUrlRequiresDnsPinningError(
-                "Render URL requires DNS pinning that Playwright cannot safely preserve "
-                f"(SSRF protection): {url}"
-            )
-        return validated_url
+        return str(url).strip()
 
     def execute_mode(
         self,
@@ -515,10 +513,12 @@ class _FetchPipeline:
         budget.consume(1, "degraded fast fallback from render")
         fetcher = self._get_shared_fetcher(config)
         fetch_result = timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(url))
-        operational_flags.extend([
-            "render_failed_fast_degraded_fallback",
-            f"render_error:{type(render_exc).__name__}",
-        ])
+        operational_flags.extend(
+            [
+                "render_failed_fast_degraded_fallback",
+                f"render_error:{type(render_exc).__name__}",
+            ]
+        )
         fetch_result.metadata[EFFECTIVE_MODE] = "fast"
         fetch_result.metadata[DEGRADED_RENDER_FALLBACK] = True
         fetch_result.metadata[DEGRADED_REASON] = str(render_exc)
@@ -566,8 +566,14 @@ class _FetchPipeline:
             return fetch_result
         except Exception as render_exc:
             return self._handle_render_failure(
-                url, config, render_exc, screenshot_temp_path, screenshot_was_temp,
-                budget, timed_stage, operational_flags,
+                url,
+                config,
+                render_exc,
+                screenshot_temp_path,
+                screenshot_was_temp,
+                budget,
+                timed_stage,
+                operational_flags,
             )
 
     def _fetch_render(
@@ -582,7 +588,7 @@ class _FetchPipeline:
             raise UnsupportedContentTypeError(
                 f"URL appears to target a non-HTML resource and should not be rendered: {url}"
             )
-        self._validate_render_url(url, config)
+        render_url = self._validate_render_url(url, config)
         # The render cost budget is an upper bound on the combined
         # fast+render spend, so we only charge the delta up to 5 units.
         # A previous audit flagged this as undercharging, but the test
@@ -599,8 +605,14 @@ class _FetchPipeline:
             config
         )
         return self._run_render_or_degrade(
-            url, config, render_config, screenshot_temp_path, screenshot_was_temp,
-            budget, timed_stage, operational_flags,
+            render_url,
+            config,
+            render_config,
+            screenshot_temp_path,
+            screenshot_was_temp,
+            budget,
+            timed_stage,
+            operational_flags,
         )
 
     def _fetch_fast(
@@ -767,7 +779,9 @@ class BatchIngestUseCase:
     ) -> _PreparedBatchRequest:
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
         _ensure_fetcher_user_agent(url, resolved_config, matched_domain_policy)
-        cache_backend = cast(Cache | None, config.cache)
+        cache_backend = (
+            None if resolved_config.screenshot is True else cast(Cache | None, config.cache)
+        )
         cache_key = None
         request_identity = build_request_identity(url, resolved_config, matched_domain_policy)
         request_key = self.ingest_use_case.orchestrator.make_request_key(
@@ -910,4 +924,5 @@ class CompareExtractorsUseCase:
 
     def execute(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
         from markdown_ingress.adapters.extractors.comparison import compare_extractors
+
         return compare_extractors(html, model=model)

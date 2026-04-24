@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import importlib
 import queue as queue_module
 import threading
 import time
@@ -103,6 +104,24 @@ def test_batch_processor_applies_only_explicit_overrides_on_base_config():
     assert config.strict is False
     assert config.model == "custom"
     assert config.timeout == 10.0
+
+
+def test_batch_processor_renderer_availability_uses_playwright_constant(monkeypatch):
+    import markdown_ingress.adapters.rendering.playwright_renderer as renderer_module
+    import markdown_ingress.application.batch as batch_module
+
+    original = renderer_module.PLAYWRIGHT_INSTALLED
+    try:
+        monkeypatch.setattr(renderer_module, "PLAYWRIGHT_INSTALLED", False)
+        reloaded_batch = importlib.reload(batch_module)
+
+        processor = reloaded_batch.BatchProcessor(mode="auto")
+
+        assert reloaded_batch.RENDERER_AVAILABLE is False
+        assert processor._batch_use_case.ingest_use_case.playwright_available is False
+    finally:
+        monkeypatch.setattr(renderer_module, "PLAYWRIGHT_INSTALLED", original)
+        importlib.reload(batch_module)
 
 
 def test_batch_processor_sync(local_servers):
@@ -378,6 +397,7 @@ async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
 
         def render_sync(self, url: str):
             type(self).calls += 1
+            time.sleep(0.05)
             screenshot_path = self.config.screenshot
             assert isinstance(screenshot_path, str)
             Path(screenshot_path).write_bytes(b"temporary screenshot bytes")
@@ -413,7 +433,7 @@ async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
                 "https://unit.test/temp-screenshot-cache",
             ],
             lambda: config,
-            max_concurrent=1,
+            max_concurrent=2,
         )
 
         assert result.successful == 2
@@ -424,10 +444,10 @@ async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
         assert result.documents[0].metadata["cache_hit"] is False
         assert result.documents[1].metadata["cache_hit"] is False
         assert result.documents[0].screenshot_path != result.documents[1].screenshot_path
-        assert captured_paths == [
+        assert set(captured_paths) == {
             result.documents[0].screenshot_path,
             result.documents[1].screenshot_path,
-        ]
+        }
     finally:
         for path in captured_paths:
             Path(path).unlink(missing_ok=True)

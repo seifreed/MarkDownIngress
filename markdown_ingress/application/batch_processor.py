@@ -125,6 +125,10 @@ class _BatchUrlProcessor:
     async def _report_completion(self, url: str) -> None:
         await self._ctx.report_progress(url)
 
+    @staticmethod
+    def _uses_temp_screenshot(prepared: _PreparedBatchRequest) -> bool:
+        return prepared.resolved_config.screenshot is True
+
     async def _try_cache(self, prepared: _PreparedBatchRequest) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
@@ -276,6 +280,24 @@ class _BatchUrlProcessor:
         await self._report_completion(prepared.url)
         return True
 
+    async def _execute_direct(self, prepared: _PreparedBatchRequest) -> bool:
+        """Execute an item without batch in-flight sharing."""
+        ctx = self._ctx
+        bump_ingest_stat("leader_executions")
+        if ctx.execution_strategy == "isolated":
+            document = await self._use_case._execute_item_isolated(prepared)
+        else:
+            document = await self._use_case._execute_item_in_process(prepared)
+        document.metadata[REQUESTED_MODE] = prepared.requested_mode
+        document.metadata[INFLIGHT_DEDUPLICATED] = False
+        document.metadata[INFLIGHT_SHARED_COUNT] = 0
+        document.metadata.setdefault(CACHE_HIT, False)
+        ctx.set_document(prepared.index, document)
+        if ctx.batch_tracks_metrics:
+            record_mode_result(prepared.requested_mode, success=True)
+        await self._report_completion(prepared.url)
+        return True
+
     async def _handle_cancelled(
         self, record: _BatchInFlightRecord | None, prepared: _PreparedBatchRequest
     ) -> None:
@@ -359,6 +381,8 @@ class _BatchUrlProcessor:
             semaphore_held = True
             if await self._try_cache(prepared):
                 return True
+            if self._uses_temp_screenshot(prepared):
+                return await self._execute_direct(prepared)
             record, is_leader = await self._register_inflight(prepared)
             if not is_leader:
                 semaphore_held = False  # _handle_follower releases the semaphore

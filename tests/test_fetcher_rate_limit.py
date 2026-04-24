@@ -88,6 +88,86 @@ def test_fetcher_does_not_open_circuit_for_repeated_429_before_backoff():
     assert "circuit breaker open" not in str(second.value).lower()
 
 
+def test_fetcher_sync_does_not_open_circuit_for_client_errors():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/missing":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = b"<html><body><article><p>ok</p></article></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    server, url = _start_server(Handler)
+    try:
+        fetcher = Fetcher(
+            timeout=2.0,
+            domain_request_interval=0.0,
+            circuit_breaker_threshold=2,
+            allow_local_urls=True,
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            fetcher.fetch_sync(f"{url}/missing")
+        with pytest.raises(httpx.HTTPStatusError):
+            fetcher.fetch_sync(f"{url}/missing")
+        result = fetcher.fetch_sync(f"{url}/ok")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert result.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_fetcher_async_does_not_open_circuit_for_client_errors():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/missing":
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = b"<html><body><article><p>ok</p></article></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    server, url = _start_server(Handler)
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        circuit_breaker_threshold=2,
+        allow_local_urls=True,
+    )
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await fetcher.fetch(f"{url}/missing")
+        with pytest.raises(httpx.HTTPStatusError):
+            await fetcher.fetch(f"{url}/missing")
+        result = await fetcher.fetch(f"{url}/ok")
+    finally:
+        await fetcher.aclose()
+        server.shutdown()
+        server.server_close()
+
+    assert result.status_code == 200
+
+
 def test_fetcher_applies_extra_backoff_for_known_host_suffix():
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -132,7 +212,9 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
         "markdown_ingress.adapters.fetching.httpx_fetcher.ADVANCED_USER_AGENTS",
         ["UA-1", "UA-2"],
     )
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None
+    )
 
     retry_request = httpx.Request("GET", "https://example.com/retry")
     retry_response = httpx.Response(
@@ -758,11 +840,13 @@ def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
     sleep_calls: list[float] = []
     monkeypatch.setattr(
-        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: sleep_calls.append(seconds)
+        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep",
+        lambda seconds: sleep_calls.append(seconds),
     )
     bypass_client = BypassClient()
     monkeypatch.setattr(
-        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client", lambda *args, **kwargs: bypass_client
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
+        lambda *args, **kwargs: bypass_client,
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
@@ -1010,9 +1094,12 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 
     bypass_client = BypassClient()
     main_client = MainClient()
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(
-        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient", lambda *args, **kwargs: bypass_client
+        "markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep
+    )
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient",
+        lambda *args, **kwargs: bypass_client,
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)

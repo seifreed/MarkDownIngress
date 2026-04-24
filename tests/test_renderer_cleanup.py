@@ -248,19 +248,24 @@ async def test_advanced_stealth_rejects_local_top_level_url():
 
 
 @pytest.mark.asyncio
-async def test_advanced_stealth_rejects_dns_pinned_top_level_url(monkeypatch):
+async def test_advanced_stealth_preserves_logical_public_top_level_url(monkeypatch):
     import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
 
     def fake_validate(url: str, **_kwargs) -> str:
         assert url == "https://rebind.example/private"
         return "https://93.184.216.34/private"
 
-    async def fail_render(_url: str):
-        raise AssertionError("browser render should not start")
+    rendered_urls: list[str] = []
+
+    async def fake_render(_url: str):
+        rendered_urls.append(_url)
+        return SimpleNamespace(url=_url)
 
     monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
     renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
-    monkeypatch.setattr(renderer, "_render_with_browser", fail_render)
+    monkeypatch.setattr(renderer, "_render_with_browser", fake_render)
 
-    with pytest.raises(ValueError, match="DNS pinning"):
-        await renderer.render("https://rebind.example/private")
+    result = await renderer.render("https://rebind.example/private")
+
+    assert result.url == "https://rebind.example/private"
+    assert rendered_urls == ["https://rebind.example/private"]

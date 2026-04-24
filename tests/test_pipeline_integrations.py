@@ -111,7 +111,9 @@ def test_ingest_uses_cache(monkeypatch):
         html = "<html><body><article><h1>T</h1><p>hello world</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     doc1 = ingest("https://unit.test/cache", mode="fast", cache=cache)
     doc2 = ingest("https://unit.test/cache", mode="fast", cache=cache)
@@ -236,7 +238,9 @@ def test_ingest_cache_distinguishes_effective_output_profiles(monkeypatch):
         html = "<html><body><article><h1>T</h1><p>hello world</p><pre><code>print(1)</code></pre></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     default_doc = ingest(
         "https://unit.test/cache-profile", mode="fast", cache=cache, output_profile="default"
@@ -266,7 +270,9 @@ def test_ingest_applies_policy_action(monkeypatch):
         """
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     with pytest.raises(PolicyBlockedError) as exc_info:
         ingest("https://unit.test/policy", mode="fast", policy_name="paranoid")
@@ -306,7 +312,9 @@ def test_ingest_uses_security_engine_recommendation_for_policy_action(monkeypatc
             },
         }
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
     monkeypatch.setattr(
         "markdown_ingress.core.document_builder.SecurityEngine.analyze", fake_analyze
     )
@@ -323,7 +331,9 @@ def test_ingest_respects_language_and_security_explanation_flags(monkeypatch):
         html = '<html lang="fr-CA"><body><article><h1>Bonjour</h1><p>Salut tout le monde.</p></article></body></html>'
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     normalized = ingest(
         "https://unit.test/lang-flags",
@@ -362,7 +372,9 @@ def test_ingest_loads_plugin_patterns(monkeypatch, tmp_path: Path):
         html = "<html><body><article><p>internal leak marker</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     plugin_file = tmp_path / "security_plugin.py"
     plugin_file.write_text("""
@@ -388,7 +400,9 @@ def test_ingest_cache_invalidates_when_plugin_file_changes(monkeypatch, tmp_path
         html = "<html><body><article><p>beta_marker beta_extra_marker</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     plugin_file = tmp_path / "versioned_plugin.py"
     plugin_file.write_text("""
@@ -436,7 +450,9 @@ def test_ingest_failure_without_plugin_dirs_does_not_reference_plugin_loader(mon
         html = "<html><body><article><p>safe content</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     def raise_in_analyzer(self, *_args, **_kwargs):
         raise RuntimeError("forced analyzer failure")
@@ -454,7 +470,9 @@ def test_custom_patterns_flow_into_pattern_matches_and_explanation(monkeypatch):
         html = "<html><body><article><p>MAGIC_SENTINEL_123</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     doc = ingest(
         "https://unit.test/custom-patterns",
@@ -476,7 +494,9 @@ def test_ingest_unloads_plugins_when_processing_fails(monkeypatch, tmp_path: Pat
         html = "<html><body><article><p>trigger failure</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     unload_marker = tmp_path / "unloaded.txt"
     plugin_file = tmp_path / "failing_plugin.py"
@@ -513,7 +533,9 @@ def test_generate_security_report_uses_real_sizes_and_pattern_matches(monkeypatc
         """
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     report = generate_security_report("https://unit.test/report", mode="fast")
 
@@ -605,7 +627,9 @@ def test_inflight_is_isolated_per_use_case_instance(monkeypatch):
         html = "<html><body><article><p>isolated inflight</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     use_case_one = IngestUseCase()
     use_case_two = IngestUseCase()
@@ -775,7 +799,9 @@ def test_chunking_strategy_emits_chunks_without_exposing_blocks(monkeypatch):
         """
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     doc = ingest(
         "https://docs.example.test/chunk-only",
@@ -899,7 +925,9 @@ def test_process_level_ingest_stats_track_auto_mode(monkeypatch):
         html = "<html><body><article><h1>T</h1><p>auto page content</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     doc = ingest("https://unit.test/stats-auto", mode="auto", auto_render_threshold=1)
     stats = get_ingest_stats()
@@ -920,7 +948,9 @@ def test_process_level_ingest_stats_stay_on_requested_mode_when_policy_rewrites_
         html = "<html><body><article><h1>T</h1><p>policy rewrite</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     ingest(
         "https://docs.unit.test/requested-mode",
@@ -941,7 +971,9 @@ def test_document_metadata_preserves_requested_mode_when_policy_rewrites_mode(mo
         html = "<html><body><article><h1>T</h1><p>policy rewrite</p></article></body></html>"
         return _make_fetch_result(url, html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     doc = ingest(
         "https://docs.unit.test/requested-mode",
@@ -974,7 +1006,9 @@ def test_ingest_rejects_non_html_content_type(monkeypatch):
             "Unsupported content type for HTML ingestion: application/pdf"
         )
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     with pytest.raises(UnsupportedContentTypeError, match="application/pdf"):
         ingest("https://unit.test/report.pdf", mode="fast")
@@ -1125,31 +1159,36 @@ def test_render_mode_validates_url_before_playwright(monkeypatch):
     assert calls["renderer"] == 0
 
 
-def test_render_mode_rejects_url_that_requires_dns_pinning(monkeypatch):
+def test_render_mode_allows_public_dns_pinning_result(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
     )
     use_case = IngestUseCase(playwright_available=True)
-    calls = {"renderer": 0}
+    calls: list[str] = []
 
     class FakeRenderer:
         def render_sync(self, url: str):
-            calls["renderer"] += 1
-            raise AssertionError("render should not receive DNS-pinned URLs")
+            calls.append(url)
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Rendered</h1><p>"
+                + ("public dns content " * 40)
+                + "</p></article></body></html>",
+            )
 
     use_case.renderer_factory = lambda config: FakeRenderer()
 
-    with pytest.raises(ValueError, match="requires DNS pinning"):
-        use_case.execute(
-            "https://rebind.example/private",
-            IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
-        )
+    doc = use_case.execute(
+        "https://rebind.example/private",
+        IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
+    )
 
-    assert calls["renderer"] == 0
+    assert calls == ["https://rebind.example/private"]
+    assert doc.metadata["mode"] == "render"
 
 
-def test_auto_mode_keeps_fast_result_when_render_requires_dns_pinning(monkeypatch):
+def test_auto_mode_allows_public_dns_pinning_result_for_render(monkeypatch):
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
@@ -1167,7 +1206,12 @@ def test_auto_mode_keeps_fast_result_when_render_requires_dns_pinning(monkeypatc
     class FakeRenderer:
         def render_sync(self, url: str):
             calls["renderer"] += 1
-            raise AssertionError("render should be skipped when DNS pinning is required")
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Rendered</h1><p>"
+                + ("rendered content " * 40)
+                + "</p></article></body></html>",
+            )
 
     use_case.fetcher_factory = lambda config: FakeFetcher()
     use_case.renderer_factory = lambda config: FakeRenderer()
@@ -1182,9 +1226,8 @@ def test_auto_mode_keeps_fast_result_when_render_requires_dns_pinning(monkeypatc
         ),
     )
 
-    assert calls["renderer"] == 0
-    assert doc.metadata["auto_mode_used"] == "fast"
-    assert doc.metadata["auto_mode_reason"] == "render_blocked_ssrf"
+    assert calls["renderer"] == 1
+    assert doc.metadata["auto_mode_used"] == "render"
 
 
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
@@ -1354,6 +1397,7 @@ def test_benchmark_compare_extractors_closes_fetcher_clients(monkeypatch):
 
     try:
         from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
         benchmark = Benchmark(
             model="gpt-4",
             fetcher_factory=lambda: Fetcher(timeout=30.0),
@@ -1604,7 +1648,9 @@ def test_output_profile_rag_chunkable_emits_blocks_chunks_and_observability(
     def fake_fetch_sync(self, url: str):
         return _make_fetch_result(url, rich_article_html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     with pytest.raises(PolicyBlockedError) as exc_info:
         ingest("https://docs.example.test/guide", mode="fast", output_profile="rag_chunkable")
@@ -1647,7 +1693,9 @@ def test_domain_policy_applies_profile_thresholds_and_notes(monkeypatch, rich_ar
     def fake_fetch_sync(self, url: str):
         return _make_fetch_result(url, rich_article_html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     with pytest.raises(PolicyBlockedError) as exc_info:
         ingest(
@@ -1717,7 +1765,9 @@ def test_generate_security_report_includes_explanation_and_observability(
     def fake_fetch_sync(self, url: str):
         return _make_fetch_result(url, rich_article_html)
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     report = generate_security_report("https://docs.example.test/report", mode="fast")
 

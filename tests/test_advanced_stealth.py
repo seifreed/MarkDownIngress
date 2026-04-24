@@ -168,6 +168,18 @@ def test_advanced_stealth_config_avoids_immediate_repeat_with_explicit_signature
     ), "previous_signature must avoid immediate repetition"
 
 
+def test_advanced_stealth_allows_public_dns_pinning_result(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.rendering.advanced_stealth_renderer.validate_http_url_no_ssrf",
+        lambda url, **_kwargs: "https://93.184.216.34/page",
+    )
+    renderer = AdvancedStealthRenderer(allow_local_urls=False)
+
+    assert renderer._validate_render_url("https://rebind.example/page") == (
+        "https://rebind.example/page"
+    )
+
+
 def test_advanced_stealth_config_custom_inputs():
     """Test custom inputs are applied directly."""
     custom_ua = "Custom User Agent"

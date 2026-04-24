@@ -4,11 +4,9 @@ import asyncio
 import logging
 import time
 from typing import Any, Literal, cast
-from urllib.parse import urlsplit
 
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
-    normalize_hostname,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
 )
@@ -93,29 +91,13 @@ class AdvancedStealthRenderer:
         else:
             self.stealth_config = stealth_config
 
-    @staticmethod
-    def _hostname_changed(original_url: str, validated_url: str) -> bool:
-        try:
-            original_host = urlsplit(original_url).hostname or ""
-            validated_host = urlsplit(validated_url).hostname or ""
-        except Exception:
-            return original_url != validated_url
-        if not original_host or not validated_host:
-            return original_url != validated_url
-        return normalize_hostname(original_host) != normalize_hostname(validated_host)
-
     def _validate_render_url(self, url: str) -> str:
-        validated_url = validate_http_url_no_ssrf(
+        validate_http_url_no_ssrf(
             url,
             allow_local=self.allow_local_urls,
             resolve_dns=True,
         )
-        if self._hostname_changed(url, validated_url):
-            raise ValueError(
-                "Render URL requires DNS pinning that Playwright cannot safely preserve "
-                f"(SSRF protection): {url}"
-            )
-        return validated_url
+        return str(url).strip()
 
     async def render(self, url: str) -> FetchResult:
         """

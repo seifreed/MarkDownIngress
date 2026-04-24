@@ -76,7 +76,6 @@ def _format_host_header(hostname: str, port: int | None, scheme: str) -> str:
     return f"{host}:{port}" if port is not None and port != default_port else host
 
 
-
 def _is_supported_html_content_type(content_type: str | None) -> bool:
     if content_type is None:
         logger.debug("Response has no Content-Type header; rejecting as non-HTML")
@@ -231,9 +230,8 @@ class Fetcher(IFetcher):
         has_redirect_location = getattr(response, "has_redirect_location", None)
         if has_redirect_location is not None:
             return bool(has_redirect_location)
-        return (
-            response.status_code in _FOLLOW_REDIRECT_STATUS
-            and bool(response.headers.get("location"))
+        return response.status_code in _FOLLOW_REDIRECT_STATUS and bool(
+            response.headers.get("location")
         )
 
     def _is_redirect_response(self, response: httpx.Response) -> bool:
@@ -336,8 +334,7 @@ class Fetcher(IFetcher):
             except RuntimeError:
                 current_loop = None
             if self._async_client_lock is not None and (
-                current_loop is None
-                or self._async_client_lock_loop is not current_loop
+                current_loop is None or self._async_client_lock_loop is not current_loop
             ):
                 self._async_client_lock = None
             if self._async_client_lock is None:
@@ -672,7 +669,11 @@ class Fetcher(IFetcher):
         total_attempt: int | None = None,
     ) -> FetchResult:
         html = self._decode_content(content, response.charset_encoding)
-        metadata: dict = {"fetcher": "httpx", "user_agent": ua, "attempt": (total_attempt or attempt + 1)}
+        metadata: dict = {
+            "fetcher": "httpx",
+            "user_agent": ua,
+            "attempt": (total_attempt or attempt + 1),
+        }
         if ssl_bypass:
             metadata["ssl_bypass"] = True
         return FetchResult(
@@ -717,7 +718,9 @@ class Fetcher(IFetcher):
             start_time = time.perf_counter()
 
             try:
-                _stream_kw: dict[str, object] = {"headers": self._build_headers(ua, host_header=host_header)}
+                _stream_kw: dict[str, object] = {
+                    "headers": self._build_headers(ua, host_header=host_header)
+                }
                 if sni_hostname:
                     _stream_kw["extensions"] = {"sni_hostname": sni_hostname.encode("ascii")}
                 async with client.stream("GET", url, **_stream_kw) as response:
@@ -824,7 +827,6 @@ class Fetcher(IFetcher):
                 status_code = exc.response.status_code
                 response_host = host
                 if status_code not in _RETRYABLE_STATUS:
-                    self._record_failure(response_host)
                     raise
                 retry_delay = _retry_delay_seconds(exc.response, attempt)
                 self._handle_retryable_status(response_host, status_code, retry_delay)
@@ -908,14 +910,18 @@ class Fetcher(IFetcher):
                                         response, logical_url, redirect_count
                                     )
                                     if redirect_target is None:
-                                        raise RuntimeError("Redirect response missing Location header")
+                                        raise RuntimeError(
+                                            "Redirect response missing Location header"
+                                        )
                                     try:
                                         await response.aread()
                                     except Exception:
                                         logger.debug(
                                             "Failed to read redirect response body", exc_info=True
                                         )
-                                    url, logical_url, host_header, sni_hostname, host = redirect_target
+                                    url, logical_url, host_header, sni_hostname, host = (
+                                        redirect_target
+                                    )
                                     redirect_count += 1
                                     continue
 
@@ -930,7 +936,10 @@ class Fetcher(IFetcher):
                                             f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                         )
 
-                                if self._is_redirect_response(response) and not self.follow_redirects:
+                                if (
+                                    self._is_redirect_response(response)
+                                    and not self.follow_redirects
+                                ):
                                     ssl_chunks: list[bytes] = []
                                     ssl_total_size = 0
                                     async for chunk in response.aiter_bytes():
@@ -1192,7 +1201,6 @@ class Fetcher(IFetcher):
                 status_code = exc.response.status_code
                 response_host = host
                 if status_code not in _RETRYABLE_STATUS:
-                    self._record_failure(response_host)
                     raise
                 retry_delay = _retry_delay_seconds(exc.response, attempt)
                 self._handle_retryable_status(response_host, status_code, retry_delay)
@@ -1276,14 +1284,18 @@ class Fetcher(IFetcher):
                                         response, logical_url, redirect_count
                                     )
                                     if redirect_target is None:
-                                        raise RuntimeError("Redirect response missing Location header")
+                                        raise RuntimeError(
+                                            "Redirect response missing Location header"
+                                        )
                                     try:
                                         response.read()
                                     except Exception:
                                         logger.debug(
                                             "Failed to read redirect response body", exc_info=True
                                         )
-                                    url, logical_url, host_header, sni_hostname, host = redirect_target
+                                    url, logical_url, host_header, sni_hostname, host = (
+                                        redirect_target
+                                    )
                                     redirect_count += 1
                                     continue
 
@@ -1298,7 +1310,10 @@ class Fetcher(IFetcher):
                                             f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                         )
 
-                                if self._is_redirect_response(response) and not self.follow_redirects:
+                                if (
+                                    self._is_redirect_response(response)
+                                    and not self.follow_redirects
+                                ):
                                     ssl_sync_chunks: list[bytes] = []
                                     ssl_sync_total = 0
                                     for chunk in response.iter_bytes():

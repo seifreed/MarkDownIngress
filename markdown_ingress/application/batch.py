@@ -12,8 +12,9 @@ from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 try:
-    import markdown_ingress.adapters.rendering.playwright_renderer  # noqa: F401
-    RENDERER_AVAILABLE = True
+    from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_INSTALLED
+
+    RENDERER_AVAILABLE = PLAYWRIGHT_INSTALLED
 except ImportError:
     RENDERER_AVAILABLE = False
 

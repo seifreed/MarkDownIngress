@@ -12,7 +12,6 @@ from urllib.parse import unquote, urlsplit
 
 from markdown_ingress.core.ssrf import (
     normalize_domain_pattern,
-    normalize_hostname,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
 )
@@ -343,31 +342,18 @@ class ResourceBlocker:
         return None
 
     def _should_block_http_for_ssrf(self, url: str) -> tuple[bool, str | None] | None:
-        """Block HTTP(S) requests that fail SSRF validation or require DNS pinning."""
+        """Block HTTP(S) requests that fail SSRF validation."""
         if not self.validate_ssrf:
             return None
         try:
-            validated_url = validate_http_url_no_ssrf(
+            validate_http_url_no_ssrf(
                 url,
                 allow_local=self.allow_local_urls,
                 resolve_dns=True,
             )
         except ValueError:
             return True, _SSRF_BLOCK_REASON
-        if self._hostname_changed(url, validated_url):
-            return True, _SSRF_BLOCK_REASON
         return None
-
-    @staticmethod
-    def _hostname_changed(original_url: str, validated_url: str) -> bool:
-        try:
-            original_host = urlsplit(original_url).hostname or ""
-            validated_host = urlsplit(validated_url).hostname or ""
-        except Exception:
-            return original_url != validated_url
-        if not original_host or not validated_host:
-            return original_url != validated_url
-        return normalize_hostname(original_host) != normalize_hostname(validated_host)
 
     @staticmethod
     def _match_host_patterns(domain: str, patterns: list[str]) -> str | None:
