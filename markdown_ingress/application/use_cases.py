@@ -21,6 +21,7 @@ from markdown_ingress.application.bootstrap import (
 )
 from markdown_ingress.application.fetcher_manager import (
     _ensure_fetcher_user_agent,
+    _select_stable_fetcher_user_agent,
     _SharedFetcherManager,
 )
 from markdown_ingress.application.heuristics import (
@@ -242,6 +243,7 @@ class IngestUseCase:
         )
         # Lambda defers to self.fetcher_factory so reassigning it after __init__ is honoured.
         self._fetcher_mgr = _SharedFetcherManager(lambda config: self.fetcher_factory(config))
+        self._auto_fetcher_user_agent = _select_stable_fetcher_user_agent()
         self._cache_resolver = _CacheResolutionHelper(self.orchestrator)
 
     @staticmethod
@@ -337,7 +339,12 @@ class IngestUseCase:
         request_key: str | None = None
         leader_slot_acquired = False
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
-        _ensure_fetcher_user_agent(url, resolved_config, matched_domain_policy)
+        _ensure_fetcher_user_agent(
+            url,
+            resolved_config,
+            matched_domain_policy,
+            default_user_agent=self._auto_fetcher_user_agent,
+        )
         try:
             uses_temp_screenshot = resolved_config.screenshot is True
             cache_backend = None if uses_temp_screenshot else cast(Cache | None, config.cache)
@@ -567,7 +574,13 @@ class _FetchPipeline:
         try:
             fetch_result = timed_stage("fetch_render", lambda: renderer.render_sync(url))
             if screenshot_was_temp:
-                if fetch_result.metadata.get("screenshot_path"):
+                reported_screenshot_path = fetch_result.metadata.get("screenshot_path")
+                if reported_screenshot_path:
+                    if (
+                        screenshot_temp_path is not None
+                        and str(reported_screenshot_path) != screenshot_temp_path
+                    ):
+                        _cleanup_screenshot(screenshot_temp_path)
                     fetch_result.metadata[SCREENSHOT_TEMP] = True
                 else:
                     _cleanup_screenshot(screenshot_temp_path)
@@ -778,6 +791,11 @@ class BatchIngestUseCase:
 
     def __init__(self, ingest_use_case: IngestUseCase | None = None) -> None:
         self.ingest_use_case = ingest_use_case or IngestUseCase()
+        self._auto_fetcher_user_agent = getattr(
+            self.ingest_use_case,
+            "_auto_fetcher_user_agent",
+            _select_stable_fetcher_user_agent(),
+        )
 
     def _prepare_request(
         self,
@@ -786,7 +804,12 @@ class BatchIngestUseCase:
         config: IngestConfig,
     ) -> _PreparedBatchRequest:
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
-        _ensure_fetcher_user_agent(url, resolved_config, matched_domain_policy)
+        _ensure_fetcher_user_agent(
+            url,
+            resolved_config,
+            matched_domain_policy,
+            default_user_agent=self._auto_fetcher_user_agent,
+        )
         cache_backend = (
             None if resolved_config.screenshot is True else cast(Cache | None, config.cache)
         )

@@ -6,6 +6,7 @@ import importlib
 import queue as queue_module
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -87,6 +88,120 @@ def test_batch_processor_preserves_base_config_without_explicit_overrides():
     assert config.strict is False
     assert config.model == "custom"
     assert config.timeout == 99.0
+
+
+def test_shared_fetcher_manager_does_not_close_fetcher_used_by_concurrent_request():
+    started_a = threading.Event()
+    b_done = threading.Event()
+    closed_user_agents: list[str] = []
+
+    class RaceFetcher:
+        def __init__(self, config):
+            self.user_agent = config.fetcher_user_agent
+            self.closed = False
+
+        def fetch_sync(self, url: str):
+            if self.user_agent == "UA-A":
+                started_a.set()
+                assert b_done.wait(2.0)
+                if self.closed:
+                    raise RuntimeError("fetcher A closed during fetch")
+            else:
+                b_done.set()
+            return FetchResult(
+                html=(
+                    "<html><body><article>"
+                    f"<h1>{self.user_agent}</h1><p>content content content</p>"
+                    "</article></body></html>"
+                ),
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+        def close(self):
+            self.closed = True
+            closed_user_agents.append(self.user_agent)
+
+    use_case = IngestUseCase(
+        fetcher_factory=lambda config: RaceFetcher(config),
+        playwright_available=False,
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            future_a = pool.submit(
+                lambda: use_case.execute(
+                    "https://unit.test/a",
+                    IngestConfig(
+                        mode="fast",
+                        fetcher_user_agent="UA-A",
+                        extract_metadata=False,
+                        extract_links=False,
+                    ),
+                )
+            )
+            assert started_a.wait(2.0)
+            future_b = pool.submit(
+                lambda: use_case.execute(
+                    "https://unit.test/b",
+                    IngestConfig(
+                        mode="fast",
+                        fetcher_user_agent="UA-B",
+                        extract_metadata=False,
+                        extract_links=False,
+                    ),
+                )
+            )
+
+            doc_a = future_a.result(timeout=5.0)
+            doc_b = future_b.result(timeout=5.0)
+
+        assert "UA-A" in doc_a.markdown
+        assert "UA-B" in doc_b.markdown
+        assert closed_user_agents == []
+    finally:
+        use_case.close()
+
+
+def test_automatic_fetcher_user_agent_is_stable_across_urls_same_use_case():
+    created_user_agents: list[str] = []
+
+    class TrackingFetcher:
+        def __init__(self, config):
+            self.user_agent = config.fetcher_user_agent
+            created_user_agents.append(self.user_agent)
+
+        def fetch_sync(self, url: str):
+            return FetchResult(
+                html=(
+                    "<html><body><article>"
+                    f"<h1>{url}</h1><p>content content content</p>"
+                    "</article></body></html>"
+                ),
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+            )
+
+    use_case = IngestUseCase(
+        fetcher_factory=lambda config: TrackingFetcher(config),
+        playwright_available=False,
+    )
+    config = IngestConfig(mode="fast", extract_metadata=False, extract_links=False)
+
+    try:
+        use_case.execute("https://unit.test/path0", config)
+        use_case.execute("https://unit.test/path1", config)
+
+        assert len(created_user_agents) == 1
+        assert created_user_agents[0]
+    finally:
+        use_case.close()
 
 
 def test_batch_processor_applies_only_explicit_overrides_on_base_config():

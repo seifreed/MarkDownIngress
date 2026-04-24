@@ -770,28 +770,33 @@ def process_fetched_content(
                 security_metadata, security_engine, policy_engine, config,
             )
 
-        document = _build_safe_document(
-            config=config,
-            fetch_result=fetch_result,
-            extraction_result=extraction_result,
-            markdown=markdown,
-            structured_blocks=structured_blocks,
-            chunks=chunks,
-            chunks_requested=chunks_requested,
-            enriched_metadata=enriched_metadata,
-            links=links,
-            security_result=security_result,
-            token_estimator=token_estimator,
-            hasher=hasher,
-            scorer=scorer,
-            matched_domain_policy=matched_domain_policy,
-            operational_flags=operational_flags,
-            domain_rule_stats=domain_rule_stats,
-            extra_patterns=extra_patterns,
-            plugins_loaded=plugins_loaded,
-            stage_timings=stage_timings,
-            policy_engine=policy_engine,
-        )
+        try:
+            document = _build_safe_document(
+                config=config,
+                fetch_result=fetch_result,
+                extraction_result=extraction_result,
+                markdown=markdown,
+                structured_blocks=structured_blocks,
+                chunks=chunks,
+                chunks_requested=chunks_requested,
+                enriched_metadata=enriched_metadata,
+                links=links,
+                security_result=security_result,
+                token_estimator=token_estimator,
+                hasher=hasher,
+                scorer=scorer,
+                matched_domain_policy=matched_domain_policy,
+                operational_flags=operational_flags,
+                domain_rule_stats=domain_rule_stats,
+                extra_patterns=extra_patterns,
+                plugins_loaded=plugins_loaded,
+                stage_timings=stage_timings,
+                policy_engine=policy_engine,
+            )
+        except PolicyBlockedError as exc:
+            if exc.document is not None:
+                document = exc.document
+            raise
         return document
     finally:
         _handle_plugin_unload_errors(plugin_loader, document, fetch_result)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from collections.abc import Callable
 
 from markdown_ingress.config_models import IngestConfig
@@ -13,23 +14,37 @@ from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
 
 _logger = logging.getLogger(__name__)
 
+_DEFAULT_FETCHER_UA_SEED = "markdown-ingress:auto-fetcher-user-agent:v1"
+
+
+def _select_stable_fetcher_user_agent() -> str:
+    """Select one deterministic automatic UA for a shared ingest use case."""
+    digest = hashlib.sha256(_DEFAULT_FETCHER_UA_SEED.encode("utf-8")).digest()
+    return ADVANCED_USER_AGENTS[int.from_bytes(digest[:8], "big") % len(ADVANCED_USER_AGENTS)]
+
 
 def _ensure_fetcher_user_agent(
     url: str,
     config: IngestConfig,
     matched_domain_policy=None,
+    *,
+    default_user_agent: str | None = None,
 ) -> str:
     """Select and persist a per-request HTTP user agent.
 
     The request identity and the actual fetcher must use the same UA so cache
     and in-flight deduplication do not cross-contaminate different request
-    variants.
+    variants. Application-owned requests should pass ``default_user_agent`` so
+    the shared fetcher and per-domain state remain stable across URLs.
 
     Note: Intentionally mutates ``config.fetcher_user_agent`` in-place.
     Callers must pass a cloned config to avoid polluting shared state.
     """
     if config.fetcher_user_agent:
         return config.fetcher_user_agent
+    if default_user_agent:
+        config.fetcher_user_agent = default_user_agent
+        return default_user_agent
     identity_config = config.clone()
     identity_config.fetcher_user_agent = ""
     identity_payload = build_request_identity(url, identity_config, matched_domain_policy)
@@ -53,12 +68,12 @@ def _close_fetcher(fetcher: object) -> None:
 
 
 class _SharedFetcherManager:
-    """Manages a shared Fetcher, reusing it when config is compatible."""
+    """Manages shared Fetchers, reusing them when config is compatible."""
 
     def __init__(self, factory: Callable[[IngestConfig], IFetcher]) -> None:
         self._factory = factory
-        self._fetcher: IFetcher | None = None
-        self._config_key: tuple | None = None
+        self._fetchers: dict[tuple, IFetcher] = {}
+        self._lock = threading.Lock()
 
     @staticmethod
     def _make_config_key(config: IngestConfig) -> tuple:
@@ -73,16 +88,16 @@ class _SharedFetcherManager:
 
     def get(self, config: IngestConfig) -> IFetcher:
         key = self._make_config_key(config)
-        if self._fetcher is not None and self._config_key == key:
-            return self._fetcher
-        if self._fetcher is not None:
-            _close_fetcher(self._fetcher)
-        self._fetcher = self._factory(config)
-        self._config_key = key
-        return self._fetcher
+        with self._lock:
+            fetcher = self._fetchers.get(key)
+            if fetcher is None:
+                fetcher = self._factory(config)
+                self._fetchers[key] = fetcher
+            return fetcher
 
     def close(self) -> None:
-        if self._fetcher is not None:
-            _close_fetcher(self._fetcher)
-            self._fetcher = None
-            self._config_key = None
+        with self._lock:
+            fetchers = list(self._fetchers.values())
+            self._fetchers.clear()
+        for fetcher in fetchers:
+            _close_fetcher(fetcher)
