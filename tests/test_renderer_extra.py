@@ -441,13 +441,13 @@ def test_prepare_context_options_stealth_with_custom_ua():
 
 
 # ---------------------------------------------------------------------------
-# Line 311: _setup_resource_blocking early return when block_resources=False
+# _setup_resource_blocking keeps SSRF routing when block_resources=False
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_with_resource_blocking_disabled(local_test_server):
-    """block_resources=False causes _setup_resource_blocking to return None (line 311)."""
+    """block_resources=False disables performance blocking without disabling SSRF routing."""
     renderer = Renderer(block_resources=False, timeout=15.0, wait_until="load")
     result = await renderer.render(local_test_server)
     assert result.status_code == 200

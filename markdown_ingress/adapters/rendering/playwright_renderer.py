@@ -10,13 +10,13 @@ import threading
 import time
 from typing import Literal, cast
 
-from markdown_ingress.config_models import RenderConfig
-from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
     build_renderer_config,
     execute_render_session,
 )
+from markdown_ingress.config_models import RenderConfig
+from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.models import FetchResult
 
@@ -228,16 +228,19 @@ class Renderer(IRenderer):
         }
 
     async def _setup_resource_blocking(self, page):
-        if not self.block_resources:
-            return None
-
+        block_images = self.block_images if self.block_resources else False
+        block_fonts = self.block_fonts if self.block_resources else False
+        block_media = self.block_media if self.block_resources else False
+        block_ads = self.block_ads if self.block_resources else False
+        block_trackers = self.block_trackers if self.block_resources else False
         blocker = ResourceBlocker(
-            block_images=self.block_images,
-            block_fonts=self.block_fonts,
-            block_media=self.block_media,
-            block_ads=self.block_ads,
-            block_trackers=self.block_trackers,
+            block_images=block_images,
+            block_fonts=block_fonts,
+            block_media=block_media,
+            block_ads=block_ads,
+            block_trackers=block_trackers,
             allow_local_urls=self.allow_local_urls,
+            validate_ssrf=True,
         )
         await blocker.setup_blocking(page)
         return blocker

@@ -8,6 +8,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
+from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 from markdown_ingress.adapters.rendering.renderer_support import execute_render_session
 
 
@@ -116,6 +117,21 @@ def _install_fake_playwright(
     return page, context, browser
 
 
+def _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, page):
+    assert blocker is not None
+    assert page.routes and page.routes[0][0] == "**/*"
+    assert blocker.block_images is False
+    assert blocker.block_fonts is False
+    assert blocker.block_media is False
+    assert blocker.block_ads is False
+    assert blocker.block_trackers is False
+    assert blocker.validate_ssrf is True
+    assert blocker._should_block("document", "http://127.0.0.1/private") == (
+        True,
+        "ssrf_protection",
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_render_session_closes_context_and_browser_when_page_close_fails(monkeypatch):
     page, context, browser = _install_fake_playwright(
@@ -157,6 +173,36 @@ async def test_execute_render_session_closes_context_and_browser_when_page_close
     assert page.closed is True
     assert context.closed is True
     assert browser.closed is True
+
+
+@pytest.mark.asyncio
+async def test_renderer_block_resources_false_keeps_subresource_ssrf_blocking():
+    page = _FakePage()
+    renderer = Renderer(
+        block_resources=False,
+        allow_local_urls=False,
+        timeout=5.0,
+        wait_until="load",
+    )
+
+    blocker = await renderer._setup_resource_blocking(page)
+
+    _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, page)
+
+
+@pytest.mark.asyncio
+async def test_advanced_stealth_block_resources_false_keeps_subresource_ssrf_blocking():
+    page = _FakePage()
+    renderer = AdvancedStealthRenderer(
+        block_resources=False,
+        allow_local_urls=False,
+        timeout=5.0,
+        wait_until="load",
+    )
+
+    blocker = await renderer._setup_resource_blocking(page)
+
+    _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, page)
 
 
 @pytest.mark.asyncio

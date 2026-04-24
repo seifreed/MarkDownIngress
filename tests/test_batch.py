@@ -1,15 +1,18 @@
 """Tests for batch processing"""
 
 import asyncio
+import gc
 import queue as queue_module
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 import markdown_ingress.api as public_api
 from markdown_ingress import ingest_async, ingest_many, ingest_many_async
+from markdown_ingress.adapters.cache.memory import MemoryCache
 from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.application.subprocess_runner import (
@@ -358,6 +361,79 @@ async def test_batch_continues_when_cache_backend_fails():
 
 
 @pytest.mark.asyncio
+async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        lambda url, **_kwargs: url,
+    )
+
+    cache = MemoryCache()
+    captured_paths: list[str] = []
+
+    class FakeRenderer:
+        calls = 0
+
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            type(self).calls += 1
+            screenshot_path = self.config.screenshot
+            assert isinstance(screenshot_path, str)
+            Path(screenshot_path).write_bytes(b"temporary screenshot bytes")
+            captured_paths.append(screenshot_path)
+            return FetchResult(
+                html=(
+                    "<html><body><article><h1>Render</h1>"
+                    f"<p>call {type(self).calls}</p></article></body></html>"
+                ),
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+                metadata={"screenshot_path": screenshot_path},
+            )
+
+    use_case = IngestUseCase(playwright_available=True)
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+    config = IngestConfig(
+        mode="render",
+        screenshot=True,
+        cache=cache,
+        extract_metadata=False,
+        extract_links=False,
+    )
+
+    try:
+        result = await batch_use_case.execute(
+            [
+                "https://unit.test/temp-screenshot-cache",
+                "https://unit.test/temp-screenshot-cache",
+            ],
+            lambda: config,
+            max_concurrent=1,
+        )
+
+        assert result.successful == 2
+        assert result.failed == 0
+        assert FakeRenderer.calls == 2
+        assert result.documents[0] is not None
+        assert result.documents[1] is not None
+        assert result.documents[0].metadata["cache_hit"] is False
+        assert result.documents[1].metadata["cache_hit"] is False
+        assert result.documents[0].screenshot_path != result.documents[1].screenshot_path
+        assert captured_paths == [
+            result.documents[0].screenshot_path,
+            result.documents[1].screenshot_path,
+        ]
+    finally:
+        for path in captured_paths:
+            Path(path).unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
 async def test_batch_recovers_from_corrupt_cache_entry():
     class CorruptCache:
         def __init__(self):
@@ -663,6 +739,49 @@ async def test_batch_follower_failure_reports_progress_for_duplicate_url():
         "https://example.com/duplicate",
         "https://example.com/duplicate",
     ]
+
+
+@pytest.mark.asyncio
+async def test_batch_leader_failure_without_followers_does_not_log_unretrieved_future():
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    contexts = []
+
+    def capture_context(_loop, context):
+        contexts.append(context)
+
+    class FailingIngestUseCase:
+        orchestrator = IngestOrchestrator()
+
+        def execute(self, url: str, config):
+            raise RuntimeError("leader failed")
+
+        def uses_default_runtime_dependencies(self):
+            return False
+
+    loop.set_exception_handler(capture_context)
+    try:
+        use_case = BatchIngestUseCase(ingest_use_case=FailingIngestUseCase())
+        result = await use_case.execute(
+            ["https://example.com/leader"],
+            config_builder=lambda: IngestConfig(mode="fast"),
+            max_concurrent=1,
+        )
+        await asyncio.sleep(0)
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert result.successful == 0
+    assert result.failed == 1
+    assert len(result.errors) == 1
+    assert result.errors[0].error_type == "RuntimeError"
+    assert [
+        context
+        for context in contexts
+        if context.get("message") == "Future exception was never retrieved"
+    ] == []
 
 
 def test_batch_result_stats():

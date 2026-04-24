@@ -170,9 +170,7 @@ class _BatchUrlProcessor:
         async with ctx.batch_inflight_lock:
             record = ctx.batch_inflight.get(prepared.request_key)
             if record is None:
-                record = _BatchInFlightRecord(
-                    future=asyncio.get_running_loop().create_future()
-                )
+                record = _BatchInFlightRecord(future=asyncio.get_running_loop().create_future())
                 ctx.batch_inflight[prepared.request_key] = record
                 return record, True
             record.followers += 1
@@ -235,7 +233,12 @@ class _BatchUrlProcessor:
             document = await self._use_case._execute_item_isolated(prepared)
         else:
             document = await self._use_case._execute_item_in_process(prepared)
-        if prepared.cache_backend is not None and prepared.cache_key is not None:
+        should_write_cache = prepared.resolved_config.screenshot is not True
+        if (
+            should_write_cache
+            and prepared.cache_backend is not None
+            and prepared.cache_key is not None
+        ):
             try:
                 prepared.cache_backend.set(
                     prepared.cache_key,
@@ -316,7 +319,7 @@ class _BatchUrlProcessor:
         if record is not None:
             async with ctx.batch_inflight_lock:
                 try:
-                    if not record.future.done():
+                    if record.followers > 0 and not record.future.done():
                         record.future.set_exception(_copy_batch_exception(exc))
                 except asyncio.InvalidStateError:
                     _logger.warning(
