@@ -6,8 +6,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (
+    AdvancedStealthRenderer,
+    render_with_advanced_stealth,
+    render_with_advanced_stealth_sync,
+)
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 from markdown_ingress.config_models import RenderConfig
+from markdown_ingress.core.stealth import get_advanced_stealth_config
 
 pytest.importorskip("playwright")
 
@@ -312,13 +318,13 @@ async def test_wait_for_content(local_test_server):
 async def test_advanced_stealth_render(local_test_server):
     """AdvancedStealthRenderer.render() exercises _render_with_browser (lines 152-239)."""
     pytest.importorskip("playwright")
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 
     renderer = AdvancedStealthRenderer(
         timeout=15.0,
         wait_until="load",
         headless=True,
         randomize_fingerprint=True,
+        allow_local_urls=True,
     )
     result = await renderer.render(local_test_server)
     assert result.status_code == 200
@@ -329,16 +335,16 @@ async def test_advanced_stealth_render(local_test_server):
 def test_advanced_stealth_render_sync(local_test_server):
     """AdvancedStealthRenderer.render_sync() exercises line 251."""
     pytest.importorskip("playwright")
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 
-    renderer = AdvancedStealthRenderer(timeout=15.0, wait_until="load", headless=True)
+    renderer = AdvancedStealthRenderer(
+        timeout=15.0, wait_until="load", headless=True, allow_local_urls=True
+    )
     result = renderer.render_sync(local_test_server)
     assert result.status_code == 200
 
 
 def test_advanced_stealth_init_no_config():
     """AdvancedStealthRenderer init with stealth_config=None uses randomize path (lines 99-102)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 
     renderer = AdvancedStealthRenderer(randomize_fingerprint=False)
     assert renderer.stealth_config is not None
@@ -347,8 +353,6 @@ def test_advanced_stealth_init_no_config():
 
 def test_advanced_stealth_init_with_config():
     """AdvancedStealthRenderer init with explicit stealth_config (lines 101-102)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
-    from markdown_ingress.core.stealth import get_advanced_stealth_config
 
     config = get_advanced_stealth_config(randomize=False)
     renderer = AdvancedStealthRenderer(stealth_config=config)
@@ -357,17 +361,19 @@ def test_advanced_stealth_init_with_config():
 
 async def test_advanced_stealth_convenience_function(local_test_server):
     """render_with_advanced_stealth() convenience function (lines 280-284)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import render_with_advanced_stealth
 
-    result = await render_with_advanced_stealth(local_test_server, timeout=15.0, headless=True)
+    result = await render_with_advanced_stealth(
+        local_test_server, timeout=15.0, headless=True, allow_local_urls=True
+    )
     assert result.status_code == 200
 
 
 def test_advanced_stealth_convenience_sync(local_test_server):
     """render_with_advanced_stealth_sync() convenience function (line 307)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import render_with_advanced_stealth_sync
 
-    result = render_with_advanced_stealth_sync(local_test_server, timeout=15.0, headless=True)
+    result = render_with_advanced_stealth_sync(
+        local_test_server, timeout=15.0, headless=True, allow_local_urls=True
+    )
     assert result.status_code == 200
 
 
@@ -529,7 +535,6 @@ async def test_wait_for_content_selector_miss_and_function_timeout():
 @pytest.mark.asyncio
 async def test_advanced_stealth_exception_path():
     """Connection-refused URL triggers the except block (lines 123-125, 140)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 
     renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
     with pytest.raises(Exception):
@@ -538,8 +543,9 @@ async def test_advanced_stealth_exception_path():
 
 def test_advanced_stealth_disable_http2_arg(local_test_server):
     """disable_http2=True adds --disable-http2 browser arg (line 169)."""
-    from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 
-    renderer = AdvancedStealthRenderer(timeout=15.0, disable_http2=True, headless=True)
+    renderer = AdvancedStealthRenderer(
+        timeout=15.0, disable_http2=True, headless=True, allow_local_urls=True
+    )
     result = renderer.render_sync(local_test_server)
     assert result.status_code == 200

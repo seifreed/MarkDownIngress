@@ -1160,6 +1160,36 @@ def test_ingest_endpoint_returns_415_for_non_html_render_target(mock_ingest):
     assert response.json()["detail"] == "non-html target"
 
 
+@pytest.mark.parametrize(
+    ("upstream_status", "expected_status"),
+    [
+        (404, 404),
+        (503, 502),
+    ],
+)
+@patch("markdown_ingress.api_server.ingest")
+def test_ingest_endpoint_maps_upstream_http_status_errors(
+    mock_ingest,
+    upstream_status: int,
+    expected_status: int,
+):
+    request = httpx.Request("GET", "https://example.com/missing")
+    response = httpx.Response(upstream_status, request=request)
+    mock_ingest.side_effect = httpx.HTTPStatusError(
+        f"upstream status {upstream_status}",
+        request=request,
+        response=response,
+    )
+
+    api_response = client.post(
+        "/api/v1/ingest",
+        json={"url": "https://example.com/missing", "mode": "fast"},
+    )
+
+    assert api_response.status_code == expected_status
+    assert api_response.json()["detail"] == "Upstream fetch returned an HTTP error"
+
+
 @patch("markdown_ingress.api_server.generate_security_report")
 def test_security_report_endpoint_returns_415_for_non_html_render_target(mock_report):
     mock_report.side_effect = UnsupportedContentTypeError("non-html target")

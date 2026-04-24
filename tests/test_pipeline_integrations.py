@@ -1434,6 +1434,54 @@ def test_auto_mode_discards_temp_screenshot_when_fast_wins(tmp_path: Path):
     assert not Path(captured["path"]).exists()
 
 
+def test_render_temp_screenshot_results_are_not_cached():
+    cache = MemoryCache()
+    use_case = IngestUseCase(playwright_available=True)
+    captured_paths: list[str] = []
+
+    class FakeRenderer:
+        calls = 0
+
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            type(self).calls += 1
+            screenshot_path = self.config.screenshot
+            assert isinstance(screenshot_path, str)
+            Path(screenshot_path).write_bytes(b"temporary screenshot bytes")
+            captured_paths.append(screenshot_path)
+            result = _make_fetch_result(
+                url,
+                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p></article></body></html>",
+            )
+            result.metadata["screenshot_path"] = screenshot_path
+            return result
+
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+
+    try:
+        config = IngestConfig(
+            mode="render",
+            screenshot=True,
+            cache=cache,
+            extract_metadata=False,
+            extract_links=False,
+        )
+        first = use_case.execute("https://example.com/temp-screenshot-cache", config)
+        second = use_case.execute("https://example.com/temp-screenshot-cache", config)
+
+        assert FakeRenderer.calls == 2
+        assert first.metadata["cache_hit"] is False
+        assert second.metadata["cache_hit"] is False
+        assert first.screenshot_path != second.screenshot_path
+        assert captured_paths == [first.screenshot_path, second.screenshot_path]
+    finally:
+        for path in captured_paths:
+            if path:
+                Path(path).unlink(missing_ok=True)
+
+
 @pytest.mark.asyncio
 async def test_batch_success_does_not_cancel_internal_inflight_future(monkeypatch):
     loop = asyncio.get_running_loop()

@@ -422,7 +422,10 @@ def _start_server(handler_class, host="127.0.0.1", port=0):
 
 
 class _PdfHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
     def do_GET(self):
+        type(self).request_count += 1
         payload = b"%PDF-1.4\\n1 0 obj\\n<< /Type /Catalog >>\\nendobj\\n"
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
@@ -484,8 +487,25 @@ class _RateLimitedBurstHandler(BaseHTTPRequestHandler):
         return
 
 
+class _LargeHtmlHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
+    def do_GET(self):
+        type(self).request_count += 1
+        payload = b"<html><body>" + b"x" * 128 + b"</body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, f, *a):
+        return
+
+
 def test_fetcher_rejects_pdf_content_type():
     """fetcher.py: real PDF response should fail early with UnsupportedContentTypeError."""
+    _PdfHandler.request_count = 0
     server, port = _start_server(_PdfHandler)
     try:
         from markdown_ingress.adapters.fetching.httpx_fetcher import (
@@ -496,6 +516,49 @@ def test_fetcher_rejects_pdf_content_type():
         fetcher = Fetcher(timeout=5.0)
         with pytest.raises(UnsupportedContentTypeError, match="application/pdf"):
             fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+        assert _PdfHandler.request_count == 1
+        assert fetcher._failures_by_host == {}
+        assert fetcher._open_until_by_host == {}
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_fetcher_async_rejects_pdf_content_type_without_retry_or_circuit_breaker():
+    _PdfHandler.request_count = 0
+    server, port = _start_server(_PdfHandler)
+    from markdown_ingress.adapters.fetching.httpx_fetcher import (
+        Fetcher,
+        UnsupportedContentTypeError,
+    )
+
+    fetcher = Fetcher(timeout=5.0)
+    try:
+        with pytest.raises(UnsupportedContentTypeError, match="application/pdf"):
+            await fetcher.fetch(f"http://127.0.0.1:{port}/")
+        assert _PdfHandler.request_count == 1
+        assert fetcher._failures_by_host == {}
+        assert fetcher._open_until_by_host == {}
+    finally:
+        await fetcher.aclose()
+        server.shutdown()
+
+
+def test_fetcher_response_size_limit_is_not_retried_or_recorded_as_domain_failure():
+    _LargeHtmlHandler.request_count = 0
+    server, port = _start_server(_LargeHtmlHandler)
+    try:
+        from markdown_ingress.adapters.fetching.httpx_fetcher import (
+            Fetcher,
+            ResponseSizeLimitError,
+        )
+
+        fetcher = Fetcher(timeout=5.0, max_response_size=32)
+        with pytest.raises(ResponseSizeLimitError, match="exceeds max_response_size"):
+            fetcher.fetch_sync(f"http://127.0.0.1:{port}/")
+        assert _LargeHtmlHandler.request_count == 1
+        assert fetcher._failures_by_host == {}
+        assert fetcher._open_until_by_host == {}
     finally:
         server.shutdown()
 

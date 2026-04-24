@@ -57,6 +57,16 @@ def _raise_runtime_http_error(exc: Exception) -> NoReturn:
         raise HTTPException(status_code=429, detail=str(exc))
     if isinstance(exc, (httpx.InvalidURL, httpx.UnsupportedProtocol)):
         raise HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if 400 <= status_code < 500:
+            mapped_status = status_code
+        else:
+            mapped_status = 502
+        raise HTTPException(
+            status_code=mapped_status,
+            detail="Upstream fetch returned an HTTP error",
+        )
     if isinstance(exc, ValueError):
         # Never echo ValueError message back — it often carries internal
         # hostnames, IP addresses, or filesystem paths (e.g. SSRF protection).

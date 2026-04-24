@@ -26,9 +26,13 @@ class _FakePage(_FakeCloseable):
     def __init__(self, *, close_error: Exception | None = None) -> None:
         super().__init__(close_error=close_error)
         self.url = "https://example.com/final"
+        self.routes: list[tuple[str, object]] = []
 
     async def goto(self, _url: str, **_kwargs):
         return SimpleNamespace(status=200, headers={"content-type": "text/html"})
+
+    async def route(self, pattern: str, handler) -> None:
+        self.routes.append((pattern, handler))
 
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
@@ -174,6 +178,7 @@ async def test_advanced_stealth_closes_browser_when_context_close_fails(monkeypa
     result = await renderer._render_with_browser("https://example.com")
 
     assert result.status_code == 200
+    assert page.routes and page.routes[0][0] == "**/*"
     assert context.closed is True
     assert browser.closed is True
 
@@ -186,3 +191,30 @@ async def test_advanced_stealth_launch_failure_preserves_original_error(monkeypa
 
     with pytest.raises(RuntimeError, match="launch failed"):
         await renderer._render_with_browser("https://example.com")
+
+
+@pytest.mark.asyncio
+async def test_advanced_stealth_rejects_local_top_level_url():
+    renderer = AdvancedStealthRenderer(timeout=5.0, headless=True, allow_local_urls=False)
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        await renderer.render("http://127.0.0.1/private")
+
+
+@pytest.mark.asyncio
+async def test_advanced_stealth_rejects_dns_pinned_top_level_url(monkeypatch):
+    import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
+
+    def fake_validate(url: str, **_kwargs) -> str:
+        assert url == "https://rebind.example/private"
+        return "https://93.184.216.34/private"
+
+    async def fail_render(_url: str):
+        raise AssertionError("browser render should not start")
+
+    monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
+    renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
+    monkeypatch.setattr(renderer, "_render_with_browser", fail_render)
+
+    with pytest.raises(ValueError, match="DNS pinning"):
+        await renderer.render("https://rebind.example/private")

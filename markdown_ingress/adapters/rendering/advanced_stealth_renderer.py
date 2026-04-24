@@ -4,7 +4,14 @@ import asyncio
 import logging
 import time
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
+from markdown_ingress.core.resource_blocker import ResourceBlocker
+from markdown_ingress.core.ssrf import (
+    normalize_hostname,
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf,
+)
 from markdown_ingress.core.stealth import (
     AdvancedStealthConfig,
     get_advanced_context_options,
@@ -59,17 +66,56 @@ class AdvancedStealthRenderer:
         randomize_fingerprint: bool = True,
         disable_http2: bool = False,
         stealth_config: AdvancedStealthConfig | None = None,
+        *,
+        allow_local_urls: bool | None = None,
+        block_resources: bool = True,
+        block_images: bool = True,
+        block_fonts: bool = True,
+        block_media: bool = True,
+        block_ads: bool = True,
+        block_trackers: bool = True,
     ):
         self.timeout = int(timeout * 1000)  # Convert to milliseconds
         self.wait_until = wait_until
         self.headless = headless
         self.randomize_fingerprint = randomize_fingerprint
         self.disable_http2 = disable_http2
+        self.allow_local_urls = resolve_allow_local_urls(allow_local_urls)
+        self.block_resources = block_resources
+        self.block_images = block_images
+        self.block_fonts = block_fonts
+        self.block_media = block_media
+        self.block_ads = block_ads
+        self.block_trackers = block_trackers
 
         if stealth_config is None:
             self.stealth_config = get_advanced_stealth_config(randomize=randomize_fingerprint)
         else:
             self.stealth_config = stealth_config
+
+    @staticmethod
+    def _hostname_changed(original_url: str, validated_url: str) -> bool:
+        try:
+            original_host = urlsplit(original_url).hostname or ""
+            validated_host = urlsplit(validated_url).hostname or ""
+        except Exception:
+            return original_url != validated_url
+        if not original_host or not validated_host:
+            return original_url != validated_url
+        return normalize_hostname(original_host) != normalize_hostname(validated_host)
+
+    def _validate_render_url(self, url: str) -> str:
+        validated_url = validate_http_url_no_ssrf(
+            url,
+            allow_local=self.allow_local_urls,
+            resolve_dns=True,
+        )
+        if self._hostname_changed(url, validated_url):
+            raise ValueError(
+                "Render URL requires DNS pinning that Playwright cannot safely preserve "
+                f"(SSRF protection): {url}"
+            )
+        return validated_url
 
     async def render(self, url: str) -> FetchResult:
         """
@@ -77,8 +123,9 @@ class AdvancedStealthRenderer:
 
         Includes automatic retry logic and HTTP/2 fallback.
         """
+        validated_url = self._validate_render_url(url)
         try:
-            result = await self._render_with_browser(url)
+            result = await self._render_with_browser(validated_url)
             return result
         except Exception as e:
             error_str = str(e)
@@ -92,12 +139,34 @@ class AdvancedStealthRenderer:
                     randomize_fingerprint=self.randomize_fingerprint,
                     disable_http2=True,
                     stealth_config=self.stealth_config,
+                    allow_local_urls=self.allow_local_urls,
+                    block_resources=self.block_resources,
+                    block_images=self.block_images,
+                    block_fonts=self.block_fonts,
+                    block_media=self.block_media,
+                    block_ads=self.block_ads,
+                    block_trackers=self.block_trackers,
                 )
-                result = await retry_renderer._render_with_browser(url)
+                result = await retry_renderer._render_with_browser(validated_url)
                 result.metadata["http2_fallback"] = True
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
                 return result
             raise
+
+    async def _setup_resource_blocking(self, page):
+        if not self.block_resources:
+            return None
+
+        blocker = ResourceBlocker(
+            block_images=self.block_images,
+            block_fonts=self.block_fonts,
+            block_media=self.block_media,
+            block_ads=self.block_ads,
+            block_trackers=self.block_trackers,
+            allow_local_urls=self.allow_local_urls,
+        )
+        await blocker.setup_blocking(page)
+        return blocker
 
     async def _render_with_browser(self, url: str) -> FetchResult:
         """Internal method to render URL with browser."""
@@ -136,6 +205,7 @@ class AdvancedStealthRenderer:
                 try:
                     page = await context.new_page()
                     await inject_stealth_pre_nav(page)
+                    blocker = await self._setup_resource_blocking(page)
 
                     response = await page.goto(
                         url, timeout=self.timeout, wait_until=cast(WaitUntil, self.wait_until)
@@ -160,6 +230,8 @@ class AdvancedStealthRenderer:
                         "http2_disabled": self.disable_http2,
                         "stealth_injected": True,
                     }
+                    if blocker is not None:
+                        metadata["resource_blocking"] = blocker.get_stats()
 
                     return FetchResult(
                         html=html,
@@ -194,9 +266,27 @@ async def render_with_advanced_stealth(
     url: str,
     timeout: float = 30.0,
     headless: bool = True,
+    *,
+    allow_local_urls: bool | None = None,
+    block_resources: bool = True,
+    block_images: bool = True,
+    block_fonts: bool = True,
+    block_media: bool = True,
+    block_ads: bool = True,
+    block_trackers: bool = True,
 ) -> FetchResult:
     """Convenience function to render a URL with advanced stealth."""
-    renderer = AdvancedStealthRenderer(timeout=timeout, headless=headless)
+    renderer = AdvancedStealthRenderer(
+        timeout=timeout,
+        headless=headless,
+        allow_local_urls=allow_local_urls,
+        block_resources=block_resources,
+        block_images=block_images,
+        block_fonts=block_fonts,
+        block_media=block_media,
+        block_ads=block_ads,
+        block_trackers=block_trackers,
+    )
     return await renderer.render(url)
 
 
@@ -204,12 +294,33 @@ def render_with_advanced_stealth_sync(
     url: str,
     timeout: float = 30.0,
     headless: bool = True,
+    *,
+    allow_local_urls: bool | None = None,
+    block_resources: bool = True,
+    block_images: bool = True,
+    block_fonts: bool = True,
+    block_media: bool = True,
+    block_ads: bool = True,
+    block_trackers: bool = True,
 ) -> FetchResult:
     """Synchronous convenience function for advanced stealth rendering."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(render_with_advanced_stealth(url, timeout, headless))
+        return asyncio.run(
+            render_with_advanced_stealth(
+                url,
+                timeout,
+                headless,
+                allow_local_urls=allow_local_urls,
+                block_resources=block_resources,
+                block_images=block_images,
+                block_fonts=block_fonts,
+                block_media=block_media,
+                block_ads=block_ads,
+                block_trackers=block_trackers,
+            )
+        )
 
     raise RuntimeError(
         "render_with_advanced_stealth_sync() cannot run inside an active event loop; "

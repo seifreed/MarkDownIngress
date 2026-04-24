@@ -398,7 +398,8 @@ class IngestUseCase:
         else:
             document = pipeline.execute_mode(url, config, matched_domain_policy, budget)
 
-        if cache_backend is not None and cache_key is not None:
+        should_write_cache = config.screenshot is not True
+        if should_write_cache and cache_backend is not None and cache_key is not None:
             try:
                 cache_backend.set(cache_key, document, ttl=config.cache_ttl)
             except Exception as exc:

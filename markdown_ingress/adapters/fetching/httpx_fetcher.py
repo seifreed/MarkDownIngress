@@ -58,6 +58,10 @@ _DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 _rng = random.SystemRandom()
 
 
+class ResponseSizeLimitError(ValueError):
+    """Raised when a response exceeds the configured fetch size limit."""
+
+
 class _PreparedRequest(NamedTuple):
     transport_url: str
     logical_url: str
@@ -737,7 +741,7 @@ class Fetcher(IFetcher):
                         content_length = response.headers.get("content-length")
                         parsed_length = _parse_content_length(content_length)
                         if parsed_length is not None and parsed_length > self.max_response_size:
-                            raise ValueError(
+                            raise ResponseSizeLimitError(
                                 f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                             )
 
@@ -750,7 +754,7 @@ class Fetcher(IFetcher):
                                 self.max_response_size is not None
                                 and total_size > self.max_response_size
                             ):
-                                raise ValueError(
+                                raise ResponseSizeLimitError(
                                     f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
                                 )
                             chunks.append(chunk)
@@ -793,7 +797,7 @@ class Fetcher(IFetcher):
                             self.max_response_size is not None
                             and total_size > self.max_response_size
                         ):
-                            raise ValueError(
+                            raise ResponseSizeLimitError(
                                 f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
                             )
                         chunks.append(chunk)
@@ -811,6 +815,9 @@ class Fetcher(IFetcher):
                     ua,
                     attempt,
                 )
+
+            except (UnsupportedContentTypeError, ResponseSizeLimitError):
+                raise
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -919,7 +926,7 @@ class Fetcher(IFetcher):
                                         parsed_length is not None
                                         and parsed_length > self.max_response_size
                                     ):
-                                        raise ValueError(
+                                        raise ResponseSizeLimitError(
                                             f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                         )
 
@@ -932,7 +939,7 @@ class Fetcher(IFetcher):
                                             self.max_response_size is not None
                                             and ssl_total_size > self.max_response_size
                                         ):
-                                            raise ValueError(
+                                            raise ResponseSizeLimitError(
                                                 f"Response content size {ssl_total_size} exceeds max_response_size {self.max_response_size}"
                                             )
                                         ssl_chunks.append(chunk)
@@ -966,7 +973,7 @@ class Fetcher(IFetcher):
                                         self.max_response_size is not None
                                         and ssl_total_size > self.max_response_size
                                     ):
-                                        raise ValueError(
+                                        raise ResponseSizeLimitError(
                                             f"Response content size {ssl_total_size} exceeds max_response_size {self.max_response_size}"
                                         )
                                     ssl_chunks.append(chunk)
@@ -990,6 +997,9 @@ class Fetcher(IFetcher):
                                 ssl_bypass=True,
                                 total_attempt=total_attempt_num,
                             )
+
+                    except (UnsupportedContentTypeError, ResponseSizeLimitError):
+                        raise
 
                     except httpx.HTTPStatusError as exc:
                         ssl_last_exc = exc
@@ -1099,7 +1109,7 @@ class Fetcher(IFetcher):
                         content_length = response.headers.get("content-length")
                         parsed_length = _parse_content_length(content_length)
                         if parsed_length is not None and parsed_length > self.max_response_size:
-                            raise ValueError(
+                            raise ResponseSizeLimitError(
                                 f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                             )
 
@@ -1112,7 +1122,7 @@ class Fetcher(IFetcher):
                                 self.max_response_size is not None
                                 and sync_total_size > self.max_response_size
                             ):
-                                raise ValueError(
+                                raise ResponseSizeLimitError(
                                     f"Response content size {sync_total_size} exceeds max_response_size {self.max_response_size}"
                                 )
                             sync_chunks.append(chunk)
@@ -1155,7 +1165,7 @@ class Fetcher(IFetcher):
                             self.max_response_size is not None
                             and sync_total_size > self.max_response_size
                         ):
-                            raise ValueError(
+                            raise ResponseSizeLimitError(
                                 f"Response content size {sync_total_size} exceeds max_response_size {self.max_response_size}"
                             )
                         sync_chunks.append(chunk)
@@ -1173,6 +1183,9 @@ class Fetcher(IFetcher):
                     ua,
                     attempt,
                 )
+
+            except (UnsupportedContentTypeError, ResponseSizeLimitError):
+                raise
 
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
@@ -1281,7 +1294,7 @@ class Fetcher(IFetcher):
                                         parsed_length is not None
                                         and parsed_length > self.max_response_size
                                     ):
-                                        raise ValueError(
+                                        raise ResponseSizeLimitError(
                                             f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                         )
 
@@ -1294,7 +1307,7 @@ class Fetcher(IFetcher):
                                             self.max_response_size is not None
                                             and ssl_sync_total > self.max_response_size
                                         ):
-                                            raise ValueError(
+                                            raise ResponseSizeLimitError(
                                                 f"Response content size {ssl_sync_total} exceeds max_response_size {self.max_response_size}"
                                             )
                                         ssl_sync_chunks.append(chunk)
@@ -1328,7 +1341,7 @@ class Fetcher(IFetcher):
                                         self.max_response_size is not None
                                         and ssl_sync_total > self.max_response_size
                                     ):
-                                        raise ValueError(
+                                        raise ResponseSizeLimitError(
                                             f"Response content size {ssl_sync_total} exceeds max_response_size {self.max_response_size}"
                                         )
                                     ssl_sync_chunks.append(chunk)
@@ -1352,6 +1365,9 @@ class Fetcher(IFetcher):
                                 ssl_bypass=True,
                                 total_attempt=total_attempt_num,
                             )
+
+                    except (UnsupportedContentTypeError, ResponseSizeLimitError):
+                        raise
 
                     except httpx.HTTPStatusError as exc:
                         ssl_last_exc = exc
