@@ -213,6 +213,7 @@ class _BatchUrlProcessor:
             async with ctx.batch_inflight_lock:
                 if ctx.batch_inflight.get(prepared.request_key) is record:
                     ctx.batch_inflight.pop(prepared.request_key, None)
+            await self._report_completion(prepared.url)
             return False
         shared = copy.deepcopy(shared_document)
         shared.metadata[INFLIGHT_DEDUPLICATED] = True

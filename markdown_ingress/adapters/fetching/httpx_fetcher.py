@@ -34,6 +34,7 @@ _SAFE_HEADERS = {
 }
 
 _RETRYABLE_STATUS = {403, 429, 503}
+_FOLLOW_REDIRECT_STATUS = {301, 302, 303, 307, 308}
 _MAX_RETRIES = 3
 _HTML_CONTENT_TYPES = (
     "text/html",
@@ -206,27 +207,49 @@ class Fetcher(IFetcher):
                 return False
             return True
 
-    async def _validate_redirect_response(self, response: httpx.Response) -> None:
-        if response.is_redirect:
-            location = response.headers.get("location")
-            if location:
-                redirect_url = str(response.url.join(location))
-                validate_http_url_no_ssrf(
-                    redirect_url,
-                    allow_local=self.allow_local_urls,
-                    resolve_dns=True,
-                )
+    def _should_follow_redirect(self, response: httpx.Response) -> bool:
+        if not self.follow_redirects:
+            return False
+        has_redirect_location = getattr(response, "has_redirect_location", None)
+        if has_redirect_location is not None:
+            return bool(has_redirect_location)
+        return (
+            response.status_code in _FOLLOW_REDIRECT_STATUS
+            and bool(response.headers.get("location"))
+        )
 
-    def _validate_redirect_response_sync(self, response: httpx.Response) -> None:
-        if response.is_redirect:
-            location = response.headers.get("location")
-            if location:
-                redirect_url = str(response.url.join(location))
-                validate_http_url_no_ssrf(
-                    redirect_url,
-                    allow_local=self.allow_local_urls,
-                    resolve_dns=True,
-                )
+    def _is_redirect_response(self, response: httpx.Response) -> bool:
+        return (
+            bool(getattr(response, "is_redirect", False))
+            or response.status_code in _FOLLOW_REDIRECT_STATUS
+        )
+
+    def _prepare_request_url(self, url: str) -> tuple[str, str, str | None]:
+        logical_url = str(url).strip()
+        validated_url = self._validate_url(logical_url, allow_local_urls=self.allow_local_urls)
+        original_hostname = urlsplit(logical_url).hostname or ""
+        validated_hostname = urlsplit(validated_url).hostname or ""
+        host_header: str | None = None
+        if original_hostname and original_hostname != validated_hostname:
+            host_header = original_hostname
+        return validated_url, logical_url, host_header
+
+    def _prepare_redirect_url(
+        self,
+        response: httpx.Response,
+        logical_url: str,
+        redirect_count: int,
+    ) -> tuple[str, str, str | None] | None:
+        location = response.headers.get("location")
+        if not location:
+            return None
+        if redirect_count >= self.max_redirects:
+            raise httpx.TooManyRedirects(
+                f"Exceeded maximum allowed redirects: {self.max_redirects}",
+                request=getattr(response, "request", None),
+            )
+        redirect_url = str(httpx.URL(logical_url).join(location))
+        return self._prepare_request_url(redirect_url)
 
     def _build_ssl_context(self) -> ssl.SSLContext:
         ctx = ssl.create_default_context()
@@ -267,13 +290,10 @@ class Fetcher(IFetcher):
                 if self._sync_client is None:
                     self._sync_client = httpx.Client(
                         timeout=self.timeout,
-                        follow_redirects=self.follow_redirects,
+                        follow_redirects=False,
                         max_redirects=self.max_redirects,
                         verify=self._build_ssl_context(),
                         trust_env=False,
-                        event_hooks={
-                            "response": [self._validate_redirect_response_sync],
-                        },
                     )
         return self._sync_client
 
@@ -299,13 +319,10 @@ class Fetcher(IFetcher):
                 if self._async_client is None:
                     self._async_client = httpx.AsyncClient(
                         timeout=self.timeout,
-                        follow_redirects=self.follow_redirects,
+                        follow_redirects=False,
                         max_redirects=self.max_redirects,
                         verify=self._build_ssl_context(),
                         trust_env=False,
-                        event_hooks={
-                            "response": [self._validate_redirect_response],
-                        },
                     )
         return self._async_client
 
@@ -645,18 +662,14 @@ class Fetcher(IFetcher):
             self._record_failure(response_host)
 
     async def fetch(self, url: str) -> FetchResult:
-        original_hostname = urlsplit(url).hostname or ""
-        url = self._validate_url(url, allow_local_urls=self.allow_local_urls)
-        validated_hostname = urlsplit(url).hostname or ""
-        host_header: str | None = None
-        if original_hostname and original_hostname != validated_hostname:
-            host_header = original_hostname
+        url, logical_url, host_header = self._prepare_request_url(url)
 
         last_exc: Exception | None = None
         host = self._host_key(url)
         ssl_retried = self._is_ssl_bypass_active(host)
         verify: bool | str = not ssl_retried
         attempt = 0
+        redirect_count = 0
         previous_ua: str | None = None
 
         client = await self._get_async_client()
@@ -677,6 +690,21 @@ class Fetcher(IFetcher):
                 async with client.stream("GET", url, **_stream_kw) as response:
                     response_host = self._effective_host(str(response.url), host)
 
+                    if self._should_follow_redirect(response):
+                        redirect_target = self._prepare_redirect_url(
+                            response, logical_url, redirect_count
+                        )
+                        if redirect_target is None:
+                            raise RuntimeError("Redirect response missing Location header")
+                        try:
+                            await response.aread()
+                        except Exception:
+                            logger.debug("Failed to read redirect response body", exc_info=True)
+                        url, logical_url, host_header = redirect_target
+                        host = self._host_key(url)
+                        redirect_count += 1
+                        continue
+
                     if self.max_response_size is not None:
                         content_length = response.headers.get("content-length")
                         parsed_length = _parse_content_length(content_length)
@@ -684,6 +712,24 @@ class Fetcher(IFetcher):
                             raise ValueError(
                                 f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                             )
+
+                    if self._is_redirect_response(response) and not self.follow_redirects:
+                        chunks: list[bytes] = []
+                        total_size = 0
+                        async for chunk in response.aiter_bytes():
+                            total_size += len(chunk)
+                            if (
+                                self.max_response_size is not None
+                                and total_size > self.max_response_size
+                            ):
+                                raise ValueError(
+                                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                                )
+                            chunks.append(chunk)
+                        content = b"".join(chunks)
+                        elapsed_ms = (time.perf_counter() - start_time) * 1000
+                        self._record_success(response_host)
+                        return self._make_fetch_result(content, url, response, elapsed_ms, ua, attempt)
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
                         retry_delay = _retry_delay_seconds(response, attempt)
@@ -740,6 +786,10 @@ class Fetcher(IFetcher):
             except DomainCircuitOpenError:
                 raise
 
+            except httpx.TooManyRedirects:
+                self._record_failure(host)
+                raise
+
             except Exception as exc:
                 last_exc = exc
                 self._record_failure(host)
@@ -775,7 +825,7 @@ class Fetcher(IFetcher):
                 total_attempt_num = consumed_attempts + ssl_attempt_num
                 async with httpx.AsyncClient(
                     timeout=self.timeout,
-                    follow_redirects=self.follow_redirects,
+                    follow_redirects=False,
                     max_redirects=self.max_redirects,
                     verify=False,
                     trust_env=False,
@@ -798,6 +848,23 @@ class Fetcher(IFetcher):
                         ) as response:
                             response_host = self._effective_host(str(response.url), host)
 
+                            if self._should_follow_redirect(response):
+                                redirect_target = self._prepare_redirect_url(
+                                    response, logical_url, redirect_count
+                                )
+                                if redirect_target is None:
+                                    raise RuntimeError("Redirect response missing Location header")
+                                try:
+                                    await response.aread()
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to read redirect response body", exc_info=True
+                                    )
+                                url, logical_url, host_header = redirect_target
+                                host = self._host_key(url)
+                                redirect_count += 1
+                                continue
+
                             if self.max_response_size is not None:
                                 content_length = response.headers.get("content-length")
                                 parsed_length = _parse_content_length(content_length)
@@ -808,6 +875,31 @@ class Fetcher(IFetcher):
                                     raise ValueError(
                                         f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                     )
+
+                            if self._is_redirect_response(response) and not self.follow_redirects:
+                                ssl_chunks: list[bytes] = []
+                                ssl_total_size = 0
+                                async for chunk in response.aiter_bytes():
+                                    ssl_total_size += len(chunk)
+                                    if (
+                                        self.max_response_size is not None
+                                        and ssl_total_size > self.max_response_size
+                                    ):
+                                        raise ValueError(
+                                            f"Response content size {ssl_total_size} exceeds max_response_size {self.max_response_size}"
+                                        )
+                                    ssl_chunks.append(chunk)
+                                ssl_content = b"".join(ssl_chunks)
+                                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                                self._record_success(response_host)
+                                with self._ssl_bypass_lock:
+                                    self._ssl_bypass_hosts[host] = (
+                                        time.monotonic() + self._ssl_bypass_ttl
+                                    )
+                                return self._make_fetch_result(
+                                    ssl_content, url, response, elapsed_ms, ua, ssl_attempt,
+                                    ssl_bypass=True, total_attempt=total_attempt_num,
+                                )
 
                             response.raise_for_status()
                             _validate_content_type(response)
@@ -858,6 +950,10 @@ class Fetcher(IFetcher):
                         self._record_failure(response_host)
                         raise
 
+                    except httpx.TooManyRedirects:
+                        self._record_failure(host)
+                        raise
+
                     except Exception as exc:
                         ssl_last_exc = exc
                         self._record_failure(host)
@@ -886,18 +982,14 @@ class Fetcher(IFetcher):
         )  # pragma: no cover
 
     def fetch_sync(self, url: str) -> FetchResult:
-        original_hostname = urlsplit(url).hostname or ""
-        url = self._validate_url(url, allow_local_urls=self.allow_local_urls)
-        validated_hostname = urlsplit(url).hostname or ""
-        host_header: str | None = None
-        if original_hostname and original_hostname != validated_hostname:
-            host_header = original_hostname
+        url, logical_url, host_header = self._prepare_request_url(url)
 
         last_exc: Exception | None = None
         host = self._host_key(url)
         ssl_retried = self._is_ssl_bypass_active(host)
         verify: bool | str = not ssl_retried
         attempt = 0
+        redirect_count = 0
         previous_ua: str | None = None
 
         client = self._get_sync_client()
@@ -919,6 +1011,21 @@ class Fetcher(IFetcher):
                     _stream_kw["extensions"] = {"sni_hostname": host_header.encode("ascii")}
                 with client.stream("GET", url, **_stream_kw) as response:
                     response_host = self._effective_host(str(response.url), host)
+                    if self._should_follow_redirect(response):
+                        redirect_target = self._prepare_redirect_url(
+                            response, logical_url, redirect_count
+                        )
+                        if redirect_target is None:
+                            raise RuntimeError("Redirect response missing Location header")
+                        try:
+                            response.read()
+                        except Exception:
+                            logger.debug("Failed to read redirect response body", exc_info=True)
+                        url, logical_url, host_header = redirect_target
+                        host = self._host_key(url)
+                        redirect_count += 1
+                        continue
+
                     if self.max_response_size is not None:
                         content_length = response.headers.get("content-length")
                         parsed_length = _parse_content_length(content_length)
@@ -926,6 +1033,26 @@ class Fetcher(IFetcher):
                             raise ValueError(
                                 f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                             )
+
+                    if self._is_redirect_response(response) and not self.follow_redirects:
+                        sync_chunks: list[bytes] = []
+                        sync_total_size = 0
+                        for chunk in response.iter_bytes():
+                            sync_total_size += len(chunk)
+                            if (
+                                self.max_response_size is not None
+                                and sync_total_size > self.max_response_size
+                            ):
+                                raise ValueError(
+                                    f"Response content size {sync_total_size} exceeds max_response_size {self.max_response_size}"
+                                )
+                            sync_chunks.append(chunk)
+                        sync_content = b"".join(sync_chunks)
+                        elapsed_ms = (time.perf_counter() - start_time) * 1000
+                        self._record_success(response_host)
+                        return self._make_fetch_result(
+                            sync_content, url, response, elapsed_ms, ua, attempt
+                        )
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
                         retry_delay = _retry_delay_seconds(response, attempt)
@@ -982,6 +1109,10 @@ class Fetcher(IFetcher):
             except DomainCircuitOpenError:
                 raise
 
+            except httpx.TooManyRedirects:
+                self._record_failure(host)
+                raise
+
             except Exception as exc:
                 last_exc = exc
                 self._record_failure(host)
@@ -1017,7 +1148,7 @@ class Fetcher(IFetcher):
                 total_attempt_num = consumed_attempts + ssl_attempt_num
                 with httpx.Client(
                     timeout=self.timeout,
-                    follow_redirects=self.follow_redirects,
+                    follow_redirects=False,
                     max_redirects=self.max_redirects,
                     verify=False,
                     trust_env=False,
@@ -1042,6 +1173,23 @@ class Fetcher(IFetcher):
                         with client.stream("GET", url, **_ssl_stream_kw) as response:
                             response_host = self._effective_host(str(response.url), host)
 
+                            if self._should_follow_redirect(response):
+                                redirect_target = self._prepare_redirect_url(
+                                    response, logical_url, redirect_count
+                                )
+                                if redirect_target is None:
+                                    raise RuntimeError("Redirect response missing Location header")
+                                try:
+                                    response.read()
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to read redirect response body", exc_info=True
+                                    )
+                                url, logical_url, host_header = redirect_target
+                                host = self._host_key(url)
+                                redirect_count += 1
+                                continue
+
                             if self.max_response_size is not None:
                                 content_length = response.headers.get("content-length")
                                 parsed_length = _parse_content_length(content_length)
@@ -1052,6 +1200,29 @@ class Fetcher(IFetcher):
                                     raise ValueError(
                                         f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
                                     )
+
+                            if self._is_redirect_response(response) and not self.follow_redirects:
+                                ssl_sync_chunks: list[bytes] = []
+                                ssl_sync_total = 0
+                                for chunk in response.iter_bytes():
+                                    ssl_sync_total += len(chunk)
+                                    if (
+                                        self.max_response_size is not None
+                                        and ssl_sync_total > self.max_response_size
+                                    ):
+                                        raise ValueError(
+                                            f"Response content size {ssl_sync_total} exceeds max_response_size {self.max_response_size}"
+                                        )
+                                    ssl_sync_chunks.append(chunk)
+                                ssl_sync_content = b"".join(ssl_sync_chunks)
+                                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                                self._record_success(response_host)
+                                with self._ssl_bypass_lock:
+                                    self._ssl_bypass_hosts[host] = time.monotonic() + self._ssl_bypass_ttl
+                                return self._make_fetch_result(
+                                    ssl_sync_content, url, response, elapsed_ms, ua, ssl_attempt,
+                                    ssl_bypass=True, total_attempt=total_attempt_num,
+                                )
 
                             if (
                                 response.status_code in _RETRYABLE_STATUS
@@ -1116,6 +1287,10 @@ class Fetcher(IFetcher):
                             time.sleep(retry_delay)
                             continue
                         self._record_failure(response_host)
+                        raise
+
+                    except httpx.TooManyRedirects:
+                        self._record_failure(host)
                         raise
 
                     except Exception as exc:

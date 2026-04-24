@@ -594,6 +594,20 @@ def test_persistent_job_queue_marks_failed_jobs(tmp_path: Path):
     assert "boom" in row["error"]
 
 
+def test_persistent_job_queue_rejects_non_dict_task_result(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+
+    with pytest.raises(RuntimeError, match="non-dict result"):
+        queue.submit(lambda: ["not", "a", "dict"], start_immediately=True)
+
+    with closing(queue._connect()) as conn:
+        row = conn.execute("SELECT status, error, result_json FROM jobs").fetchone()
+    assert row is not None
+    assert row["status"] == "failed"
+    assert "non-dict result" in row["error"]
+    assert row["result_json"] is None
+
+
 def test_persistent_job_queue_rejects_when_full(tmp_path: Path):
     queue = PersistentJobQueue(
         str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600, max_queued_jobs=1

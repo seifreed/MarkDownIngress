@@ -1,6 +1,7 @@
 """Tests for batch processing"""
 
 import asyncio
+import queue as queue_module
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,7 +12,10 @@ import markdown_ingress.api as public_api
 from markdown_ingress import ingest_async, ingest_many, ingest_many_async
 from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
-from markdown_ingress.application.subprocess_runner import _select_execution_strategy
+from markdown_ingress.application.subprocess_runner import (
+    _poll_subprocess_queue,
+    _select_execution_strategy,
+)
 from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.config import Config
@@ -460,6 +464,49 @@ def test_batch_selects_local_strategy_for_injected_inflight_registry():
 
 
 @pytest.mark.asyncio
+async def test_poll_subprocess_queue_reads_payload_after_process_exit_even_if_empty_lies():
+    document = SafeDocument(
+        markdown="ok",
+        metadata={"url": "https://example.com"},
+        token_estimate=1,
+        injection_score=0.0,
+        content_hash="hash",
+    )
+
+    class FinishedProcess:
+        def __init__(self):
+            self.joins = 0
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            self.joins += 1
+
+    class RaceQueue:
+        def __init__(self):
+            self.calls = 0
+
+        def empty(self):
+            return True
+
+        def get_nowait(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise queue_module.Empty
+            return ("result", document)
+
+        def get(self, timeout=None):
+            return self.get_nowait()
+
+    process = FinishedProcess()
+    result = await _poll_subprocess_queue(process, RaceQueue(), "https://example.com")
+
+    assert result is document
+    assert process.joins >= 1
+
+
+@pytest.mark.asyncio
 async def test_batch_preserves_duplicate_url_errors_by_index(monkeypatch):
     urls = ["https://same.test", "https://same.test"]
     processor = BatchProcessor(mode="fast", timeout=5.0)
@@ -582,6 +629,40 @@ async def test_default_batch_use_case_progress_reports_completed_items(monkeypat
     assert [call[0] for call in progress_calls] == [1, 2]
     assert progress_calls[0][3] - started_at >= 0.08
     assert progress_calls[1][3] - started_at >= 0.18
+
+
+@pytest.mark.asyncio
+async def test_batch_follower_failure_reports_progress_for_duplicate_url():
+    progress_calls = []
+
+    def on_progress(current, total, url):
+        progress_calls.append((current, total, url))
+
+    class FailingIngestUseCase:
+        orchestrator = IngestOrchestrator()
+
+        def execute(self, url: str, config):
+            time.sleep(0.1)
+            raise RuntimeError("leader failed")
+
+        def uses_default_runtime_dependencies(self):
+            return False
+
+    use_case = BatchIngestUseCase(ingest_use_case=FailingIngestUseCase())
+    result = await use_case.execute(
+        ["https://example.com/duplicate", "https://example.com/duplicate"],
+        config_builder=lambda: IngestConfig(mode="fast"),
+        max_concurrent=2,
+        on_progress=on_progress,
+    )
+
+    assert result.successful == 0
+    assert result.failed == 2
+    assert [call[0] for call in progress_calls] == [1, 2]
+    assert [call[2] for call in progress_calls] == [
+        "https://example.com/duplicate",
+        "https://example.com/duplicate",
+    ]
 
 
 def test_batch_result_stats():

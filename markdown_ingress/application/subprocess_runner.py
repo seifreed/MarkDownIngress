@@ -5,6 +5,7 @@ import asyncio
 import logging
 import multiprocessing
 import os
+import queue as queue_module
 import sys
 from typing import TYPE_CHECKING
 
@@ -92,20 +93,33 @@ async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
 
     from markdown_ingress.models import SafeDocument  # noqa: F811 — runtime import
 
+    def read_payload(timeout: float | None = None):
+        try:
+            if timeout is not None:
+                return queue.get(timeout=timeout)
+            return queue.get_nowait()
+        except queue_module.Empty:
+            return None
+
+    def handle_payload(payload):
+        kind, value = payload
+        process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
+        if kind == "result":
+            return cast(SafeDocument, value)
+        if kind == "exception":
+            raise value
+        if kind == "exception_payload":
+            raise RuntimeError(f"{value['type']}: {value['message']}")
+        raise RuntimeError(f"Batch worker returned an unknown payload for {url}")
+
     while True:
-        if not queue.empty():
-            kind, payload = queue.get_nowait()
-            process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
-            if kind == "result":
-                return cast(SafeDocument, payload)
-            if kind == "exception":
-                raise payload
-            if kind == "exception_payload":
-                raise RuntimeError(f"{payload['type']}: {payload['message']}")
-            raise RuntimeError(f"Batch worker returned an unknown payload for {url}")
+        payload = read_payload()
+        if payload is not None:
+            return handle_payload(payload)
         if not process.is_alive():
             process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
-            if not queue.empty():
-                continue
+            payload = read_payload(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
+            if payload is not None:
+                return handle_payload(payload)
             raise RuntimeError(f"Batch worker exited without returning a result for {url}")
         await asyncio.sleep(_BATCH_POLL_INTERVAL_S)

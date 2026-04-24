@@ -1046,6 +1046,10 @@ class PersistentJobQueue:
                 result = self._execute_with_timeout(task, self.job_timeout_seconds)
             else:
                 result = task()
+            if result is None:
+                raise RuntimeError("Task returned None result")
+            if not isinstance(result, dict):
+                raise RuntimeError("Task returned non-dict result")
         except Exception as exc:
             # Try to mark the job as failed.  If _mark_failed itself raises
             # (e.g. DB lock contention), log the secondary failure but always

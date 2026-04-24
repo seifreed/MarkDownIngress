@@ -14,7 +14,7 @@ import pytest
 from markdown_ingress import generate_security_report
 from markdown_ingress.core.config import Config
 from markdown_ingress.models import SecurityReport
-from markdown_ingress.reporting import report_filename
+from markdown_ingress.reporting import persist_security_report, report_filename
 
 
 @pytest.fixture(scope="module")
@@ -230,6 +230,31 @@ class TestSecurityReport:
         report.timestamp = "2026-04-09T18:34:12+02:00"
 
         assert report_filename(report) == "20260409T163412Z-example-com.json"
+
+    def test_persist_security_report_rejects_base_dir_prefix_sibling(self, tmp_path):
+        report = SecurityReport(
+            injection_score=0.2,
+            risk_level="LOW",
+            url="https://example.com",
+        )
+        base_dir = tmp_path / "reports"
+
+        with pytest.raises(ValueError, match="must be relative"):
+            persist_security_report(
+                report,
+                str(tmp_path / "reports_evil"),
+                base_dir=base_dir,
+            )
+
+    def test_persist_security_report_rejects_absolute_reports_dir_with_base_dir(self, tmp_path):
+        report = SecurityReport(
+            injection_score=0.2,
+            risk_level="LOW",
+            url="https://example.com",
+        )
+
+        with pytest.raises(ValueError, match="must be relative"):
+            persist_security_report(report, str(tmp_path / "outside"), base_dir=tmp_path)
 
     def test_generate_security_report_save_failure_raises(self, local_server, tmp_path):
         with patch.object(SecurityReport, "save", side_effect=OSError("disk full")):

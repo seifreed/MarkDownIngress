@@ -250,6 +250,207 @@ def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch
     assert kwargs["extensions"]["sni_hostname"] == b"example.com"
 
 
+def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    calls: list[tuple[str, dict]] = []
+
+    class StreamResponse:
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
+            self.url = url
+            self.status_code = status_code
+            self.headers = headers
+            self._body = body
+            self.is_redirect = status_code in {301, 302, 303, 307, 308}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self._body
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield self._body
+
+    class SyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            calls.append((url, kwargs))
+            if url == "https://start.test/page":
+                return StreamResponse(
+                    url,
+                    302,
+                    {"location": "https://target.test/final"},
+                )
+            return StreamResponse(
+                url,
+                200,
+                {"content-type": "text/html"},
+                b"<html><body><article><p>ok</p></article></body></html>",
+            )
+
+    def validate(url: str, *, allow_local_urls: bool = False) -> str:
+        if url == "https://target.test/final":
+            return "https://203.0.113.10/final"
+        return url
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", validate)
+
+    result = fetcher.fetch_sync("https://start.test/page")
+
+    assert result.status_code == 200
+    assert calls[0][0] == "https://start.test/page"
+    assert calls[1][0] == "https://203.0.113.10/final"
+    assert calls[1][1]["headers"]["Host"] == "target.test"
+    assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+
+
+def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    calls: list[str] = []
+
+    class StreamResponse:
+        status_code = 302
+        headers = {"location": "https://target.test/final"}
+        url = "https://start.test/page"
+        charset_encoding = "utf-8"
+        is_redirect = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def iter_bytes(self):
+            yield b"<html><body>redirect</body></html>"
+
+    class SyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            calls.append(url)
+            return StreamResponse()
+
+    fetcher = Fetcher(timeout=2.0, follow_redirects=False, domain_request_interval=0.0)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
+
+    result = fetcher.fetch_sync("https://start.test/page")
+
+    assert result.status_code == 302
+    assert calls == ["https://start.test/page"]
+
+
+def test_fetch_sync_redirect_limit_is_enforced(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class StreamResponse:
+        status_code = 302
+        headers = {"location": "https://target.test/final"}
+        url = "https://start.test/page"
+        charset_encoding = "utf-8"
+        is_redirect = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class SyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            return StreamResponse()
+
+    fetcher = Fetcher(timeout=2.0, max_redirects=0, domain_request_interval=0.0)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
+
+    with pytest.raises(httpx.TooManyRedirects):
+        fetcher.fetch_sync("https://start.test/page")
+
+
+def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    calls: list[tuple[str, dict]] = []
+
+    class AsyncStreamResponse:
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
+            self.url = url
+            self.status_code = status_code
+            self.headers = headers
+            self._body = body
+            self.is_redirect = status_code in {301, 302, 303, 307, 308}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aread(self):
+            return self._body
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_bytes(self):
+            yield self._body
+
+    class AsyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            calls.append((url, kwargs))
+            if url == "https://start.test/page":
+                return AsyncStreamResponse(
+                    url,
+                    302,
+                    {"location": "https://target.test/final"},
+                )
+            return AsyncStreamResponse(
+                url,
+                200,
+                {"content-type": "text/html"},
+                b"<html><body><article><p>ok</p></article></body></html>",
+            )
+
+    def validate(url: str, *, allow_local_urls: bool = False) -> str:
+        if url == "https://target.test/final":
+            return "https://203.0.113.10/final"
+        return url
+
+    async def get_async_client():
+        return AsyncClient()
+
+    async def run():
+        fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
+        monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+        monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+        monkeypatch.setattr(fetcher, "_validate_url", validate)
+        return await fetcher.fetch("https://start.test/page")
+
+    result = asyncio.run(run())
+
+    assert result.status_code == 200
+    assert calls[0][0] == "https://start.test/page"
+    assert calls[1][0] == "https://203.0.113.10/final"
+    assert calls[1][1]["headers"]["Host"] == "target.test"
+    assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+
+
 def test_fetcher_instance_state_does_not_leak_between_configs():
     from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
 

@@ -37,22 +37,27 @@ def persist_security_report(
             current working directory is used as the base.
     """
     reports_path = Path(reports_dir)
-    if base_dir is not None:
-        # When a base_dir is given, reports_dir must stay within it
-        effective_base = base_dir.resolve()
-        directory = (effective_base / reports_dir).resolve()
-        if not str(directory).startswith(str(effective_base)):
-            raise ValueError(
-                f"reports_dir escapes the allowed base directory: {reports_dir!r}"
-            )
-    else:
-        # No explicit base — resolve the path as given but reject .. segments
-        directory = reports_path.resolve()
     # Reject paths that contain traversal sequences in the raw input
     if ".." in reports_path.parts:
         raise ValueError(
             f"reports_dir must not contain '..' path segments: {reports_dir!r}"
         )
+    if base_dir is not None:
+        if reports_path.is_absolute():
+            raise ValueError(
+                f"reports_dir must be relative to the allowed base directory: {reports_dir!r}"
+            )
+        effective_base = base_dir.resolve()
+        directory = (effective_base / reports_dir).resolve()
+        try:
+            directory.relative_to(effective_base)
+        except ValueError as exc:
+            raise ValueError(
+                f"reports_dir escapes the allowed base directory: {reports_dir!r}"
+            ) from exc
+    else:
+        # No explicit base — resolve the path as given but reject .. segments
+        directory = reports_path.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / report_filename(report)
     if target.exists():
