@@ -202,6 +202,54 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
     assert client.user_agents[0] != client.user_agents[1]
 
 
+def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    captured: dict[str, object] = {}
+
+    class StreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        url = "https://93.184.216.34/pinned"
+        charset_encoding = "utf-8"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"<html><body><article><p>ok</p></article></body></html>"
+
+    class SyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return StreamResponse()
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(
+        fetcher,
+        "_validate_url",
+        lambda url, allow_local_urls=False: "https://93.184.216.34/pinned",
+    )
+
+    result = fetcher.fetch_sync("https://example.com/pinned")
+
+    kwargs = captured["kwargs"]
+    assert result.status_code == 200
+    assert captured["url"] == "https://93.184.216.34/pinned"
+    assert kwargs["headers"]["Host"] == "example.com"
+    assert kwargs["extensions"]["sni_hostname"] == b"example.com"
+
+
 def test_fetcher_instance_state_does_not_leak_between_configs():
     from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
 
@@ -516,6 +564,73 @@ def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
     assert main_client.calls == 2
     assert bypass_client.calls == 1
     assert len(sleep_calls) == 1
+
+
+def test_sync_ssl_bypass_preserves_sni_after_dns_pinning(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    captured: dict[str, object] = {}
+
+    class FakeSSLFailureError(Exception):
+        pass
+
+    class MainClient:
+        def stream(self, method: str, url: str, **kwargs):
+            raise FakeSSLFailureError("SSL handshake failed")
+
+    class StreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        url = "https://93.184.216.34/ssl"
+        charset_encoding = "utf-8"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"<html><body><article><p>ok</p></article></body></html>"
+
+    class BypassClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method: str, url: str, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return StreamResponse()
+
+    bypass_client = BypassClient()
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
+        lambda *args, **kwargs: bypass_client,
+    )
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: MainClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(
+        fetcher,
+        "_validate_url",
+        lambda url, allow_local_urls=False: "https://93.184.216.34/ssl",
+    )
+
+    result = fetcher.fetch_sync("https://example.com/ssl")
+
+    kwargs = captured["kwargs"]
+    assert result.status_code == 200
+    assert captured["url"] == "https://93.184.216.34/ssl"
+    assert kwargs["headers"]["Host"] == "example.com"
+    assert kwargs["extensions"]["sni_hostname"] == b"example.com"
 
 
 def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):

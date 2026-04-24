@@ -912,7 +912,12 @@ class Fetcher(IFetcher):
             start_time = time.perf_counter()
 
             try:
-                with client.stream("GET", url, headers=self._build_headers(ua, host_header=host_header)) as response:
+                _stream_kw: dict[str, object] = {
+                    "headers": self._build_headers(ua, host_header=host_header)
+                }
+                if host_header:
+                    _stream_kw["extensions"] = {"sni_hostname": host_header.encode("ascii")}
+                with client.stream("GET", url, **_stream_kw) as response:
                     response_host = self._effective_host(str(response.url), host)
                     if self.max_response_size is not None:
                         content_length = response.headers.get("content-length")
@@ -1027,7 +1032,14 @@ class Fetcher(IFetcher):
                     start_time = time.perf_counter()
 
                     try:
-                        with client.stream("GET", url, headers=self._build_headers(ua, host_header=host_header)) as response:
+                        _ssl_stream_kw: dict[str, object] = {
+                            "headers": self._build_headers(ua, host_header=host_header)
+                        }
+                        if host_header:
+                            _ssl_stream_kw["extensions"] = {
+                                "sni_hostname": host_header.encode("ascii")
+                            }
+                        with client.stream("GET", url, **_ssl_stream_kw) as response:
                             response_host = self._effective_host(str(response.url), host)
 
                             if self.max_response_size is not None:

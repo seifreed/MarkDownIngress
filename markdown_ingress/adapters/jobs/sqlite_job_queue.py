@@ -1134,7 +1134,11 @@ class PersistentJobQueue:
     def _execute_with_timeout(
         self, task: Callable[[], dict[str, Any]], timeout_seconds: float
     ) -> dict[str, Any]:
-        """Execute a task with a hard timeout when the platform supports it.
+        """Execute a task and return control to the caller when the timeout expires.
+
+        Timed-out tasks run in a daemon thread and may continue until the task
+        returns; the queue observes the timeout deadline instead of waiting for
+        that background work to finish.
 
         Args:
             task: Callable that returns a result dict
@@ -1158,32 +1162,19 @@ class PersistentJobQueue:
         task: Callable[[], dict[str, Any]],
         timeout_seconds: float,
     ) -> dict[str, Any]:
-        # Use thread-based timeout instead of fork() to avoid inherited-lock
-        # deadlocks in multi-threaded servers. fork() is unsafe when other
-        # threads hold locks (SQLite, SSL, logging), especially on macOS.
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(task)
-            try:
-                result = future.result(timeout=timeout_seconds)
-                if not isinstance(result, dict):
-                    raise TypeError(f"Task returned {type(result).__name__}, expected dict")
-                return result
-            except concurrent.futures.TimeoutError:
-                raise RuntimeError(
-                    f"Job execution timed out after {timeout_seconds} seconds"
-                )
+        # Use the same daemon-thread timeout path on POSIX. ThreadPoolExecutor
+        # shutdown waits for the worker by default, which defeats the timeout.
+        return self._execute_with_timeout_thread_fallback(task, timeout_seconds)
 
     def _execute_with_timeout_thread_fallback(
         self,
         task: Callable[[], dict[str, Any]],
         timeout_seconds: float,
     ) -> dict[str, Any]:
-        """Fallback for platforms without POSIX fork support.
+        """Execute a task in a daemon thread with a caller-visible timeout.
 
-        Python cannot hard-cancel worker threads on these platforms, so we keep
-        the old behaviour but log that the timeout is cooperative only.
+        Python cannot hard-cancel worker threads, so timed-out work may continue
+        briefly in the background until the task returns.
         """
         result_container: list[dict[str, Any] | None] = [None]
         exception_container: list[Exception | None] = [None]
@@ -1200,8 +1191,8 @@ class PersistentJobQueue:
 
         if thread.is_alive():
             _logger.warning(
-                "Job execution timed out after %s seconds on a platform without fork support; "
-                "background thread may continue running until the task returns",
+                "Job execution timed out after %s seconds; "
+                "background thread may continue running until the task returns.",
                 timeout_seconds,
             )
             raise RuntimeError(f"Job execution timed out after {timeout_seconds} seconds")

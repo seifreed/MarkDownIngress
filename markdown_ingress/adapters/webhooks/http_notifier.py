@@ -95,10 +95,9 @@ class HTTPWebhookNotifier:
         # Defense in depth: when the caller did NOT pre-validate the IP, apply
         # SSRF checks here so that direct use of the notifier (tests, plugins)
         # cannot be tricked into reaching internal networks via IP literals or
-        # explicitly blocked hostnames. DNS resolution is left to the caller to
-        # avoid network round-trips for every delivery and to keep tests offline.
+        # explicitly blocked hostnames.
         try:
-            validate_http_url_no_ssrf(
+            validated_url = validate_http_url_no_ssrf(
                 webhook_url,
                 allow_local=self.allow_local_webhooks,
                 resolve_dns=True,
@@ -107,6 +106,10 @@ class HTTPWebhookNotifier:
             raise RuntimeError(
                 f"Webhook delivery blocked by SSRF protection for {webhook_url}: {exc}"
             ) from exc
+        validated_hostname = normalize_hostname(urlparse(validated_url).hostname or "")
+        original_hostname = normalize_hostname(parsed.hostname or "")
+        if validated_hostname and validated_hostname != original_hostname:
+            return self._notify_with_dns_pinning(webhook_url, data, validated_hostname)
 
         # Standard webhook delivery without DNS pinning
         for attempt in range(self.total_attempts):

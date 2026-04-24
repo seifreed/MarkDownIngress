@@ -748,7 +748,7 @@ def test_worker_loop_preserves_result_and_webhook_failure_message(tmp_path: Path
 
     deadline = time.time() + 5.0
     stored = queue.get(job.job_id)
-    while stored is not None and stored.status in {"queued", "running"} and time.time() < deadline:
+    while stored is not None and stored.status != "failed" and time.time() < deadline:
         time.sleep(0.05)
         stored = queue.get(job.job_id)
 
@@ -759,15 +759,18 @@ def test_worker_loop_preserves_result_and_webhook_failure_message(tmp_path: Path
     assert stored.error == "Webhook delivery failed: downstream unavailable"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="hard timeout uses POSIX fork support")
-def test_execute_with_timeout_does_not_leave_background_thread_running(tmp_path: Path):
+def test_execute_with_timeout_returns_near_deadline(tmp_path: Path):
     queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
     before = len(threading.enumerate())
+    started_at = time.perf_counter()
 
     with pytest.raises(RuntimeError, match="timed out"):
         queue._execute_with_timeout(lambda: (time.sleep(0.5), {"ok": True})[1], 0.05)
 
-    time.sleep(0.1)
+    elapsed = time.perf_counter() - started_at
+    assert elapsed < 0.3
+
+    time.sleep(0.6)
     after = len(threading.enumerate())
 
     assert after == before

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -75,8 +77,43 @@ def test_https_dns_pinning_rejects_invalid_port_zero():
         raise AssertionError("expected ValueError for invalid webhook port 0")
 
 
+def test_notify_uses_validated_dns_pinned_url_when_validation_rewrites_host(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_validate(url, *, allow_local=False, resolve_dns=True):
+        captured["validated_url_input"] = url
+        captured["allow_local"] = allow_local
+        captured["resolve_dns"] = resolve_dns
+        return "https://203.0.113.10/hook?x=1"
+
+    def fake_notify_with_dns_pinning(self, webhook_url, data, validated_ip):
+        captured["webhook_url"] = webhook_url
+        captured["data"] = data
+        captured["validated_ip"] = validated_ip
+
+    monkeypatch.setattr(http_notifier_module, "validate_http_url_no_ssrf", fake_validate)
+    monkeypatch.setattr(
+        HTTPWebhookNotifier,
+        "_notify_with_dns_pinning",
+        fake_notify_with_dns_pinning,
+    )
+
+    notifier = HTTPWebhookNotifier(max_retries=0, retry_delay_seconds=0.0, timeout_seconds=3.0)
+    notifier.notify("https://example.com/hook?x=1", {"ok": True})
+
+    assert captured["validated_url_input"] == "https://example.com/hook?x=1"
+    assert captured["allow_local"] is False
+    assert captured["resolve_dns"] is True
+    assert captured["webhook_url"] == "https://example.com/hook?x=1"
+    assert captured["validated_ip"] == "203.0.113.10"
+    assert json.loads(captured["data"].decode("utf-8")) == {"ok": True}
+
+
 def test_notify_uses_max_retries_as_additional_retries(monkeypatch):
     calls = {"count": 0}
+
+    def fake_validate(url, *, allow_local=False, resolve_dns=True):
+        return url
 
     class FakeClient:
         def __init__(self, **kwargs):
@@ -92,6 +129,7 @@ def test_notify_uses_max_retries_as_additional_retries(monkeypatch):
         def __exit__(self, *args):
             pass
 
+    monkeypatch.setattr(http_notifier_module, "validate_http_url_no_ssrf", fake_validate)
     monkeypatch.setattr(http_notifier_module.httpx, "Client", FakeClient)
 
     notifier = HTTPWebhookNotifier(max_retries=2, retry_delay_seconds=0.0, timeout_seconds=3.0)
@@ -105,6 +143,9 @@ def test_notify_uses_max_retries_as_additional_retries(monkeypatch):
 def test_notify_allows_zero_retries_for_single_attempt(monkeypatch):
     calls = {"count": 0}
 
+    def fake_validate(url, *, allow_local=False, resolve_dns=True):
+        return url
+
     class FakeClient:
         def __init__(self, **kwargs):
             pass
@@ -119,6 +160,7 @@ def test_notify_allows_zero_retries_for_single_attempt(monkeypatch):
         def __exit__(self, *args):
             pass
 
+    monkeypatch.setattr(http_notifier_module, "validate_http_url_no_ssrf", fake_validate)
     monkeypatch.setattr(http_notifier_module.httpx, "Client", FakeClient)
 
     notifier = HTTPWebhookNotifier(max_retries=0, retry_delay_seconds=0.0, timeout_seconds=3.0)
