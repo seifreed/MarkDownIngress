@@ -284,6 +284,137 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
     assert client.user_agents[0] != client.user_agents[1]
 
 
+@pytest.mark.parametrize("status_code", [500, 502, 504])
+def test_fetch_sync_server_errors_open_circuit_breaker(monkeypatch, status_code):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None
+    )
+
+    request = httpx.Request("GET", "https://example.com/server-error")
+    response = httpx.Response(
+        status_code,
+        headers={"content-type": "text/html"},
+        request=request,
+    )
+
+    class MockStreamResponse:
+        status_code = response.status_code
+        headers = response.headers
+        url = response.url
+        charset_encoding = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b""
+
+        def raise_for_status(self):
+            response.raise_for_status()
+
+        def iter_bytes(self):
+            yield b""
+
+    class SyncClient:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, method: str, url: str, **kwargs):
+            self.calls += 1
+            return MockStreamResponse()
+
+    client = SyncClient()
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        circuit_breaker_threshold=1,
+    )
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: client)
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
+
+    with pytest.raises(DomainCircuitOpenError):
+        fetcher.fetch_sync("https://example.com/server-error")
+
+    assert client.calls == 1
+    assert fetcher._open_until_by_host
+
+
+def test_fetch_async_server_errors_open_circuit_breaker(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
+
+    async def fake_sleep(seconds: float):
+        return None
+
+    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep)
+
+    request = httpx.Request("GET", "https://example.com/server-error")
+    response = httpx.Response(
+        500,
+        headers={"content-type": "text/html"},
+        request=request,
+    )
+
+    class MockAsyncStreamResponse:
+        status_code = response.status_code
+        headers = response.headers
+        url = response.url
+        charset_encoding = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aread(self):
+            return b""
+
+        def raise_for_status(self):
+            response.raise_for_status()
+
+        async def aiter_bytes(self):
+            yield b""
+
+    class AsyncClient:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, method: str, url: str, **kwargs):
+            self.calls += 1
+            return MockAsyncStreamResponse()
+
+    client = AsyncClient()
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        circuit_breaker_threshold=1,
+    )
+
+    async def run():
+        try:
+            async def get_async_client():
+                return client
+
+            monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+            monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+            monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
+            with pytest.raises(DomainCircuitOpenError):
+                await fetcher.fetch("https://example.com/server-error")
+        finally:
+            await fetcher.aclose()
+
+    asyncio.run(run())
+
+    assert client.calls == 1
+    assert fetcher._open_until_by_host
+
+
 def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -1079,6 +1210,85 @@ def test_sync_ssl_bypass_does_not_open_circuit_for_client_errors(monkeypatch):
 
     assert BypassClient.calls == 2
     assert fetcher._open_until_by_host == {}
+
+
+def test_sync_ssl_bypass_opens_circuit_for_server_errors(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None
+    )
+
+    class StreamResponse:
+        status_code = 500
+        headers = {"content-type": "text/html"}
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str):
+            self.url = url
+            self._response = httpx.Response(
+                500,
+                request=httpx.Request("GET", url),
+                content=b"server error",
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"server error"
+
+        def raise_for_status(self):
+            self._response.raise_for_status()
+
+        def iter_bytes(self):
+            yield b"server error"
+
+    class BypassClient:
+        calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def close(self):
+            return None
+
+        def stream(self, method: str, url: str, **kwargs):
+            type(self).calls += 1
+            return StreamResponse(url)
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
+        lambda *args, **kwargs: BypassClient(),
+    )
+
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        allow_ssl_bypass=True,
+        circuit_breaker_threshold=1,
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_prepare_request_url",
+        lambda url: (url, url, None, None, "example.com"),
+    )
+    monkeypatch.setattr(fetcher, "_is_ssl_bypass_active", lambda host: True)
+
+    try:
+        with pytest.raises(DomainCircuitOpenError):
+            fetcher.fetch_sync("https://example.com/server-error")
+    finally:
+        fetcher.close()
+
+    assert BypassClient.calls == 1
+    assert fetcher._open_until_by_host
 
 
 def test_sync_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):

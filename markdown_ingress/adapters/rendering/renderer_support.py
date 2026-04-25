@@ -6,6 +6,8 @@ import logging
 import time
 from typing import Any, Final, cast
 
+import httpx
+
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.models import FetchResult
 
@@ -32,6 +34,23 @@ async def _close_async_resource(resource: Any | None, label: str) -> None:
         await resource.close()
     except Exception as exc:  # pragma: no cover - defensive cleanup path
         logger.warning("Failed to close %s cleanly: %s", label, exc)
+
+
+def raise_for_render_status(response: Any | None, url: str) -> None:
+    """Raise an HTTPStatusError when Playwright navigates to an error response."""
+    if response is None:
+        return
+    status_code = getattr(response, "status", None)
+    if not isinstance(status_code, int) or status_code < 400:
+        return
+
+    request = httpx.Request("GET", url)
+    http_response = httpx.Response(
+        status_code,
+        headers=getattr(response, "headers", None) or {},
+        request=request,
+    )
+    http_response.raise_for_status()
 
 
 def build_renderer_config(
@@ -139,6 +158,7 @@ async def execute_render_session(
                 await inject_stealth_pre_nav(page)
             blocker = await renderer._setup_resource_blocking(page)
             response = await renderer._navigate_page(page, url, timeout_ms)
+            raise_for_render_status(response, url)
             if renderer.stealth and STEALTH_INJECT_AVAILABLE:
                 await inject_stealth_post_nav(page)
             max_wait = min(8 if smart_wait else 6, max(2, timeout_ms // 1000))

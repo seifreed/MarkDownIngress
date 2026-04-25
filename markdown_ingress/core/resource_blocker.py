@@ -141,7 +141,7 @@ class ResourceBlocker:
         allow_local_urls: bool | None = None,
         validate_ssrf: bool = True,
         dns_pins: Mapping[str, str] | None = None,
-        enforce_dns_pinning: bool = False,
+        enforce_dns_pinning: bool = True,
     ):
         """
         Initialize the resource blocker.

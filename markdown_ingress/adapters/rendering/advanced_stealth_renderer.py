@@ -6,6 +6,7 @@ import time
 from typing import Any, Literal, cast
 
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
+from markdown_ingress.adapters.rendering.renderer_support import raise_for_render_status
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
@@ -208,6 +209,7 @@ class AdvancedStealthRenderer:
                     response = await page.goto(
                         url, timeout=self.timeout, wait_until=cast(WaitUntil, self.wait_until)
                     )
+                    raise_for_render_status(response, url)
 
                     await inject_stealth_post_nav(page)
                     await page.wait_for_timeout(500)

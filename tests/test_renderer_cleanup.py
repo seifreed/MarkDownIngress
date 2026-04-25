@@ -5,11 +5,13 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
+import httpx
 import pytest
 
 from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 from markdown_ingress.adapters.rendering.renderer_support import execute_render_session
+from markdown_ingress.models import FetchResult
 
 
 class _FakeCloseable:
@@ -24,13 +26,21 @@ class _FakeCloseable:
 
 
 class _FakePage(_FakeCloseable):
-    def __init__(self, *, close_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        close_error: Exception | None = None,
+        response_status: int = 200,
+        response_headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(close_error=close_error)
         self.url = "https://example.com/final"
         self.routes: list[tuple[str, object]] = []
+        self._response_status = response_status
+        self._response_headers = response_headers or {"content-type": "text/html"}
 
     async def goto(self, _url: str, **_kwargs):
-        return SimpleNamespace(status=200, headers={"content-type": "text/html"})
+        return SimpleNamespace(status=self._response_status, headers=self._response_headers)
 
     async def route(self, pattern: str, handler) -> None:
         self.routes.append((pattern, handler))
@@ -98,8 +108,14 @@ def _install_fake_playwright(
     page_close_error=None,
     context_close_error=None,
     launch_error: Exception | None = None,
+    response_status: int = 200,
+    response_headers: dict[str, str] | None = None,
 ):
-    page = _FakePage(close_error=page_close_error)
+    page = _FakePage(
+        close_error=page_close_error,
+        response_status=response_status,
+        response_headers=response_headers,
+    )
     context = _FakeContext(page, close_error=context_close_error)
     browser = _FakeBrowser(context)
     playwright = _FakePlaywright(
@@ -184,6 +200,47 @@ async def test_execute_render_session_closes_context_and_browser_when_page_close
 
 
 @pytest.mark.asyncio
+async def test_execute_render_session_raises_for_http_error_status(monkeypatch):
+    page, context, browser = _install_fake_playwright(monkeypatch)
+
+    async def _setup_resource_blocking(_page):
+        return None
+
+    async def _navigate_page(_page, _url, _timeout_ms):
+        return SimpleNamespace(status=404, headers={"x-test": "missing"})
+
+    async def _wait_for_content(_page, max_wait):
+        raise AssertionError("HTTP errors should fail before content extraction")
+
+    async def _extract_page_content(_page):
+        raise AssertionError("HTTP errors should fail before content extraction")
+
+    async def _capture_screenshot(_page):
+        raise AssertionError("HTTP errors should fail before screenshot capture")
+
+    renderer = SimpleNamespace(
+        stealth=False,
+        _prepare_browser_args=lambda: [],
+        _prepare_launch_options=lambda browser_args: {},
+        _prepare_context_options=lambda: {},
+        _setup_resource_blocking=_setup_resource_blocking,
+        _navigate_page=_navigate_page,
+        _wait_for_content=_wait_for_content,
+        _extract_page_content=_extract_page_content,
+        _capture_screenshot=_capture_screenshot,
+        _build_metadata=lambda screenshot_path, blocker: {"renderer": "fake"},
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await execute_render_session(renderer, "https://example.com/missing", 1000)
+
+    assert exc_info.value.response.status_code == 404
+    assert page.closed is True
+    assert context.closed is True
+    assert browser.closed is True
+
+
+@pytest.mark.asyncio
 async def test_renderer_block_resources_false_keeps_subresource_ssrf_blocking():
     page = _FakePage()
     renderer = Renderer(
@@ -235,6 +292,41 @@ def test_renderer_validates_public_top_level_url_with_dns_check(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_renderer_extreme_mode_preserves_dns_pins_in_temp_renderer(monkeypatch):
+    def fake_validate(url: str, *, allow_local: bool, resolve_dns: bool) -> str:
+        assert allow_local is False
+        assert resolve_dns is True
+        return "https://93.184.216.34/private"
+
+    captured: dict[str, object] = {}
+
+    async def fake_smart_wait(self, url: str, timeout_ms: int):
+        captured["url"] = url
+        captured["pins"] = dict(self._dns_pins)
+        captured["args"] = self._prepare_browser_args()
+        return FetchResult(
+            html="<html><body>ok</body></html>",
+            url=url,
+            status_code=200,
+            final_url=url,
+            headers={},
+            timing_ms=1.0,
+            metadata={},
+        )
+
+    monkeypatch.setattr("markdown_ingress.core.ssrf.validate_http_url_no_ssrf", fake_validate)
+    monkeypatch.setattr(Renderer, "_render_with_smart_wait", fake_smart_wait)
+
+    renderer = Renderer(extreme_mode=True, allow_local_urls=False)
+    result = await renderer.render("https://rebind.example/private")
+
+    assert result.status_code == 200
+    assert captured["url"] == "https://rebind.example/private"
+    assert captured["pins"] == {"rebind.example": "93.184.216.34"}
+    assert "--host-resolver-rules=MAP rebind.example 93.184.216.34" in captured["args"]
+
+
+@pytest.mark.asyncio
 async def test_advanced_stealth_block_resources_false_keeps_subresource_ssrf_blocking():
     page = _FakePage()
     renderer = AdvancedStealthRenderer(
@@ -269,6 +361,29 @@ async def test_advanced_stealth_closes_browser_when_context_close_fails(monkeypa
 
     assert result.status_code == 200
     assert page.routes and page.routes[0][0] == "**/*"
+    assert context.closed is True
+    assert browser.closed is True
+
+
+@pytest.mark.asyncio
+async def test_advanced_stealth_raises_for_http_error_status(monkeypatch):
+    page, context, browser = _install_fake_playwright(monkeypatch, response_status=500)
+
+    import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
+
+    async def fake_inject_stealth(_page):
+        return None
+
+    monkeypatch.setattr(_renderer_module, "inject_stealth_pre_nav", fake_inject_stealth)
+    monkeypatch.setattr(_renderer_module, "inject_stealth_post_nav", fake_inject_stealth)
+
+    renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
+
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await renderer._render_with_browser("https://example.com/server-error")
+
+    assert exc_info.value.response.status_code == 500
+    assert page.closed is True
     assert context.closed is True
     assert browser.closed is True
 

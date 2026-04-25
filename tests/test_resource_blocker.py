@@ -27,6 +27,7 @@ class TestResourceBlocker:
         assert blocker.block_css is False
         assert blocker.block_ads is True
         assert blocker.block_trackers is True
+        assert blocker.enforce_dns_pinning is True
         assert blocker.blocked_count == 0
         assert blocker.total_count == 0
 
@@ -109,6 +110,7 @@ class TestResourceBlocker:
             block_ads=False,
             block_trackers=False,
             allow_local_urls=False,
+            enforce_dns_pinning=False,
         )
 
         should_block, reason = blocker._should_block(
@@ -138,6 +140,7 @@ class TestResourceBlocker:
             block_ads=False,
             block_trackers=False,
             allow_local_urls=False,
+            enforce_dns_pinning=False,
         )
 
         should_block, reason = blocker._should_block(
@@ -168,7 +171,6 @@ class TestResourceBlocker:
             block_ads=False,
             block_trackers=False,
             allow_local_urls=False,
-            enforce_dns_pinning=True,
         )
 
         assert blocker._should_block("script", "https://rebind.example/app.js") == (
@@ -277,7 +279,12 @@ class TestResourceBlocker:
 
     def test_should_not_block_images_when_disabled(self):
         """Test not blocking images when disabled"""
-        blocker = ResourceBlocker(block_images=False, block_ads=False, block_trackers=False)
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_ads=False,
+            block_trackers=False,
+            validate_ssrf=False,
+        )
 
         assert blocker._should_block("image", "https://example.com/photo.jpg")[0] is False
 
@@ -301,13 +308,13 @@ class TestResourceBlocker:
 
     def test_should_not_block_css_by_default(self):
         """Test not blocking CSS by default"""
-        blocker = ResourceBlocker(block_ads=False, block_trackers=False)
+        blocker = ResourceBlocker(block_ads=False, block_trackers=False, validate_ssrf=False)
 
         assert blocker._should_block("stylesheet", "https://example.com/style.css")[0] is False
 
     def test_should_block_google_analytics(self):
         """Test blocking Google Analytics"""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
 
         assert (
             blocker._should_block("script", "https://www.google-analytics.com/analytics.js")[0]
@@ -324,7 +331,7 @@ class TestResourceBlocker:
 
     def test_should_not_block_lookalike_domains(self):
         """Test that host matching respects domain boundaries."""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
 
         assert blocker._should_block("script", "https://facebook.com.evil.com/tr")[0] is False
         assert blocker._should_block("script", "https://facebook.com./tr")[0] is True
@@ -338,13 +345,13 @@ class TestResourceBlocker:
         assert blocker._should_block("script", "https://analytics.example.com/track.js")[0] is True
 
     def test_domain_only_patterns_require_label_boundaries(self):
-        blocker = ResourceBlocker(block_ads=True, block_trackers=False)
+        blocker = ResourceBlocker(block_ads=True, block_trackers=False, validate_ssrf=False)
 
         assert blocker._should_block("script", "https://ads.example.com/banner.js")[0] is True
         assert blocker._should_block("script", "https://adservicedepot.com/banner.js")[0] is False
 
     def test_path_patterns_require_segment_boundaries(self):
-        blocker = ResourceBlocker(block_trackers=True, block_ads=False)
+        blocker = ResourceBlocker(block_trackers=True, block_ads=False, validate_ssrf=False)
 
         assert blocker._should_block("script", "https://example.com/tracking.js")[0] is True
         assert (
@@ -360,6 +367,7 @@ class TestResourceBlocker:
             block_media=False,
             block_ads=False,
             block_trackers=False,
+            validate_ssrf=False,
         )
 
         assert blocker._should_block("script", "https://example.com/main.js")[0] is False
@@ -423,7 +431,12 @@ class TestResourceBlocker:
     @pytest.mark.asyncio
     async def test_handle_route_allows_script(self):
         """Test route handler allows script requests"""
-        blocker = ResourceBlocker(block_images=False, block_ads=False, block_trackers=False)
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_ads=False,
+            block_trackers=False,
+            validate_ssrf=False,
+        )
 
         # Mock route and request
         mock_route = AsyncMock()
@@ -580,8 +593,10 @@ class TestSecurityFixes:
         assert blocker._should_block("script", "https://www.facebook.com/tr?id=1")[0] is True
 
     def test_ads_and_trackers_toggles_are_respected_independently(self):
-        ads_only = ResourceBlocker(block_ads=True, block_trackers=False)
-        trackers_only = ResourceBlocker(block_ads=False, block_trackers=True)
+        ads_only = ResourceBlocker(block_ads=True, block_trackers=False, validate_ssrf=False)
+        trackers_only = ResourceBlocker(
+            block_ads=False, block_trackers=True, validate_ssrf=False
+        )
 
         assert (
             ads_only._should_block("script", "https://google-analytics.com/analytics.js")[0]
@@ -599,7 +614,7 @@ class TestSecurityFixes:
 
     def test_url_encoding_bypass_tracking_dot(self):
         """Test that URL-encoded paths are blocked (e.g., /tracking%2e bypasses /tracking.)"""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
         # %2e is URL encoding for '.'
         # Should decode and match /tracking.
         assert blocker._should_block("script", "https://example.com/tracking%2ejs")[0] is True
@@ -607,7 +622,7 @@ class TestSecurityFixes:
 
     def test_url_encoding_bypass_tracking_slash(self):
         """Test that URL-encoded paths are blocked (e.g., /pixel%2f bypasses /pixel/)"""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
         # %2f is URL encoding for '/'
         # Should decode and match /pixel/
         assert blocker._should_block("script", "https://example.com/pixel%2fgif")[0] is True
@@ -622,7 +637,7 @@ class TestSecurityFixes:
 
     def test_substring_domain_false_positive(self):
         """Test that substring matching doesn't cause false positives"""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
         # "my-google-analytics-site.com" should NOT match "google-analytics.com"
         # because we use exact or subdomain boundary matching
         assert (
@@ -674,7 +689,7 @@ class TestSecurityFixes:
 
     def test_normal_urls_still_allowed(self):
         """Test that normal valid URLs are not incorrectly blocked"""
-        blocker = ResourceBlocker(block_trackers=True)
+        blocker = ResourceBlocker(block_trackers=True, validate_ssrf=False)
         # Normal URLs should not be blocked
         assert blocker._should_block("script", "https://example.com/main.js")[0] is False
         assert blocker._should_block("script", "https://www.example.com/app.js")[0] is False

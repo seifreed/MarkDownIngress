@@ -202,6 +202,7 @@ class Renderer(IRenderer):
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
                     allow_local_urls=self.allow_local_urls,
+                    dns_pins=dict(self._dns_pins),
                 )
                 retry_renderer = Renderer(config=retry_config)
                 retry_renderer._base_dns_pins = dict(self._dns_pins)
@@ -360,6 +361,7 @@ class Renderer(IRenderer):
                     block_trackers=self.block_trackers,
                     screenshot=self.screenshot,
                     allow_local_urls=self.allow_local_urls,
+                    dns_pins=dict(self._dns_pins),
                 )
                 temp_renderer = Renderer(config=temp_config)
                 result = await temp_renderer._render_with_smart_wait(url, timeout_ms)
