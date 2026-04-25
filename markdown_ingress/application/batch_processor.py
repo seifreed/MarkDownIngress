@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from markdown_ingress.application.exceptions import _copy_batch_exception
+from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.ingest_stats import (
@@ -136,8 +137,8 @@ class _BatchUrlProcessor:
         await self._ctx.report_progress(url)
 
     @staticmethod
-    def _uses_temp_screenshot(prepared: _PreparedBatchRequest) -> bool:
-        return prepared.resolved_config.screenshot is True
+    def _uses_uncacheable_screenshot(prepared: _PreparedBatchRequest) -> bool:
+        return screenshot_requires_fresh_capture(prepared.resolved_config)
 
     async def _try_cache(self, prepared: _PreparedBatchRequest) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
@@ -242,12 +243,13 @@ class _BatchUrlProcessor:
     ) -> bool:
         """Handle leader path: execute ingestion, cache result, resolve future."""
         ctx = self._ctx
-        bump_ingest_stat("leader_executions")
+        if ctx.batch_tracks_metrics:
+            bump_ingest_stat("leader_executions")
         if ctx.execution_strategy == "isolated":
             document = await self._use_case._execute_item_isolated(prepared)
         else:
             document = await self._use_case._execute_item_in_process(prepared)
-        should_write_cache = prepared.resolved_config.screenshot is not True
+        should_write_cache = not screenshot_requires_fresh_capture(prepared.resolved_config)
         if (
             should_write_cache
             and prepared.cache_backend is not None
@@ -293,7 +295,8 @@ class _BatchUrlProcessor:
     async def _execute_direct(self, prepared: _PreparedBatchRequest) -> bool:
         """Execute an item without batch in-flight sharing."""
         ctx = self._ctx
-        bump_ingest_stat("leader_executions")
+        if ctx.batch_tracks_metrics:
+            bump_ingest_stat("leader_executions")
         if ctx.execution_strategy == "isolated":
             document = await self._use_case._execute_item_isolated(prepared)
         else:
@@ -391,7 +394,7 @@ class _BatchUrlProcessor:
             semaphore_held = True
             if await self._try_cache(prepared):
                 return True
-            if self._uses_temp_screenshot(prepared):
+            if self._uses_uncacheable_screenshot(prepared):
                 return await self._execute_direct(prepared)
             record, is_leader = await self._register_inflight(prepared)
             if not is_leader:

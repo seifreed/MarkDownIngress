@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlsplit
 from markdown_ingress.core.ssrf import (
     normalize_domain_pattern,
     resolve_allow_local_urls,
-    validate_http_url_no_ssrf,
+    validate_http_url_no_ssrf_with_dns_check,
 )
 
 logger = logging.getLogger(__name__)
@@ -346,10 +346,9 @@ class ResourceBlocker:
         if not self.validate_ssrf:
             return None
         try:
-            validate_http_url_no_ssrf(
+            validate_http_url_no_ssrf_with_dns_check(
                 url,
                 allow_local=self.allow_local_urls,
-                resolve_dns=False,
             )
         except ValueError:
             return True, _SSRF_BLOCK_REASON

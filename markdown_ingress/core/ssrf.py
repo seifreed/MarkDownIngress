@@ -375,6 +375,27 @@ def validate_http_url_no_ssrf(
     return normalized_url
 
 
+def validate_http_url_no_ssrf_with_dns_check(
+    url: str,
+    *,
+    allow_local: bool = False,
+) -> str:
+    """Validate URL syntax and DNS-resolved targets while preserving the logical URL.
+
+    Some callers, notably browser renderers, cannot safely consume the IP-pinned
+    URL returned by ``validate_http_url_no_ssrf(resolve_dns=True)`` because doing
+    so would break normal hostname-based browser behavior. They still need the
+    DNS deny check so hostnames resolving to private/loopback ranges are blocked.
+    """
+    normalized_url = str(url).strip()
+    validate_http_url_no_ssrf(
+        normalized_url,
+        allow_local=allow_local,
+        resolve_dns=True,
+    )
+    return normalized_url
+
+
 def validated_http_url_requires_dns_pinning(original_url: str, validated_url: str) -> bool:
     """Return True when SSRF validation rewrote the URL host to a pinned address."""
     try:

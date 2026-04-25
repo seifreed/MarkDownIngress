@@ -497,7 +497,7 @@ async def test_batch_continues_when_cache_backend_fails():
 @pytest.mark.asyncio
 async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         lambda url, **_kwargs: url,
     )
 
@@ -566,6 +566,71 @@ async def test_batch_temp_screenshot_results_are_not_cached(monkeypatch):
     finally:
         for path in captured_paths:
             Path(path).unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_explicit_screenshot_path_bypasses_cache_and_inflight(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+        lambda url, **_kwargs: url,
+    )
+
+    cache = MemoryCache()
+    screenshot_path = tmp_path / "explicit-batch.png"
+
+    class FakeRenderer:
+        calls = 0
+
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            type(self).calls += 1
+            time.sleep(0.05)
+            assert self.config.screenshot == str(screenshot_path)
+            screenshot_path.write_bytes(f"batch shot {type(self).calls}".encode())
+            return FetchResult(
+                html=(
+                    "<html><body><article><h1>Render</h1>"
+                    f"<p>call {type(self).calls}</p></article></body></html>"
+                ),
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={"content-type": "text/html"},
+                timing_ms=1.0,
+                metadata={"screenshot_path": str(screenshot_path)},
+            )
+
+    use_case = IngestUseCase(playwright_available=True)
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+    config = IngestConfig(
+        mode="render",
+        screenshot=str(screenshot_path),
+        cache=cache,
+        extract_metadata=False,
+        extract_links=False,
+    )
+
+    result = await batch_use_case.execute(
+        [
+            "https://unit.test/explicit-screenshot-cache",
+            "https://unit.test/explicit-screenshot-cache",
+        ],
+        lambda: config,
+        max_concurrent=2,
+    )
+
+    assert result.successful == 2
+    assert result.failed == 0
+    assert FakeRenderer.calls == 2
+    assert result.documents[0] is not None
+    assert result.documents[1] is not None
+    assert result.documents[0].metadata["cache_hit"] is False
+    assert result.documents[1].metadata["cache_hit"] is False
+    assert result.documents[0].metadata["inflight_deduplicated"] is False
+    assert result.documents[1].metadata["inflight_deduplicated"] is False
 
 
 @pytest.mark.asyncio

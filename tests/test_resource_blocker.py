@@ -119,15 +119,15 @@ class TestResourceBlocker:
         assert should_block is True
         assert reason == "ssrf_protection"
 
-    def test_should_allow_public_subresource_without_dns_pinning_requirement(self, monkeypatch):
+    def test_should_allow_public_subresource_with_dns_check(self, monkeypatch):
         calls: list[tuple[str, bool, bool]] = []
 
         def fake_validate(url, *, allow_local, resolve_dns):
             calls.append((url, allow_local, resolve_dns))
-            return url
+            return "https://93.184.216.34/app.js"
 
         monkeypatch.setattr(
-            "markdown_ingress.core.resource_blocker.validate_http_url_no_ssrf",
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
             fake_validate,
         )
         blocker = ResourceBlocker(
@@ -147,7 +147,36 @@ class TestResourceBlocker:
 
         assert should_block is False
         assert reason is None
-        assert calls == [("https://rebind.example/app.js", False, False)]
+        assert calls == [("https://rebind.example/app.js", False, True)]
+
+    def test_should_block_subresource_hostname_resolving_private(self, monkeypatch):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert url == "http://127.0.0.1.nip.io/private"
+            assert allow_local is False
+            assert resolve_dns is True
+            raise ValueError("URL hostname resolves to blocked IP (SSRF protection)")
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+        )
+
+        should_block, reason = blocker._should_block(
+            "document",
+            "http://127.0.0.1.nip.io/private",
+        )
+
+        assert should_block is True
+        assert reason == "ssrf_protection"
 
     @pytest.mark.parametrize(
         "url",

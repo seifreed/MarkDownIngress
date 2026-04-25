@@ -30,6 +30,7 @@ from markdown_ingress.application.heuristics import (
     _should_attempt_fast_degraded_fallback,
     _should_attempt_render_fallback,
 )
+from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.application.subprocess_runner import (
     _batch_process_context,
     _execute_batch_ingest_in_subprocess,
@@ -72,7 +73,7 @@ from markdown_ingress.core.policy import (
 )
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
-    validate_http_url_no_ssrf,
+    validate_http_url_no_ssrf_with_dns_check,
 )
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
@@ -345,10 +346,10 @@ class IngestUseCase:
             default_user_agent=self._auto_fetcher_user_agent,
         )
         try:
-            uses_temp_screenshot = resolved_config.screenshot is True
-            cache_backend = None if uses_temp_screenshot else cast(Cache | None, config.cache)
+            fresh_screenshot = screenshot_requires_fresh_capture(resolved_config)
+            cache_backend = None if fresh_screenshot else cast(Cache | None, config.cache)
             cache_key: str | None = None
-            if not uses_temp_screenshot:
+            if not fresh_screenshot:
                 request_key = self.orchestrator.make_request_key(
                     url, resolved_config, matched_domain_policy
                 )
@@ -408,7 +409,7 @@ class IngestUseCase:
         else:
             document = pipeline.execute_mode(url, config, matched_domain_policy, budget)
 
-        should_write_cache = config.screenshot is not True
+        should_write_cache = not screenshot_requires_fresh_capture(config)
         if should_write_cache and cache_backend is not None and cache_key is not None:
             try:
                 cache_backend.set(cache_key, document, ttl=config.cache_ttl)
@@ -443,12 +444,10 @@ class _FetchPipeline:
     @staticmethod
     def _validate_render_url(url: str, config: IngestConfig) -> str:
         """Apply SSRF validation before handing the logical URL to Playwright."""
-        validate_http_url_no_ssrf(
+        return validate_http_url_no_ssrf_with_dns_check(
             url,
             allow_local=resolve_allow_local_urls(config.allow_local_urls),
-            resolve_dns=False,
         )
-        return str(url).strip()
 
     def execute_mode(
         self,
@@ -806,7 +805,9 @@ class BatchIngestUseCase:
             default_user_agent=self._auto_fetcher_user_agent,
         )
         cache_backend = (
-            None if resolved_config.screenshot is True else cast(Cache | None, config.cache)
+            None
+            if screenshot_requires_fresh_capture(resolved_config)
+            else cast(Cache | None, config.cache)
         )
         cache_key = None
         request_identity = build_request_identity(url, resolved_config, matched_domain_policy)

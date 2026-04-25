@@ -972,6 +972,44 @@ def test_process_level_ingest_stats_track_auto_mode(monkeypatch):
     assert stats["mode_results"]["auto"]["error"] == 0
 
 
+@pytest.mark.asyncio
+async def test_batch_local_strategy_counts_leader_execution_once(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: url,
+    )
+    reset_ingest_stats()
+
+    class FakeRenderer:
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Render</h1><p>"
+                + ("local metrics " * 20)
+                + "</p></article></body></html>",
+            )
+
+    use_case = IngestUseCase(
+        renderer_factory=lambda config: FakeRenderer(config),
+        playwright_available=True,
+    )
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+
+    result = await batch_use_case.execute(
+        ["https://unit.test/local-metrics"],
+        lambda: IngestConfig(mode="render", extract_metadata=False, extract_links=False),
+        max_concurrent=1,
+    )
+    stats = get_ingest_stats()
+
+    assert result.successful == 1
+    assert stats["requests_total"] == 1
+    assert stats["leader_executions"] == 1
+
+
 def test_process_level_ingest_stats_stay_on_requested_mode_when_policy_rewrites_mode(monkeypatch):
     reset_ingest_stats()
 
@@ -1190,15 +1228,15 @@ def test_render_mode_validates_url_before_playwright(monkeypatch):
     assert calls["renderer"] == 0
 
 
-def test_render_mode_validates_public_url_without_dns_resolution(monkeypatch):
+def test_render_mode_validates_public_url_with_dns_check(monkeypatch):
     validation_calls: list[tuple[str, bool, bool]] = []
 
     def fake_validate(url, *, allow_local, resolve_dns):
         validation_calls.append((url, allow_local, resolve_dns))
-        return url
+        return "https://93.184.216.34/private"
 
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         fake_validate,
     )
     use_case = IngestUseCase(playwright_available=True)
@@ -1223,18 +1261,18 @@ def test_render_mode_validates_public_url_without_dns_resolution(monkeypatch):
 
     assert calls == ["https://rebind.example/private"]
     assert doc.metadata["mode"] == "render"
-    assert validation_calls == [("https://rebind.example/private", False, False)]
+    assert validation_calls == [("https://rebind.example/private", False, True)]
 
 
-def test_auto_mode_validates_render_url_without_dns_resolution(monkeypatch):
+def test_auto_mode_validates_render_url_with_dns_check(monkeypatch):
     validation_calls: list[tuple[str, bool, bool]] = []
 
     def fake_validate(url, *, allow_local, resolve_dns):
         validation_calls.append((url, allow_local, resolve_dns))
-        return url
+        return "https://93.184.216.34/private"
 
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         fake_validate,
     )
     use_case = IngestUseCase(playwright_available=True)
@@ -1273,7 +1311,7 @@ def test_auto_mode_validates_render_url_without_dns_resolution(monkeypatch):
     assert calls["renderer"] == 1
     assert doc.metadata["auto_mode_used"] == "render"
     assert doc.metadata.get("auto_mode_reason") is None
-    assert validation_calls == [("https://rebind.example/private", False, False)]
+    assert validation_calls == [("https://rebind.example/private", False, True)]
 
 
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
@@ -1526,7 +1564,7 @@ def test_auto_mode_discards_temp_screenshot_when_fast_wins(tmp_path: Path):
 
 def test_render_temp_screenshot_removed_when_capture_returns_no_path(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: url,
     )
     use_case = IngestUseCase(playwright_available=True)
@@ -1572,7 +1610,7 @@ def test_render_temp_screenshot_removes_preallocated_path_when_renderer_returns_
     tmp_path: Path,
 ):
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: url,
     )
     use_case = IngestUseCase(playwright_available=True)
@@ -1621,7 +1659,7 @@ def test_render_temp_screenshot_removes_preallocated_path_when_renderer_returns_
 
 def test_policy_blocked_render_preserves_temp_screenshot_file(monkeypatch):
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         lambda url, *, allow_local, resolve_dns: url,
     )
     use_case = IngestUseCase(playwright_available=True)
@@ -1717,6 +1755,52 @@ def test_render_temp_screenshot_results_are_not_cached():
         for path in captured_paths:
             if path:
                 Path(path).unlink(missing_ok=True)
+
+
+def test_render_explicit_screenshot_results_are_not_cached(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: url,
+    )
+    cache = MemoryCache()
+    use_case = IngestUseCase(playwright_available=True)
+    screenshot_path = tmp_path / "explicit-cache.png"
+
+    class FakeRenderer:
+        calls = 0
+
+        def __init__(self, config):
+            self.config = config
+
+        def render_sync(self, url: str):
+            type(self).calls += 1
+            assert self.config.screenshot == str(screenshot_path)
+            screenshot_path.write_bytes(f"shot {type(self).calls}".encode())
+            result = _make_fetch_result(
+                url,
+                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p></article></body></html>",
+            )
+            result.metadata["screenshot_path"] = str(screenshot_path)
+            return result
+
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    config = IngestConfig(
+        mode="render",
+        screenshot=str(screenshot_path),
+        cache=cache,
+        extract_metadata=False,
+        extract_links=False,
+    )
+    first = use_case.execute("https://unit.test/explicit-screenshot-cache", config)
+    screenshot_path.unlink()
+    second = use_case.execute("https://unit.test/explicit-screenshot-cache", config)
+
+    assert FakeRenderer.calls == 2
+    assert first.metadata["cache_hit"] is False
+    assert second.metadata["cache_hit"] is False
+    assert first.screenshot_path == str(screenshot_path)
+    assert second.screenshot_path == str(screenshot_path)
+    assert screenshot_path.exists()
 
 
 @pytest.mark.asyncio

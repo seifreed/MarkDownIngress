@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
-    validate_http_url_no_ssrf,
+    validate_http_url_no_ssrf_with_dns_check,
 )
 from markdown_ingress.core.stealth import (
     AdvancedStealthConfig,
@@ -92,12 +92,10 @@ class AdvancedStealthRenderer:
             self.stealth_config = stealth_config
 
     def _validate_render_url(self, url: str) -> str:
-        validate_http_url_no_ssrf(
+        return validate_http_url_no_ssrf_with_dns_check(
             url,
             allow_local=self.allow_local_urls,
-            resolve_dns=False,
         )
-        return str(url).strip()
 
     async def render(self, url: str) -> FetchResult:
         """

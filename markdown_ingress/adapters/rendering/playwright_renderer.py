@@ -20,7 +20,7 @@ from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
-    validate_http_url_no_ssrf,
+    validate_http_url_no_ssrf_with_dns_check,
 )
 from markdown_ingress.models import FetchResult
 
@@ -153,12 +153,10 @@ class Renderer(IRenderer):
         self.allow_local_urls = config.allow_local_urls
 
     def _validate_render_url(self, url: str) -> str:
-        validate_http_url_no_ssrf(
+        return validate_http_url_no_ssrf_with_dns_check(
             url,
             allow_local=resolve_allow_local_urls(self.allow_local_urls),
-            resolve_dns=False,
         )
-        return str(url).strip()
 
     async def render(self, url: str) -> FetchResult:
         validated_url = self._validate_render_url(url)

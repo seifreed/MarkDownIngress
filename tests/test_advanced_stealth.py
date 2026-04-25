@@ -168,15 +168,15 @@ def test_advanced_stealth_config_avoids_immediate_repeat_with_explicit_signature
     ), "previous_signature must avoid immediate repetition"
 
 
-def test_advanced_stealth_validates_public_url_without_dns_resolution(monkeypatch):
+def test_advanced_stealth_validates_public_url_with_dns_check(monkeypatch):
     calls: list[tuple[str, bool, bool]] = []
 
     def fake_validate(url, *, allow_local, resolve_dns):
         calls.append((url, allow_local, resolve_dns))
-        return url
+        return "https://93.184.216.34/page"
 
     monkeypatch.setattr(
-        "markdown_ingress.adapters.rendering.advanced_stealth_renderer.validate_http_url_no_ssrf",
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
         fake_validate,
     )
     renderer = AdvancedStealthRenderer(allow_local_urls=False)
@@ -184,7 +184,7 @@ def test_advanced_stealth_validates_public_url_without_dns_resolution(monkeypatc
     assert renderer._validate_render_url("https://rebind.example/page") == (
         "https://rebind.example/page"
     )
-    assert calls == [("https://rebind.example/page", False, False)]
+    assert calls == [("https://rebind.example/page", False, True)]
 
 
 def test_advanced_stealth_config_custom_inputs():

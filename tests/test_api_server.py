@@ -5,6 +5,7 @@ Tests for FastAPI server endpoints
 import asyncio
 import importlib
 import logging
+import socket
 import sqlite3
 import threading
 import time
@@ -71,6 +72,25 @@ def test_api_server_models_block_private_and_loopback_urls(monkeypatch, url: str
 
     with pytest.raises(ValueError, match="SSRF protection"):
         BatchIngestRequest(urls=[url])
+
+
+def test_api_server_models_block_hostnames_resolving_private(monkeypatch):
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "false")
+
+    def fake_getaddrinfo(host, *_args, **_kwargs):
+        assert host == "public.example.test"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+
+    monkeypatch.setattr("markdown_ingress.core.ssrf.socket.getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        IngestRequest(url="http://public.example.test/private")
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        RetryIngestRequest(url="http://public.example.test/private")
+
+    with pytest.raises(ValueError, match="SSRF protection"):
+        BatchIngestRequest(urls=["http://public.example.test/private"])
 
 
 def test_batch_request_blocks_metadata_azure_webhook_url():

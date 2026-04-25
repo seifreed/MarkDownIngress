@@ -14,7 +14,11 @@ from markdown_ingress.config_models import (
     VALID_POLICY_NAMES,
     _validate_output_profile_name,
 )
-from markdown_ingress.core.ssrf import resolve_allow_local_urls, validate_http_url_no_ssrf
+from markdown_ingress.core.ssrf import (
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf,
+    validate_http_url_no_ssrf_with_dns_check,
+)
 
 Mode = Literal["auto", "fast", "render"]
 ChunkingStrategy = Literal["none", "heading", "size"]
@@ -30,11 +34,19 @@ def _allow_local_webhooks_enabled() -> bool:
     return _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
 
 
-def _validate_url_no_ssrf(url: str, *, allow_local: bool | None = None) -> str:
+def _validate_url_no_ssrf(
+    url: str,
+    *,
+    allow_local: bool | None = None,
+    resolve_dns: bool = True,
+) -> str:
     """Validate URL against SSRF attacks."""
+    resolved_allow_local = resolve_allow_local_urls(allow_local)
+    if resolve_dns:
+        return validate_http_url_no_ssrf_with_dns_check(url, allow_local=resolved_allow_local)
     return validate_http_url_no_ssrf(
         url,
-        allow_local=resolve_allow_local_urls(allow_local),
+        allow_local=resolved_allow_local,
         resolve_dns=False,
     )
 
@@ -291,6 +303,7 @@ class BatchIngestRequest(BaseModel):
             _validate_url_no_ssrf(
                 str(self.webhook_url),
                 allow_local=_allow_local_webhooks_enabled(),
+                resolve_dns=False,
             )
         return self
 

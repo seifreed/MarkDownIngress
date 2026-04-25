@@ -213,23 +213,21 @@ def test_renderer_rejects_unsafe_top_level_url_before_navigation(url: str):
         renderer.render_sync(url)
 
 
-def test_renderer_validates_public_top_level_url_without_dns_resolution(monkeypatch):
-    import markdown_ingress.adapters.rendering.playwright_renderer as _renderer_module
-
+def test_renderer_validates_public_top_level_url_with_dns_check(monkeypatch):
     calls: list[tuple[str, bool, bool]] = []
 
     def fake_validate(url: str, *, allow_local: bool, resolve_dns: bool) -> str:
         assert url == "https://rebind.example/private"
         calls.append((url, allow_local, resolve_dns))
-        return url
+        return "https://93.184.216.34/private"
 
-    monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
+    monkeypatch.setattr("markdown_ingress.core.ssrf.validate_http_url_no_ssrf", fake_validate)
     renderer = _GuardedRenderer(allow_local_urls=False)
 
     assert renderer._validate_render_url("https://rebind.example/private") == (
         "https://rebind.example/private"
     )
-    assert calls == [("https://rebind.example/private", False, False)]
+    assert calls == [("https://rebind.example/private", False, True)]
 
 
 @pytest.mark.asyncio
@@ -290,15 +288,13 @@ async def test_advanced_stealth_rejects_local_top_level_url():
 
 
 @pytest.mark.asyncio
-async def test_advanced_stealth_allows_public_top_level_url_without_dns_resolution(monkeypatch):
-    import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
-
+async def test_advanced_stealth_allows_public_top_level_url_with_dns_check(monkeypatch):
     calls: list[tuple[str, bool, bool]] = []
 
     def fake_validate(url: str, *, allow_local: bool, resolve_dns: bool) -> str:
         assert url == "https://rebind.example/private"
         calls.append((url, allow_local, resolve_dns))
-        return url
+        return "https://93.184.216.34/private"
 
     rendered_urls: list[str] = []
 
@@ -306,11 +302,11 @@ async def test_advanced_stealth_allows_public_top_level_url_without_dns_resoluti
         rendered_urls.append(_url)
         return SimpleNamespace(url=_url)
 
-    monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
+    monkeypatch.setattr("markdown_ingress.core.ssrf.validate_http_url_no_ssrf", fake_validate)
     renderer = AdvancedStealthRenderer(timeout=5.0, headless=True, allow_local_urls=False)
     monkeypatch.setattr(renderer, "_render_with_browser", fake_render)
 
     await renderer.render("https://rebind.example/private")
 
-    assert calls == [("https://rebind.example/private", False, False)]
+    assert calls == [("https://rebind.example/private", False, True)]
     assert rendered_urls == ["https://rebind.example/private"]
