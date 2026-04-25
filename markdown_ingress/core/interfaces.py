@@ -111,7 +111,6 @@ class INormalizer(Protocol):
         ...  # pragma: no cover
 
 
-
 class ICacheBackend(Protocol):
     """Protocol for cache backend implementations."""
 
@@ -255,6 +254,10 @@ class ITokenEstimator(Protocol):
 
     def estimate(self, text: str) -> int:
         """Return estimated token count for text."""
+        ...  # pragma: no cover
+
+    def estimate_savings(self, original_html: str, markdown: str) -> dict[str, Any]:
+        """Return token savings metadata between source HTML and Markdown."""
         ...  # pragma: no cover
 
 

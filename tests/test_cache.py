@@ -824,6 +824,31 @@ def test_sqlite_cache_corrupt_entry_deleted(tmp_path, caplog):
     cache.close()
 
 
+def test_sqlite_cache_non_object_json_entry_deleted(tmp_path, caplog):
+    """Valid JSON with a non-object root is corrupt and should be purged."""
+    import logging
+
+    db_path = tmp_path / "test.db"
+    cache = SQLiteCache(db_path=str(db_path), default_ttl=3600)
+
+    with cache._db_lock:
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            ("list_key", "[1, 2, 3]", 0.0, 0.0),
+        )
+        cache.conn.commit()
+
+    with caplog.at_level(logging.WARNING):
+        result = cache.get("list_key")
+
+    assert result is None
+    assert "Cache deserialization failed" in caplog.text
+    cursor = cache.conn.execute("SELECT COUNT(*) FROM cache WHERE key = 'list_key'")
+    assert cursor.fetchone()[0] == 0
+
+    cache.close()
+
+
 def test_memory_cache_returns_deep_copy(sample_document):
     """Test that MemoryCache.get() returns a deep copy to prevent TOCTOU issues with nested objects"""
     cache = MemoryCache(default_ttl=3600)

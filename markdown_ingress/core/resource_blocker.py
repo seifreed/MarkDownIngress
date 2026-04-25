@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
+    dns_pin_matches_hostname,
     normalize_domain_pattern,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf_with_dns_check,
@@ -366,8 +367,19 @@ class ResourceBlocker:
             return True, _SSRF_BLOCK_REASON
         pin = dns_pin_for_validated_http_url(url, validated_url)
         if pin is not None and self.enforce_dns_pinning:
-            hostname, pinned_address = pin
-            if self.dns_pins.get(hostname) != pinned_address:
+            hostname, _pinned_address = pin
+            installed_pin = self.dns_pins.get(hostname)
+            if installed_pin is None:
+                return True, _SSRF_BLOCK_REASON
+            try:
+                pin_is_valid = dns_pin_matches_hostname(
+                    hostname,
+                    installed_pin,
+                    allow_local=self.allow_local_urls,
+                )
+            except ValueError:
+                return True, _SSRF_BLOCK_REASON
+            if not pin_is_valid:
                 return True, _SSRF_BLOCK_REASON
         return None
 

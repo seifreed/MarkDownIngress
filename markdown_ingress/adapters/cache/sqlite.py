@@ -448,6 +448,10 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         import dataclasses
 
         data = json.loads(json_str)
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Cache entry root has unexpected type {type(data).__name__}; expected object"
+            )
         # Filter out keys no longer in the schema (forward compat)
         known_fields = {f.name for f in dataclasses.fields(SafeDocument)}
         filtered = {k: v for k, v in data.items() if k in known_fields}

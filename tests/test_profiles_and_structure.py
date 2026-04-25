@@ -9,7 +9,7 @@ from markdown_ingress import DomainPolicy, IngestConfig, compare_extractors, ing
 from markdown_ingress.api_server import app
 from markdown_ingress.core.config import Config
 from markdown_ingress.core.document_builder import build_policy_engine, process_fetched_content
-from markdown_ingress.models import FetchResult
+from markdown_ingress.models import ExtractionResult, FetchResult
 
 FIXTURE_HTML = Path("tests/fixtures/technical_doc.html").read_text(encoding="utf-8")
 
@@ -223,9 +223,7 @@ def test_config_overrides_become_explicit():
     config = IngestConfig(output_profile="for_archive")
     merged = config.clone()
     merged.strict = False
-    object.__setattr__(
-        merged, "_explicit_keys", frozenset(config.explicit_keys() | {"strict"})
-    )
+    object.__setattr__(merged, "_explicit_keys", frozenset(config.explicit_keys() | {"strict"}))
     merged.validate()
     assert "strict" in merged.explicit_keys()
     resolved, _ = merged.resolve_for_url("https://example.com/page")
@@ -260,6 +258,60 @@ def test_metadata_tracks_requested_and_emitted_output_formats_separately():
     assert document.structured_blocks is None
     assert document.metadata["output_formats"] == ["markdown", "blocks"]
     assert document.metadata["emitted_output_formats"] == ["markdown"]
+
+
+def test_process_fetched_content_uses_complete_token_estimator_contract():
+    class CustomTokenEstimator:
+        def estimate(self, text: str) -> int:
+            return len(text.split())
+
+        def estimate_savings(self, original_html: str, markdown: str) -> dict:
+            return {
+                "html_tokens": self.estimate(original_html),
+                "markdown_tokens": self.estimate(markdown),
+                "saved_tokens": 3,
+                "savings_percent": 75.0,
+            }
+
+    class Extractor:
+        def extract(self, html: str, url: str) -> ExtractionResult:
+            return ExtractionResult(
+                html="<article><p>Hello world</p></article>",
+                title="Doc",
+                author=None,
+                removed_tags={},
+                removed_hidden=0,
+                text_content="Hello world",
+            )
+
+    class MarkdownConverter:
+        def convert(self, html: str) -> str:
+            return "Hello world\n"
+
+    config = IngestConfig(
+        mode="fast",
+        extract_metadata=False,
+        extract_links=False,
+    )
+    document = process_fetched_content(
+        SimpleNamespace(
+            extractor=Extractor(),
+            md_converter=MarkdownConverter(),
+            hasher=None,
+            token_estimator=CustomTokenEstimator(),
+            scorer=None,
+            metadata_extractor=None,
+            link_analyzer=None,
+        ),
+        _make_fetch_result(
+            "https://docs.example.com/page",
+            "<html><body><article><p>Hello world</p></article></body></html>",
+        ),
+        config,
+    )
+
+    assert document.token_estimate == 2
+    assert document.metadata["token_savings"]["saved_tokens"] == 3
 
 
 def test_markdown_preserves_code_fences_and_tables(monkeypatch):

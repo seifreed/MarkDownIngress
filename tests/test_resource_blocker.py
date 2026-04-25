@@ -183,9 +183,17 @@ class TestResourceBlocker:
             assert resolve_dns is True
             return "https://93.184.216.34/app.js"
 
+        def fake_getaddrinfo(host, port):
+            assert host == "rebind.example"
+            return [(None, None, None, None, ("93.184.216.34", 0))]
+
         monkeypatch.setattr(
             "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
             fake_validate,
+        )
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.socket.getaddrinfo",
+            fake_getaddrinfo,
         )
         blocker = ResourceBlocker(
             block_images=False,
@@ -202,6 +210,106 @@ class TestResourceBlocker:
         assert blocker._should_block("script", "https://rebind.example/app.js") == (
             False,
             None,
+        )
+
+    def test_should_allow_public_subresource_when_dns_pin_is_in_resolved_ip_set(self, monkeypatch):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert resolve_dns is True
+            return "https://93.184.216.35/app.js"
+
+        def fake_getaddrinfo(host, port):
+            assert host == "rebind.example"
+            return [
+                (None, None, None, None, ("93.184.216.35", 0)),
+                (None, None, None, None, ("93.184.216.34", 0)),
+            ]
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.socket.getaddrinfo",
+            fake_getaddrinfo,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+            dns_pins={"rebind.example": "93.184.216.34"},
+            enforce_dns_pinning=True,
+        )
+
+        assert blocker._should_block("script", "https://rebind.example/app.js") == (
+            False,
+            None,
+        )
+
+    def test_should_block_public_subresource_with_stale_browser_dns_pin(self, monkeypatch):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert resolve_dns is True
+            return "https://93.184.216.35/app.js"
+
+        def fake_getaddrinfo(host, port):
+            assert host == "rebind.example"
+            return [
+                (None, None, None, None, ("93.184.216.35", 0)),
+                (None, None, None, None, ("93.184.216.36", 0)),
+            ]
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.socket.getaddrinfo",
+            fake_getaddrinfo,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+            dns_pins={"rebind.example": "93.184.216.34"},
+            enforce_dns_pinning=True,
+        )
+
+        assert blocker._should_block("script", "https://rebind.example/app.js") == (
+            True,
+            "ssrf_protection",
+        )
+
+    def test_should_block_public_subresource_with_private_browser_dns_pin(self, monkeypatch):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert resolve_dns is True
+            return "https://93.184.216.35/app.js"
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+            dns_pins={"rebind.example": "127.0.0.1"},
+            enforce_dns_pinning=True,
+        )
+
+        assert blocker._should_block("script", "https://rebind.example/app.js") == (
+            True,
+            "ssrf_protection",
         )
 
     def test_should_block_subresource_hostname_resolving_private(self, monkeypatch):
@@ -594,9 +702,7 @@ class TestSecurityFixes:
 
     def test_ads_and_trackers_toggles_are_respected_independently(self):
         ads_only = ResourceBlocker(block_ads=True, block_trackers=False, validate_ssrf=False)
-        trackers_only = ResourceBlocker(
-            block_ads=False, block_trackers=True, validate_ssrf=False
-        )
+        trackers_only = ResourceBlocker(block_ads=False, block_trackers=True, validate_ssrf=False)
 
         assert (
             ads_only._should_block("script", "https://google-analytics.com/analytics.js")[0]

@@ -37,8 +37,8 @@ _BLOCKED_HOSTNAMES = frozenset(
         "metadata.aliyun.internal",
         "169.254.169.254",
         "0.0.0.0",
-        "::1",                # IPv6 loopback
-        "0:0:0:0:0:0:0:1",    # IPv6 loopback (long form)
+        "::1",  # IPv6 loopback
+        "0:0:0:0:0:0:0:1",  # IPv6 loopback (long form)
     }
 )
 
@@ -226,6 +226,49 @@ def _resolve_hostname_ips_for_ssrf(
     return tuple(unique)
 
 
+def validate_hostname_dns_ips_for_ssrf(
+    hostname: str,
+    *,
+    allow_local: bool = False,
+) -> tuple[str, ...]:
+    """Resolve and validate all DNS answers for a hostname."""
+    normalized = normalize_hostname(hostname)
+    if not normalized:
+        raise ValueError("URL must have a valid host")
+    if not allow_local and is_blocked_hostname(normalized):
+        raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
+
+    resolved_ips = _resolve_hostname_ips_for_ssrf(normalized)
+    validated_ips: list[str] = []
+    for resolved_ip in resolved_ips:
+        if not allow_local and is_blocked_ip_address(resolved_ip):
+            raise ValueError(
+                f"URL hostname resolves to blocked IP (SSRF protection): "
+                f"{normalized} -> {resolved_ip}"
+            )
+        validated_ips.append(str(resolved_ip))
+    return tuple(validated_ips)
+
+
+def dns_pin_matches_hostname(
+    hostname: str,
+    pinned_ip: str,
+    *,
+    allow_local: bool = False,
+) -> bool:
+    """Return whether an installed browser DNS pin is valid for a hostname."""
+    try:
+        pin = normalize_ip_for_ssrf(ipaddress.ip_address(normalize_hostname(pinned_ip)))
+    except ValueError:
+        return False
+    if not allow_local and is_blocked_ip_address(pin):
+        return False
+    return str(pin) in validate_hostname_dns_ips_for_ssrf(
+        hostname,
+        allow_local=allow_local,
+    )
+
+
 def validate_hostname_for_ssrf(
     hostname: str,
     *,
@@ -279,15 +322,10 @@ def validate_hostname_for_ssrf(
             if normalized.lower() in _BLOCKED_HOSTNAMES:
                 raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
             return normalized
-        resolved_ips = _resolve_hostname_ips_for_ssrf(normalized)
-        for resolved_ip in resolved_ips:
-            if is_blocked_ip_address(resolved_ip):
-                raise ValueError(
-                    f"URL hostname resolves to blocked IP (SSRF protection): {normalized} -> {resolved_ip}"
-                )
+        resolved_ips = validate_hostname_dns_ips_for_ssrf(normalized, allow_local=allow_local)
         # Return the first resolved IP to pin DNS and prevent rebinding
         if resolved_ips:
-            return str(resolved_ips[0])
+            return resolved_ips[0]
         return normalized
 
     if is_blocked_ip_address(ip):
