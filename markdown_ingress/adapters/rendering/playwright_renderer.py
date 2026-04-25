@@ -18,6 +18,11 @@ from markdown_ingress.adapters.rendering.renderer_support import (
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.core.resource_blocker import ResourceBlocker
+from markdown_ingress.core.ssrf import (
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf,
+    validated_http_url_requires_dns_pinning,
+)
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
@@ -148,17 +153,28 @@ class Renderer(IRenderer):
         self.screenshot = config.screenshot
         self.allow_local_urls = config.allow_local_urls
 
+    def _validate_render_url(self, url: str) -> str:
+        validated_url = validate_http_url_no_ssrf(
+            url,
+            allow_local=resolve_allow_local_urls(self.allow_local_urls),
+            resolve_dns=True,
+        )
+        if validated_http_url_requires_dns_pinning(url, validated_url):
+            raise ValueError("Render URL requires DNS pinning that cannot be preserved safely")
+        return str(url).strip()
+
     async def render(self, url: str) -> FetchResult:
+        validated_url = self._validate_render_url(url)
         if self.extreme_mode:
-            return await self._render_with_progressive_timeout(url)
+            return await self._render_with_progressive_timeout(validated_url)
 
         try:
-            result = await self._render_with_browser(url)
+            result = await self._render_with_browser(validated_url)
             return result
         except Exception as e:
             error_str = str(e)
             if self._is_retryable_navigation_error(e):
-                retry_result = await self._render_with_browser(url)
+                retry_result = await self._render_with_browser(validated_url)
                 retry_result.metadata["navigation_retry"] = True
                 retry_result.metadata["original_error"] = error_str[:200]
                 return retry_result
@@ -183,7 +199,7 @@ class Renderer(IRenderer):
                     allow_local_urls=self.allow_local_urls,
                 )
                 retry_renderer = Renderer(config=retry_config)
-                result = await retry_renderer._render_with_browser(url)
+                result = await retry_renderer._render_with_browser(validated_url)
                 result.metadata["http2_fallback"] = True
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
                 return result

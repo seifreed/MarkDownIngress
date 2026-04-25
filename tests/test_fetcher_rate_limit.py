@@ -407,6 +407,41 @@ def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypa
     assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
 
 
+def test_fetch_sync_invalid_redirect_location_is_not_retried_or_circuited():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class Handler(BaseHTTPRequestHandler):
+        count = 0
+
+        def do_GET(self):
+            type(self).count += 1
+            self.send_response(302)
+            self.send_header("Location", "ftp://example.com/hook")
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            return
+
+    server, url = _start_server(Handler)
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        circuit_breaker_threshold=1,
+        circuit_breaker_open_seconds=60.0,
+        allow_local_urls=True,
+    )
+    try:
+        for _ in range(2):
+            with pytest.raises(ValueError, match="Invalid URL scheme"):
+                fetcher.fetch_sync(url)
+    finally:
+        fetcher.close()
+        server.shutdown()
+        server.server_close()
+
+    assert Handler.count == 2
+
+
 def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -543,6 +578,46 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
     assert calls[1][0] == "https://203.0.113.10:9443/final"
     assert calls[1][1]["headers"]["Host"] == "target.test:9443"
     assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+
+
+def test_fetch_async_invalid_redirect_location_is_not_retried_or_circuited():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class Handler(BaseHTTPRequestHandler):
+        count = 0
+
+        def do_GET(self):
+            type(self).count += 1
+            self.send_response(302)
+            self.send_header("Location", "ftp://example.com/hook")
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            return
+
+    async def run(url: str) -> None:
+        fetcher = Fetcher(
+            timeout=2.0,
+            domain_request_interval=0.0,
+            circuit_breaker_threshold=1,
+            circuit_breaker_open_seconds=60.0,
+            allow_local_urls=True,
+        )
+        try:
+            for _ in range(2):
+                with pytest.raises(ValueError, match="Invalid URL scheme"):
+                    await fetcher.fetch(url)
+        finally:
+            await fetcher.aclose()
+
+    server, url = _start_server(Handler)
+    try:
+        asyncio.run(run(url))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert Handler.count == 2
 
 
 def test_fetcher_instance_state_does_not_leak_between_configs():

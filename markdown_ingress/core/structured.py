@@ -265,6 +265,13 @@ class ChunkBuilder:
             token_estimator = _token_estimator_factory()
         self.token_estimator = token_estimator
 
+    @staticmethod
+    def _chunk_text_for_block(block: StructuredBlock) -> str:
+        """Return the text payload used for chunk offsets and token estimates."""
+        if block.text:
+            return block.text
+        return block.markdown.strip()
+
     def build(
         self,
         blocks: list[StructuredBlock],
@@ -297,14 +304,20 @@ class ChunkBuilder:
         cursor = 0
 
         for index, group in enumerate(groups):
-            # Build text without strip to preserve character offsets
-            # Filter empty blocks and join with separator
-            block_texts = [block.text for block in group if block.text]
+            # Preserve structurally significant code/table blocks whose text is
+            # empty but whose markdown still carries emitted content.
+            block_texts = [
+                text
+                for block in group
+                if (text := self._chunk_text_for_block(block))
+            ]
             text = "\n\n".join(block_texts)
             markdown = "\n\n".join(block.markdown.strip() for block in group).strip() + "\n"
             structural_source = "\n".join(block.structural_hash for block in group)
             structural_hash = self.hasher.hash_content(structural_source)
 
+            if index > 0:
+                cursor += 2  # inter-chunk "\n\n" separator in the canonical text stream
             char_start = cursor
             char_end = cursor + len(text)
 

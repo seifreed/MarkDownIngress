@@ -183,7 +183,7 @@ def _compute_retry_attempt_params(
     timeout = initial_timeout + attempt * _RETRY_TIMEOUT_INCREMENT_S
     if max_timeout is not None:
         timeout = min(timeout, max_timeout)
-    return timeout, enable_stealth and attempt >= 1, attempt == max_retries - 1
+    return timeout, enable_stealth and attempt >= 1, attempt > 0 and attempt == max_retries - 1
 
 
 def _is_retryable_error(exc: Exception) -> bool:

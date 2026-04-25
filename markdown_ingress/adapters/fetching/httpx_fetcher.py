@@ -822,6 +822,9 @@ class Fetcher(IFetcher):
             except (UnsupportedContentTypeError, ResponseSizeLimitError):
                 raise
 
+            except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
+                raise
+
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 status_code = exc.response.status_code
@@ -840,7 +843,6 @@ class Fetcher(IFetcher):
                 raise
 
             except httpx.TooManyRedirects:
-                self._record_failure(host)
                 raise
 
             except Exception as exc:
@@ -1010,6 +1012,9 @@ class Fetcher(IFetcher):
                     except (UnsupportedContentTypeError, ResponseSizeLimitError):
                         raise
 
+                    except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
+                        raise
+
                     except httpx.HTTPStatusError as exc:
                         ssl_last_exc = exc
                         status_code = exc.response.status_code
@@ -1039,7 +1044,6 @@ class Fetcher(IFetcher):
                         raise
 
                     except httpx.TooManyRedirects:
-                        self._record_failure(host)
                         raise
 
                     except Exception as exc:
@@ -1196,6 +1200,9 @@ class Fetcher(IFetcher):
             except (UnsupportedContentTypeError, ResponseSizeLimitError):
                 raise
 
+            except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
+                raise
+
             except httpx.HTTPStatusError as exc:
                 last_exc = exc
                 status_code = exc.response.status_code
@@ -1214,7 +1221,6 @@ class Fetcher(IFetcher):
                 raise
 
             except httpx.TooManyRedirects:
-                self._record_failure(host)
                 raise
 
             except Exception as exc:
@@ -1384,6 +1390,9 @@ class Fetcher(IFetcher):
                     except (UnsupportedContentTypeError, ResponseSizeLimitError):
                         raise
 
+                    except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
+                        raise
+
                     except httpx.HTTPStatusError as exc:
                         ssl_last_exc = exc
                         status_code = exc.response.status_code
@@ -1413,7 +1422,6 @@ class Fetcher(IFetcher):
                         raise
 
                     except httpx.TooManyRedirects:
-                        self._record_failure(host)
                         raise
 
                     except Exception as exc:

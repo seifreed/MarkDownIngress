@@ -48,6 +48,21 @@ def test_retry_ingest_success_first_attempt(mock_document):
         assert mock_ingest.call_count == 1
 
 
+def test_retry_ingest_single_attempt_does_not_enable_extreme_mode(mock_document):
+    from markdown_ingress.api_facade import _compute_retry_attempt_params
+
+    assert _compute_retry_attempt_params(0, 1, 60.0, None, True) == (60.0, False, False)
+
+    with patch("markdown_ingress.api.ingest") as mock_ingest:
+        mock_ingest.return_value = mock_document
+
+        retry_ingest(url="https://example.com", max_retries=1, enable_stealth=True)
+
+        call_args = mock_ingest.call_args.kwargs
+        assert call_args["stealth"] is False
+        assert call_args["extreme_mode"] is False
+
+
 def test_retry_ingest_with_retry(mock_document):
     """Test retry logic when first attempt fails"""
     with patch("markdown_ingress.api.ingest") as mock_ingest:

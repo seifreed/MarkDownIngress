@@ -285,8 +285,39 @@ def test_chunk_builder_counts_empty_text_blocks_using_markdown_length():
     chunks = builder.build(blocks, strategy="size", chunk_size=5, chunk_overlap=0)
 
     assert len(chunks) == 2
+    assert chunks[0].text == "ABCD"
     assert chunks[0].markdown.startswith("ABCD")
+    assert chunks[0].char_start == 0
+    assert chunks[0].char_end == 4
+    assert chunks[0].token_estimate > 0
+    assert chunks[1].text == "EF"
     assert chunks[1].markdown.startswith("EF")
+    assert chunks[1].char_start == 6
+    assert chunks[1].char_end == 8
+
+
+def test_chunk_builder_offsets_include_inter_group_separators():
+    from markdown_ingress.models import StructuredBlock
+
+    blocks = [
+        StructuredBlock(
+            block_type="paragraph", text="aaaa", markdown="aaaa\n", ordinal=0, structural_hash="h0"
+        ),
+        StructuredBlock(
+            block_type="paragraph", text="bbbb", markdown="bbbb\n", ordinal=1, structural_hash="h1"
+        ),
+        StructuredBlock(
+            block_type="paragraph", text="cccc", markdown="cccc\n", ordinal=2, structural_hash="h2"
+        ),
+    ]
+
+    chunks = ChunkBuilder().build(blocks, strategy="size", chunk_size=5, chunk_overlap=0)
+
+    assert [(chunk.text, chunk.char_start, chunk.char_end) for chunk in chunks] == [
+        ("aaaa", 0, 4),
+        ("bbbb", 6, 10),
+        ("cccc", 12, 16),
+    ]
 
 
 def test_hasher_normalizes_list_indentation_for_structural_hash():

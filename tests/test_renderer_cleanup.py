@@ -132,6 +132,14 @@ def _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, p
     )
 
 
+class _GuardedRenderer(Renderer):
+    async def _render_with_browser(self, url: str):
+        raise AssertionError(f"renderer should not navigate to {url}")
+
+    async def _render_with_progressive_timeout(self, url: str):
+        raise AssertionError(f"renderer should not navigate to {url}")
+
+
 @pytest.mark.asyncio
 async def test_execute_render_session_closes_context_and_browser_when_page_close_fails(monkeypatch):
     page, context, browser = _install_fake_playwright(
@@ -188,6 +196,35 @@ async def test_renderer_block_resources_false_keeps_subresource_ssrf_blocking():
     blocker = await renderer._setup_resource_blocking(page)
 
     _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, page)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://example.com/hook",
+        "file:///etc/hosts",
+        "http://127.0.0.1/private",
+    ],
+)
+def test_renderer_rejects_unsafe_top_level_url_before_navigation(url: str):
+    renderer = _GuardedRenderer(allow_local_urls=False)
+
+    with pytest.raises(ValueError):
+        renderer.render_sync(url)
+
+
+def test_renderer_blocks_public_top_level_url_requiring_dns_pinning(monkeypatch):
+    import markdown_ingress.adapters.rendering.playwright_renderer as _renderer_module
+
+    def fake_validate(url: str, **_kwargs) -> str:
+        assert url == "https://rebind.example/private"
+        return "https://93.184.216.34/private"
+
+    monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
+    renderer = _GuardedRenderer()
+
+    with pytest.raises(ValueError, match="DNS pinning"):
+        renderer.render_sync("https://rebind.example/private")
 
 
 @pytest.mark.asyncio
