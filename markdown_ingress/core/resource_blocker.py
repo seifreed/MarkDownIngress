@@ -14,7 +14,6 @@ from markdown_ingress.core.ssrf import (
     normalize_domain_pattern,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
-    validated_http_url_requires_dns_pinning,
 )
 
 logger = logging.getLogger(__name__)
@@ -347,13 +346,11 @@ class ResourceBlocker:
         if not self.validate_ssrf:
             return None
         try:
-            validated_url = validate_http_url_no_ssrf(
+            validate_http_url_no_ssrf(
                 url,
                 allow_local=self.allow_local_urls,
-                resolve_dns=True,
+                resolve_dns=False,
             )
-            if validated_http_url_requires_dns_pinning(url, validated_url):
-                return True, _SSRF_BLOCK_REASON
         except ValueError:
             return True, _SSRF_BLOCK_REASON
         return None

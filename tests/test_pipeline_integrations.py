@@ -31,7 +31,6 @@ from markdown_ingress.adapters.fetching.httpx_fetcher import UnsupportedContentT
 from markdown_ingress.application.use_cases import (
     BatchIngestUseCase,
     IngestUseCase,
-    RenderUrlRequiresDnsPinningError,
     _looks_like_auth_interstitial,
 )
 from markdown_ingress.config_models import DomainPolicy
@@ -389,6 +388,7 @@ class LeakPlugin(Plugin):
     doc = ingest(
         "https://unit.test/plugins",
         mode="fast",
+        strict=False,
         plugin_dirs=[str(tmp_path)],
     )
 
@@ -419,6 +419,7 @@ class VersionedPlugin(Plugin):
     first = ingest(
         "https://unit.test/versioned-plugin",
         mode="fast",
+        strict=False,
         cache=cache,
         plugin_dirs=[str(tmp_path)],
     )
@@ -438,6 +439,7 @@ class VersionedPlugin(Plugin):
     second = ingest(
         "https://unit.test/versioned-plugin",
         mode="fast",
+        strict=False,
         cache=cache,
         plugin_dirs=[str(tmp_path)],
     )
@@ -478,6 +480,7 @@ def test_custom_patterns_flow_into_pattern_matches_and_explanation(monkeypatch):
     doc = ingest(
         "https://unit.test/custom-patterns",
         mode="fast",
+        strict=False,
         custom_patterns=["MAGIC_SENTINEL_123"],
     )
 
@@ -488,6 +491,33 @@ def test_custom_patterns_flow_into_pattern_matches_and_explanation(monkeypatch):
     assert any(
         trigger["name"] == "custom_pattern_1" for trigger in doc.security_explanation["triggers"]
     )
+
+
+def test_strict_mode_applies_to_custom_pattern_policy_decision(monkeypatch):
+    def fake_fetch_sync(self, url: str):
+        html = "<html><body><article><p>STRICT_SENTINEL_456</p></article></body></html>"
+        return _make_fetch_result(url, html)
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
+
+    with pytest.raises(PolicyBlockedError) as exc_info:
+        ingest(
+            "https://unit.test/strict-custom-pattern",
+            mode="fast",
+            strict=True,
+            policy_name="normal",
+            custom_patterns=["STRICT_SENTINEL_456"],
+        )
+
+    doc = exc_info.value.document
+    assert doc is not None
+    assert doc.injection_score >= 0.5
+    assert doc.metadata["policy_action"] == "block"
+    assert "policy_block" in doc.flags
+    assert doc.security_explanation is not None
+    assert doc.security_explanation["recommendation"] == "block"
 
 
 def test_ingest_unloads_plugins_when_processing_fails(monkeypatch, tmp_path: Path):
@@ -1160,10 +1190,16 @@ def test_render_mode_validates_url_before_playwright(monkeypatch):
     assert calls["renderer"] == 0
 
 
-def test_render_mode_rejects_public_dns_pinning_result(monkeypatch):
+def test_render_mode_validates_public_url_without_dns_resolution(monkeypatch):
+    validation_calls: list[tuple[str, bool, bool]] = []
+
+    def fake_validate(url, *, allow_local, resolve_dns):
+        validation_calls.append((url, allow_local, resolve_dns))
+        return url
+
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
-        lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
+        fake_validate,
     )
     use_case = IngestUseCase(playwright_available=True)
     calls: list[str] = []
@@ -1180,19 +1216,26 @@ def test_render_mode_rejects_public_dns_pinning_result(monkeypatch):
 
     use_case.renderer_factory = lambda config: FakeRenderer()
 
-    with pytest.raises(RenderUrlRequiresDnsPinningError):
-        use_case.execute(
-            "https://rebind.example/private",
-            IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
-        )
+    doc = use_case.execute(
+        "https://rebind.example/private",
+        IngestConfig(mode="render", timeout=3.0, allow_local_urls=False),
+    )
 
-    assert calls == []
+    assert calls == ["https://rebind.example/private"]
+    assert doc.metadata["mode"] == "render"
+    assert validation_calls == [("https://rebind.example/private", False, False)]
 
 
-def test_auto_mode_keeps_fast_when_render_requires_dns_pinning(monkeypatch):
+def test_auto_mode_validates_render_url_without_dns_resolution(monkeypatch):
+    validation_calls: list[tuple[str, bool, bool]] = []
+
+    def fake_validate(url, *, allow_local, resolve_dns):
+        validation_calls.append((url, allow_local, resolve_dns))
+        return url
+
     monkeypatch.setattr(
         "markdown_ingress.application.use_cases.validate_http_url_no_ssrf",
-        lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/private",
+        fake_validate,
     )
     use_case = IngestUseCase(playwright_available=True)
     calls = {"renderer": 0}
@@ -1227,9 +1270,10 @@ def test_auto_mode_keeps_fast_when_render_requires_dns_pinning(monkeypatch):
         ),
     )
 
-    assert calls["renderer"] == 0
-    assert doc.metadata["auto_mode_used"] == "fast"
-    assert doc.metadata["auto_mode_reason"] == "render_blocked_ssrf"
+    assert calls["renderer"] == 1
+    assert doc.metadata["auto_mode_used"] == "render"
+    assert doc.metadata.get("auto_mode_reason") is None
+    assert validation_calls == [("https://rebind.example/private", False, False)]
 
 
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():

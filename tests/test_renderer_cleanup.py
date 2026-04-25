@@ -213,18 +213,23 @@ def test_renderer_rejects_unsafe_top_level_url_before_navigation(url: str):
         renderer.render_sync(url)
 
 
-def test_renderer_blocks_public_top_level_url_requiring_dns_pinning(monkeypatch):
+def test_renderer_validates_public_top_level_url_without_dns_resolution(monkeypatch):
     import markdown_ingress.adapters.rendering.playwright_renderer as _renderer_module
 
-    def fake_validate(url: str, **_kwargs) -> str:
+    calls: list[tuple[str, bool, bool]] = []
+
+    def fake_validate(url: str, *, allow_local: bool, resolve_dns: bool) -> str:
         assert url == "https://rebind.example/private"
-        return "https://93.184.216.34/private"
+        calls.append((url, allow_local, resolve_dns))
+        return url
 
     monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
-    renderer = _GuardedRenderer()
+    renderer = _GuardedRenderer(allow_local_urls=False)
 
-    with pytest.raises(ValueError, match="DNS pinning"):
-        renderer.render_sync("https://rebind.example/private")
+    assert renderer._validate_render_url("https://rebind.example/private") == (
+        "https://rebind.example/private"
+    )
+    assert calls == [("https://rebind.example/private", False, False)]
 
 
 @pytest.mark.asyncio
@@ -285,12 +290,15 @@ async def test_advanced_stealth_rejects_local_top_level_url():
 
 
 @pytest.mark.asyncio
-async def test_advanced_stealth_blocks_public_top_level_url_requiring_dns_pinning(monkeypatch):
+async def test_advanced_stealth_allows_public_top_level_url_without_dns_resolution(monkeypatch):
     import markdown_ingress.adapters.rendering.advanced_stealth_renderer as _renderer_module
 
-    def fake_validate(url: str, **_kwargs) -> str:
+    calls: list[tuple[str, bool, bool]] = []
+
+    def fake_validate(url: str, *, allow_local: bool, resolve_dns: bool) -> str:
         assert url == "https://rebind.example/private"
-        return "https://93.184.216.34/private"
+        calls.append((url, allow_local, resolve_dns))
+        return url
 
     rendered_urls: list[str] = []
 
@@ -299,10 +307,10 @@ async def test_advanced_stealth_blocks_public_top_level_url_requiring_dns_pinnin
         return SimpleNamespace(url=_url)
 
     monkeypatch.setattr(_renderer_module, "validate_http_url_no_ssrf", fake_validate)
-    renderer = AdvancedStealthRenderer(timeout=5.0, headless=True)
+    renderer = AdvancedStealthRenderer(timeout=5.0, headless=True, allow_local_urls=False)
     monkeypatch.setattr(renderer, "_render_with_browser", fake_render)
 
-    with pytest.raises(ValueError, match="DNS pinning"):
-        await renderer.render("https://rebind.example/private")
+    await renderer.render("https://rebind.example/private")
 
-    assert rendered_urls == []
+    assert calls == [("https://rebind.example/private", False, False)]
+    assert rendered_urls == ["https://rebind.example/private"]

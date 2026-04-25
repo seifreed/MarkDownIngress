@@ -322,6 +322,11 @@ def _run_and_merge_custom_analysis(
             list(security_result["flags"]) + ["multiple_injection_attempts"]
         )
     # Do NOT override imperative_density — it duplicates base computation on same text.
+    block_threshold, warn_threshold = security_engine.effective_thresholds(
+        policy_engine.policy.block_threshold,
+        policy_engine.policy.warn_threshold,
+        strict=config.strict,
+    )
     security_result["explanation"] = security_engine._build_explanation(
         final_score=security_result["injection_score"],
         basic_analysis=InjectionAnalysis(
@@ -333,8 +338,8 @@ def _run_and_merge_custom_analysis(
         ),
         nova_details=security_result.get("nova_details") or {},
         scan_method=security_result["scan_method"],
-        block_threshold=policy_engine.policy.block_threshold,
-        warn_threshold=policy_engine.policy.warn_threshold,
+        block_threshold=block_threshold,
+        warn_threshold=warn_threshold,
     )
     return security_result
 
@@ -524,14 +529,18 @@ def _apply_policy_decision(
     metadata: dict,
 ) -> str:
     """Determine the policy action, record it, and annotate metadata and flags in-place."""
-    policy_action = None
-    security_explanation = security_result.get("explanation")
-    if isinstance(security_explanation, dict):
-        recommendation = security_explanation.get("recommendation")
-        if recommendation in {"allow", "warn", "block"}:
-            policy_action = recommendation
-    if policy_action is None:
-        policy_action = policy_engine.get_action(security_result["injection_score"])
+    block_threshold, warn_threshold = SecurityEngine.effective_thresholds(
+        policy_engine.policy.block_threshold,
+        policy_engine.policy.warn_threshold,
+        strict=config.strict,
+    )
+    injection_score = float(security_result["injection_score"])
+    if injection_score >= block_threshold:
+        policy_action = "block"
+    elif injection_score >= warn_threshold:
+        policy_action = "warn"
+    else:
+        policy_action = "allow"
     record_policy_action(policy_action)
     metadata["policy"] = config.policy_name
     metadata["policy_action"] = policy_action

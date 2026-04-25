@@ -119,10 +119,16 @@ class TestResourceBlocker:
         assert should_block is True
         assert reason == "ssrf_protection"
 
-    def test_should_block_public_subresource_when_validation_returns_pinned_url(self, monkeypatch):
+    def test_should_allow_public_subresource_without_dns_pinning_requirement(self, monkeypatch):
+        calls: list[tuple[str, bool, bool]] = []
+
+        def fake_validate(url, *, allow_local, resolve_dns):
+            calls.append((url, allow_local, resolve_dns))
+            return url
+
         monkeypatch.setattr(
             "markdown_ingress.core.resource_blocker.validate_http_url_no_ssrf",
-            lambda url, *, allow_local, resolve_dns: "https://93.184.216.34/app.js",
+            fake_validate,
         )
         blocker = ResourceBlocker(
             block_images=False,
@@ -139,8 +145,9 @@ class TestResourceBlocker:
             "https://rebind.example/app.js",
         )
 
-        assert should_block is True
-        assert reason == "ssrf_protection"
+        assert should_block is False
+        assert reason is None
+        assert calls == [("https://rebind.example/app.js", False, False)]
 
     @pytest.mark.parametrize(
         "url",

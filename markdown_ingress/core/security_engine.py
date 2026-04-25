@@ -127,6 +127,19 @@ class SecurityEngine:
             logger.error(f"Nova scan failed: {e}")
             return self.exception_fallback_score, {"error": str(e), "scan_incomplete": True}, "nova_error"
 
+    @staticmethod
+    def effective_thresholds(
+        block_threshold: float = 0.7,
+        warn_threshold: float = 0.4,
+        *,
+        strict: bool = False,
+    ) -> tuple[float, float]:
+        """Return policy thresholds after applying strict-mode tightening."""
+        if strict:
+            block_threshold = min(block_threshold, 0.5)
+            warn_threshold = min(warn_threshold, 0.3)
+        return block_threshold, warn_threshold
+
     def analyze(
         self,
         markdown: str,
@@ -178,10 +191,11 @@ class SecurityEngine:
         else:
             final_score = max(basic_score, nova_score)
 
-        # Adjust thresholds in strict mode for more aggressive blocking
-        if self.strict:
-            block_threshold = min(block_threshold, 0.5)
-            warn_threshold = min(warn_threshold, 0.3)
+        block_threshold, warn_threshold = self.effective_thresholds(
+            block_threshold,
+            warn_threshold,
+            strict=self.strict,
+        )
 
         # Generate flags
         flags = self._generate_flags(basic_analysis, nova_details)

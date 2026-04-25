@@ -73,7 +73,6 @@ from markdown_ingress.core.policy import (
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
-    validated_http_url_requires_dns_pinning,
 )
 from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
@@ -444,15 +443,11 @@ class _FetchPipeline:
     @staticmethod
     def _validate_render_url(url: str, config: IngestConfig) -> str:
         """Apply SSRF validation before handing the logical URL to Playwright."""
-        validated_url = validate_http_url_no_ssrf(
+        validate_http_url_no_ssrf(
             url,
             allow_local=resolve_allow_local_urls(config.allow_local_urls),
-            resolve_dns=True,
+            resolve_dns=False,
         )
-        if validated_http_url_requires_dns_pinning(url, validated_url):
-            raise RenderUrlRequiresDnsPinningError(
-                "Render URL requires DNS pinning that cannot be preserved safely"
-            )
         return str(url).strip()
 
     def execute_mode(
