@@ -380,20 +380,30 @@ def validate_http_url_no_ssrf_with_dns_check(
     *,
     allow_local: bool = False,
 ) -> str:
-    """Validate URL syntax and DNS-resolved targets while preserving the logical URL.
-
-    Some callers, notably browser renderers, cannot safely consume the IP-pinned
-    URL returned by ``validate_http_url_no_ssrf(resolve_dns=True)`` because doing
-    so would break normal hostname-based browser behavior. They still need the
-    DNS deny check so hostnames resolving to private/loopback ranges are blocked.
-    """
+    """Validate URL syntax and DNS-resolved targets, returning the pinned URL."""
     normalized_url = str(url).strip()
-    validate_http_url_no_ssrf(
+    return validate_http_url_no_ssrf(
         normalized_url,
         allow_local=allow_local,
         resolve_dns=True,
     )
-    return normalized_url
+
+
+def dns_pin_for_validated_http_url(
+    original_url: str,
+    validated_url: str,
+) -> tuple[str, str] | None:
+    """Return ``(logical_hostname, pinned_ip)`` when validation rewrote the host."""
+    try:
+        original_hostname = normalize_hostname(urlsplit(str(original_url).strip()).hostname or "")
+        validated_hostname = normalize_hostname(urlsplit(str(validated_url).strip()).hostname or "")
+    except Exception:
+        return None
+    if not original_hostname or not validated_hostname:
+        return None
+    if original_hostname == validated_hostname:
+        return None
+    return original_hostname, validated_hostname
 
 
 def validated_http_url_requires_dns_pinning(original_url: str, validated_url: str) -> bool:
@@ -405,4 +415,4 @@ def validated_http_url_requires_dns_pinning(original_url: str, validated_url: st
         return True
     if not original_hostname or not validated_hostname:
         return True
-    return original_hostname != validated_hostname
+    return dns_pin_for_validated_http_url(original_url, validated_url) is not None

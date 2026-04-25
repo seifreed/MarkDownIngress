@@ -140,7 +140,25 @@ class _BatchUrlProcessor:
     def _uses_uncacheable_screenshot(prepared: _PreparedBatchRequest) -> bool:
         return screenshot_requires_fresh_capture(prepared.resolved_config)
 
-    async def _try_cache(self, prepared: _PreparedBatchRequest) -> bool:
+    def _record_shortcut_request_for_local_strategy(
+        self,
+        prepared: _PreparedBatchRequest,
+        *,
+        success: bool,
+        started_at: float | None = None,
+    ) -> None:
+        if self._ctx.batch_tracks_metrics:
+            return
+        bump_ingest_stat("requests_total")
+        record_mode_request(prepared.requested_mode)
+        record_mode_result(prepared.requested_mode, success=success)
+        if started_at is not None:
+            record_mode_timing(
+                prepared.requested_mode,
+                (time.perf_counter() - started_at) * 1000.0,
+            )
+
+    async def _try_cache(self, prepared: _PreparedBatchRequest, started_at: float) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
         if prepared.cache_backend is None or prepared.cache_key is None:
@@ -163,7 +181,14 @@ class _BatchUrlProcessor:
                 bump_ingest_stat("cache_hits")
                 cached_copy.metadata[REQUESTED_MODE] = prepared.requested_mode
                 ctx.set_document(prepared.index, cached_copy)
-                record_mode_result(prepared.requested_mode, success=True)
+                if ctx.batch_tracks_metrics:
+                    record_mode_result(prepared.requested_mode, success=True)
+                else:
+                    self._record_shortcut_request_for_local_strategy(
+                        prepared,
+                        success=True,
+                        started_at=started_at,
+                    )
                 await self._report_completion(prepared.url)
                 return True
             except Exception as exc:
@@ -192,7 +217,10 @@ class _BatchUrlProcessor:
             return record, False
 
     async def _handle_follower(
-        self, prepared: _PreparedBatchRequest, record: _BatchInFlightRecord
+        self,
+        prepared: _PreparedBatchRequest,
+        record: _BatchInFlightRecord,
+        started_at: float,
     ) -> bool:
         """Handle follower path: await leader's future and propagate result."""
         ctx = self._ctx
@@ -222,7 +250,14 @@ class _BatchUrlProcessor:
                     traceback=traceback.format_exc(),
                 )
             )
-            record_mode_result(prepared.requested_mode, success=False)
+            if ctx.batch_tracks_metrics:
+                record_mode_result(prepared.requested_mode, success=False)
+            else:
+                self._record_shortcut_request_for_local_strategy(
+                    prepared,
+                    success=False,
+                    started_at=started_at,
+                )
             async with ctx.batch_inflight_lock:
                 if ctx.batch_inflight.get(prepared.request_key) is record:
                     ctx.batch_inflight.pop(prepared.request_key, None)
@@ -234,7 +269,14 @@ class _BatchUrlProcessor:
         shared.metadata.setdefault(CACHE_HIT, False)
         shared.metadata[REQUESTED_MODE] = prepared.requested_mode
         ctx.set_document(prepared.index, shared)
-        record_mode_result(prepared.requested_mode, success=True)
+        if ctx.batch_tracks_metrics:
+            record_mode_result(prepared.requested_mode, success=True)
+        else:
+            self._record_shortcut_request_for_local_strategy(
+                prepared,
+                success=True,
+                started_at=started_at,
+            )
         await self._report_completion(prepared.url)
         return True
 
@@ -392,14 +434,14 @@ class _BatchUrlProcessor:
             # the second identical URL finds the first's result cached).
             await ctx.semaphore.acquire()
             semaphore_held = True
-            if await self._try_cache(prepared):
+            if await self._try_cache(prepared, started_at):
                 return True
             if self._uses_uncacheable_screenshot(prepared):
                 return await self._execute_direct(prepared)
             record, is_leader = await self._register_inflight(prepared)
             if not is_leader:
                 semaphore_held = False  # _handle_follower releases the semaphore
-                return await self._handle_follower(prepared, record)
+                return await self._handle_follower(prepared, record, started_at)
             return await self._execute_leader(prepared, record)
         except asyncio.CancelledError:
             await self._handle_cancelled(record, prepared)

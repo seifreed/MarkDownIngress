@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Literal, cast
 
+from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
     build_renderer_config,
@@ -19,6 +20,7 @@ from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
+    dns_pin_for_validated_http_url,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf_with_dns_check,
 )
@@ -151,12 +153,20 @@ class Renderer(IRenderer):
         self.block_trackers = config.block_trackers
         self.screenshot = config.screenshot
         self.allow_local_urls = config.allow_local_urls
+        self._base_dns_pins = dict(config.dns_pins)
+        self._dns_pins = dict(self._base_dns_pins)
 
     def _validate_render_url(self, url: str) -> str:
-        return validate_http_url_no_ssrf_with_dns_check(
-            url,
+        logical_url = str(url).strip()
+        validated_url = validate_http_url_no_ssrf_with_dns_check(
+            logical_url,
             allow_local=resolve_allow_local_urls(self.allow_local_urls),
         )
+        self._dns_pins = dict(self._base_dns_pins)
+        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
+        if pin is not None:
+            self._dns_pins[pin[0]] = pin[1]
+        return logical_url
 
     async def render(self, url: str) -> FetchResult:
         validated_url = self._validate_render_url(url)
@@ -194,6 +204,8 @@ class Renderer(IRenderer):
                     allow_local_urls=self.allow_local_urls,
                 )
                 retry_renderer = Renderer(config=retry_config)
+                retry_renderer._base_dns_pins = dict(self._dns_pins)
+                retry_renderer._dns_pins = dict(self._dns_pins)
                 result = await retry_renderer._render_with_browser(validated_url)
                 result.metadata["http2_fallback"] = True
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
@@ -214,6 +226,9 @@ class Renderer(IRenderer):
             browser_args.extend(STEALTH_BROWSER_ARGS)
         if self.disable_http2:
             browser_args.append("--disable-http2")
+        resolver_rules = chromium_host_resolver_rules(self._dns_pins)
+        if resolver_rules:
+            browser_args.append(f"--host-resolver-rules={resolver_rules}")
         return browser_args
 
     def _prepare_launch_options(self, browser_args: list[str]) -> dict[str, object]:
@@ -252,6 +267,8 @@ class Renderer(IRenderer):
             block_trackers=block_trackers,
             allow_local_urls=self.allow_local_urls,
             validate_ssrf=True,
+            dns_pins=self._dns_pins,
+            enforce_dns_pinning=True,
         )
         await blocker.setup_blocking(page)
         return blocker

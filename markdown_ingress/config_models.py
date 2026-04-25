@@ -186,12 +186,16 @@ class RenderConfig:
     allow_local_urls: bool | None = None
     """Opt-in override allowing local/private URLs in renderer SSRF checks"""
 
+    dns_pins: dict[str, str] = field(default_factory=dict)
+    """Browser DNS pinning map from logical hostname to validated IP address"""
+
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         if self.wait_until not in VALID_WAIT_UNTIL:
             raise ValueError(
                 f"Invalid wait_until '{self.wait_until}'. Must be one of: {', '.join(VALID_WAIT_UNTIL)}"
             )
+        self.dns_pins = dict(self.dns_pins or {})
 
 
 @dataclass

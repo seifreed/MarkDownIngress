@@ -1021,10 +1021,9 @@ class Fetcher(IFetcher):
                         retry_delay = _retry_delay_seconds(exc.response, ssl_attempt)
                         response_host = host
 
-                        if (
-                            status_code in _RETRYABLE_STATUS
-                            and ssl_attempt < remaining_attempts - 1
-                        ):
+                        if status_code not in _RETRYABLE_STATUS:
+                            raise
+                        if ssl_attempt < remaining_attempts - 1:
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
                                 ssl_attempt_num,
@@ -1037,7 +1036,7 @@ class Fetcher(IFetcher):
                             await asyncio.sleep(retry_delay)
                             ssl_attempt += 1
                             continue
-                        self._record_failure(response_host)
+                        self._handle_retryable_status(response_host, status_code, retry_delay)
                         raise
 
                     except DomainCircuitOpenError:
@@ -1399,10 +1398,9 @@ class Fetcher(IFetcher):
                         retry_delay = _retry_delay_seconds(exc.response, ssl_attempt)
                         response_host = host
 
-                        if (
-                            status_code in _RETRYABLE_STATUS
-                            and ssl_attempt < remaining_attempts - 1
-                        ):
+                        if status_code not in _RETRYABLE_STATUS:
+                            raise
+                        if ssl_attempt < remaining_attempts - 1:
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
                                 ssl_attempt_num,
@@ -1415,7 +1413,7 @@ class Fetcher(IFetcher):
                             time.sleep(retry_delay)
                             ssl_attempt += 1
                             continue
-                        self._record_failure(response_host)
+                        self._handle_retryable_status(response_host, status_code, retry_delay)
                         raise
 
                     except DomainCircuitOpenError:

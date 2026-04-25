@@ -72,6 +72,7 @@ from markdown_ingress.core.policy import (
     UnsupportedContentTypeError,
 )
 from markdown_ingress.core.ssrf import (
+    dns_pin_for_validated_http_url,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf_with_dns_check,
 )
@@ -442,12 +443,16 @@ class _FetchPipeline:
         self._playwright_available = playwright_available
 
     @staticmethod
-    def _validate_render_url(url: str, config: IngestConfig) -> str:
-        """Apply SSRF validation before handing the logical URL to Playwright."""
-        return validate_http_url_no_ssrf_with_dns_check(
-            url,
+    def _validate_render_url(url: str, config: IngestConfig) -> tuple[str, dict[str, str]]:
+        """Apply SSRF validation and return the logical URL plus browser DNS pins."""
+        logical_url = str(url).strip()
+        validated_url = validate_http_url_no_ssrf_with_dns_check(
+            logical_url,
             allow_local=resolve_allow_local_urls(config.allow_local_urls),
         )
+        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
+        dns_pins = {pin[0]: pin[1]} if pin is not None else {}
+        return logical_url, dns_pins
 
     def execute_mode(
         self,
@@ -482,7 +487,10 @@ class _FetchPipeline:
         return fetch_result, operational_flags
 
     @staticmethod
-    def _prepare_render_config(config: IngestConfig) -> tuple[RenderConfig, str | None, bool]:
+    def _prepare_render_config(
+        config: IngestConfig,
+        dns_pins: dict[str, str] | None = None,
+    ) -> tuple[RenderConfig, str | None, bool]:
         """Build a RenderConfig, allocating a temp screenshot file when screenshot=True."""
         render_config = RenderConfig(
             timeout=config.timeout,
@@ -492,6 +500,7 @@ class _FetchPipeline:
             extreme_mode=config.extreme_mode,
             screenshot=config.screenshot,
             allow_local_urls=config.allow_local_urls,
+            dns_pins=dict(dns_pins or {}),
         )
         screenshot_temp_path: str | None = None
         screenshot_was_temp = False
@@ -603,7 +612,7 @@ class _FetchPipeline:
             raise UnsupportedContentTypeError(
                 f"URL appears to target a non-HTML resource and should not be rendered: {url}"
             )
-        render_url = self._validate_render_url(url, config)
+        render_url, dns_pins = self._validate_render_url(url, config)
         # The render cost budget is an upper bound on the combined
         # fast+render spend, so we only charge the delta up to 5 units.
         # A previous audit flagged this as undercharging, but the test
@@ -617,7 +626,8 @@ class _FetchPipeline:
                 "pip install 'markdown-ingress[render]' && playwright install"
             )
         render_config, screenshot_temp_path, screenshot_was_temp = self._prepare_render_config(
-            config
+            config,
+            dns_pins,
         )
         return self._run_render_or_degrade(
             render_url,

@@ -185,6 +185,7 @@ def test_advanced_stealth_validates_public_url_with_dns_check(monkeypatch):
         "https://rebind.example/page"
     )
     assert calls == [("https://rebind.example/page", False, True)]
+    assert renderer._dns_pins == {"rebind.example": "93.184.216.34"}
 
 
 def test_advanced_stealth_config_custom_inputs():

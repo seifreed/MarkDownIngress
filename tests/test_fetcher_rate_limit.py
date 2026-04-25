@@ -1007,6 +1007,80 @@ def test_sync_ssl_bypass_preserves_sni_after_dns_pinning(monkeypatch):
     assert kwargs["extensions"]["sni_hostname"] == b"example.com"
 
 
+def test_sync_ssl_bypass_does_not_open_circuit_for_client_errors(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class StreamResponse:
+        status_code = 404
+        headers = {"content-type": "text/html"}
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str):
+            self.url = url
+            self._response = httpx.Response(
+                404,
+                request=httpx.Request("GET", url),
+                content=b"not found",
+            )
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            self._response.raise_for_status()
+
+        def iter_bytes(self):
+            yield b"not found"
+
+    class BypassClient:
+        calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def close(self):
+            return None
+
+        def stream(self, method: str, url: str, **kwargs):
+            type(self).calls += 1
+            return StreamResponse(url)
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
+        lambda *args, **kwargs: BypassClient(),
+    )
+
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        allow_ssl_bypass=True,
+        circuit_breaker_threshold=1,
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_prepare_request_url",
+        lambda url: (url, url, None, None, "example.com"),
+    )
+    monkeypatch.setattr(fetcher, "_is_ssl_bypass_active", lambda host: True)
+
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            fetcher.fetch_sync("https://example.com/missing")
+        with pytest.raises(httpx.HTTPStatusError):
+            fetcher.fetch_sync("https://example.com/missing")
+    finally:
+        fetcher.close()
+
+    assert BypassClient.calls == 2
+    assert fetcher._open_until_by_host == {}
+
+
 def test_sync_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -1191,6 +1265,83 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
     assert main_client.calls == 2
     assert bypass_client.calls == 1
     assert len(sleep_calls) == 1
+
+
+def test_async_ssl_bypass_does_not_open_circuit_for_client_errors(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class AsyncStreamResponse:
+        status_code = 404
+        headers = {"content-type": "text/html"}
+        charset_encoding = "utf-8"
+
+        def __init__(self, url: str):
+            self.url = url
+            self._response = httpx.Response(
+                404,
+                request=httpx.Request("GET", url),
+                content=b"not found",
+            )
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            self._response.raise_for_status()
+
+        async def aiter_bytes(self):
+            yield b"not found"
+
+    class BypassClient:
+        calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aclose(self):
+            return None
+
+        def stream(self, method: str, url: str, **kwargs):
+            type(self).calls += 1
+            return AsyncStreamResponse(url)
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient",
+        lambda *args, **kwargs: BypassClient(),
+    )
+
+    fetcher = Fetcher(
+        timeout=2.0,
+        domain_request_interval=0.0,
+        allow_ssl_bypass=True,
+        circuit_breaker_threshold=1,
+    )
+    monkeypatch.setattr(
+        fetcher,
+        "_prepare_request_url",
+        lambda url: (url, url, None, None, "example.com"),
+    )
+    monkeypatch.setattr(fetcher, "_is_ssl_bypass_active", lambda host: True)
+
+    async def run():
+        try:
+            with pytest.raises(httpx.HTTPStatusError):
+                await fetcher.fetch("https://example.com/missing")
+            with pytest.raises(httpx.HTTPStatusError):
+                await fetcher.fetch("https://example.com/missing")
+        finally:
+            await fetcher.aclose()
+
+    asyncio.run(run())
+
+    assert BypassClient.calls == 2
+    assert fetcher._open_until_by_host == {}
 
 
 def test_async_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):

@@ -228,6 +228,10 @@ def test_renderer_validates_public_top_level_url_with_dns_check(monkeypatch):
         "https://rebind.example/private"
     )
     assert calls == [("https://rebind.example/private", False, True)]
+    assert renderer._dns_pins == {"rebind.example": "93.184.216.34"}
+    assert "--host-resolver-rules=MAP rebind.example 93.184.216.34" in (
+        renderer._prepare_browser_args()
+    )
 
 
 @pytest.mark.asyncio
@@ -310,3 +314,4 @@ async def test_advanced_stealth_allows_public_top_level_url_with_dns_check(monke
 
     assert calls == [("https://rebind.example/private", False, True)]
     assert rendered_urls == ["https://rebind.example/private"]
+    assert renderer._dns_pins == {"rebind.example": "93.184.216.34"}

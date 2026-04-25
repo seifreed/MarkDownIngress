@@ -8,9 +8,11 @@ to speed up rendering and reduce bandwidth usage.
 import logging
 import re
 import threading
+from collections.abc import Mapping
 from urllib.parse import unquote, urlsplit
 
 from markdown_ingress.core.ssrf import (
+    dns_pin_for_validated_http_url,
     normalize_domain_pattern,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf_with_dns_check,
@@ -138,6 +140,8 @@ class ResourceBlocker:
         custom_blocked_domains: list[str] | None = None,
         allow_local_urls: bool | None = None,
         validate_ssrf: bool = True,
+        dns_pins: Mapping[str, str] | None = None,
+        enforce_dns_pinning: bool = False,
     ):
         """
         Initialize the resource blocker.
@@ -152,6 +156,8 @@ class ResourceBlocker:
             custom_blocked_domains: Additional domain patterns to block
             allow_local_urls: Opt-in override for SSRF checks on local/private URLs
             validate_ssrf: Validate allowed HTTP(S) requests against SSRF destinations
+            dns_pins: Browser DNS pins already installed for this page
+            enforce_dns_pinning: Block DNS-backed requests that cannot use an installed pin
         """
         self.block_images = block_images
         self.block_fonts = block_fonts
@@ -161,6 +167,12 @@ class ResourceBlocker:
         self.block_trackers = block_trackers
         self.allow_local_urls = resolve_allow_local_urls(allow_local_urls)
         self.validate_ssrf = validate_ssrf
+        self.dns_pins = {
+            normalize_domain_pattern(hostname): str(address)
+            for hostname, address in (dns_pins or {}).items()
+            if normalize_domain_pattern(hostname) and address
+        }
+        self.enforce_dns_pinning = enforce_dns_pinning
 
         self._custom_blocked_domains = [
             normalized
@@ -346,12 +358,17 @@ class ResourceBlocker:
         if not self.validate_ssrf:
             return None
         try:
-            validate_http_url_no_ssrf_with_dns_check(
+            validated_url = validate_http_url_no_ssrf_with_dns_check(
                 url,
                 allow_local=self.allow_local_urls,
             )
         except ValueError:
             return True, _SSRF_BLOCK_REASON
+        pin = dns_pin_for_validated_http_url(url, validated_url)
+        if pin is not None and self.enforce_dns_pinning:
+            hostname, pinned_address = pin
+            if self.dns_pins.get(hostname) != pinned_address:
+                return True, _SSRF_BLOCK_REASON
         return None
 
     @staticmethod

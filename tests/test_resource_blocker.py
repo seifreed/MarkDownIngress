@@ -149,6 +149,59 @@ class TestResourceBlocker:
         assert reason is None
         assert calls == [("https://rebind.example/app.js", False, True)]
 
+    def test_should_block_public_subresource_when_dns_pin_is_required_but_missing(
+        self, monkeypatch
+    ):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert resolve_dns is True
+            return "https://93.184.216.34/app.js"
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+            enforce_dns_pinning=True,
+        )
+
+        assert blocker._should_block("script", "https://rebind.example/app.js") == (
+            True,
+            "ssrf_protection",
+        )
+
+    def test_should_allow_public_subresource_with_matching_browser_dns_pin(self, monkeypatch):
+        def fake_validate(url, *, allow_local, resolve_dns):
+            assert resolve_dns is True
+            return "https://93.184.216.34/app.js"
+
+        monkeypatch.setattr(
+            "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+            fake_validate,
+        )
+        blocker = ResourceBlocker(
+            block_images=False,
+            block_fonts=False,
+            block_media=False,
+            block_css=False,
+            block_ads=False,
+            block_trackers=False,
+            allow_local_urls=False,
+            dns_pins={"rebind.example": "93.184.216.34"},
+            enforce_dns_pinning=True,
+        )
+
+        assert blocker._should_block("script", "https://rebind.example/app.js") == (
+            False,
+            None,
+        )
+
     def test_should_block_subresource_hostname_resolving_private(self, monkeypatch):
         def fake_validate(url, *, allow_local, resolve_dns):
             assert url == "http://127.0.0.1.nip.io/private"

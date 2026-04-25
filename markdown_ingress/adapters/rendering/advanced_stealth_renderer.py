@@ -5,8 +5,10 @@ import logging
 import time
 from typing import Any, Literal, cast
 
+from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
+    dns_pin_for_validated_http_url,
     resolve_allow_local_urls,
     validate_http_url_no_ssrf_with_dns_check,
 )
@@ -85,6 +87,7 @@ class AdvancedStealthRenderer:
         self.block_media = block_media
         self.block_ads = block_ads
         self.block_trackers = block_trackers
+        self._dns_pins: dict[str, str] = {}
 
         if stealth_config is None:
             self.stealth_config = get_advanced_stealth_config(randomize=randomize_fingerprint)
@@ -92,10 +95,16 @@ class AdvancedStealthRenderer:
             self.stealth_config = stealth_config
 
     def _validate_render_url(self, url: str) -> str:
-        return validate_http_url_no_ssrf_with_dns_check(
-            url,
+        logical_url = str(url).strip()
+        validated_url = validate_http_url_no_ssrf_with_dns_check(
+            logical_url,
             allow_local=self.allow_local_urls,
         )
+        self._dns_pins = {}
+        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
+        if pin is not None:
+            self._dns_pins[pin[0]] = pin[1]
+        return logical_url
 
     async def render(self, url: str) -> FetchResult:
         """
@@ -127,6 +136,7 @@ class AdvancedStealthRenderer:
                     block_ads=self.block_ads,
                     block_trackers=self.block_trackers,
                 )
+                retry_renderer._dns_pins = dict(self._dns_pins)
                 result = await retry_renderer._render_with_browser(validated_url)
                 result.metadata["http2_fallback"] = True
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
@@ -147,6 +157,8 @@ class AdvancedStealthRenderer:
             block_trackers=block_trackers,
             allow_local_urls=self.allow_local_urls,
             validate_ssrf=True,
+            dns_pins=self._dns_pins,
+            enforce_dns_pinning=True,
         )
         await blocker.setup_blocking(page)
         return blocker
@@ -169,6 +181,9 @@ class AdvancedStealthRenderer:
 
             if self.disable_http2:
                 browser_args.append("--disable-http2")
+            resolver_rules = chromium_host_resolver_rules(self._dns_pins)
+            if resolver_rules:
+                browser_args.append(f"--host-resolver-rules={resolver_rules}")
 
             launch_options: dict[str, object] = {
                 "headless": self.headless,

@@ -406,14 +406,16 @@ def test_ingest_cache_invalidates_when_plugin_file_changes(monkeypatch, tmp_path
     )
 
     plugin_file = tmp_path / "versioned_plugin.py"
-    plugin_file.write_text("""
+    plugin_file.write_text(
+        """
 from markdown_ingress.core.plugin import Plugin
 
 
 class VersionedPlugin(Plugin):
     def get_patterns(self):
         return [r"alpha_marker"]
-""".strip())
+""".strip()
+    )
 
     cache = MemoryCache()
     first = ingest(
@@ -427,14 +429,16 @@ class VersionedPlugin(Plugin):
     assert first.metadata["custom_patterns_count"] == 1
     assert len(first.metadata["pattern_matches"]) == 0
 
-    plugin_file.write_text("""
+    plugin_file.write_text(
+        """
 from markdown_ingress.core.plugin import Plugin
 
 
 class VersionedPlugin(Plugin):
     def get_patterns(self):
         return [r"beta_marker", r"unused_marker"]
-""".strip())
+""".strip()
+    )
 
     second = ingest(
         "https://unit.test/versioned-plugin",
@@ -1010,6 +1014,54 @@ async def test_batch_local_strategy_counts_leader_execution_once(monkeypatch):
     assert stats["leader_executions"] == 1
 
 
+@pytest.mark.asyncio
+async def test_batch_local_strategy_counts_cache_hit_shortcuts(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.core.ssrf.validate_http_url_no_ssrf",
+        lambda url, *, allow_local, resolve_dns: url,
+    )
+    reset_ingest_stats()
+    cache = MemoryCache()
+
+    class FakeFetcher:
+        calls = 0
+
+        def fetch_sync(self, url: str):
+            type(self).calls += 1
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fast</h1><p>"
+                + ("local cache metrics " * 20)
+                + "</p></article></body></html>",
+            )
+
+    use_case = IngestUseCase(fetcher_factory=lambda config: FakeFetcher())
+    batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+
+    result = await batch_use_case.execute(
+        [
+            "https://unit.test/local-cache-metrics",
+            "https://unit.test/local-cache-metrics",
+        ],
+        lambda: IngestConfig(
+            mode="fast",
+            cache=cache,
+            extract_metadata=False,
+            extract_links=False,
+        ),
+        max_concurrent=1,
+    )
+    stats = get_ingest_stats()
+
+    assert result.successful == 2
+    assert FakeFetcher.calls == 1
+    assert stats["requests_total"] == 2
+    assert stats["mode_counts"]["fast"] == 2
+    assert stats["mode_results"]["fast"]["success"] == 2
+    assert stats["cache_hits"] == 1
+    assert stats["cache_misses"] == 1
+
+
 def test_process_level_ingest_stats_stay_on_requested_mode_when_policy_rewrites_mode(monkeypatch):
     reset_ingest_stats()
 
@@ -1241,8 +1293,12 @@ def test_render_mode_validates_public_url_with_dns_check(monkeypatch):
     )
     use_case = IngestUseCase(playwright_available=True)
     calls: list[str] = []
+    config_dns_pins: list[dict[str, str]] = []
 
     class FakeRenderer:
+        def __init__(self, config):
+            config_dns_pins.append(dict(config.dns_pins))
+
         def render_sync(self, url: str):
             calls.append(url)
             return _make_fetch_result(
@@ -1252,7 +1308,7 @@ def test_render_mode_validates_public_url_with_dns_check(monkeypatch):
                 + "</p></article></body></html>",
             )
 
-    use_case.renderer_factory = lambda config: FakeRenderer()
+    use_case.renderer_factory = lambda config: FakeRenderer(config)
 
     doc = use_case.execute(
         "https://rebind.example/private",
@@ -1260,6 +1316,7 @@ def test_render_mode_validates_public_url_with_dns_check(monkeypatch):
     )
 
     assert calls == ["https://rebind.example/private"]
+    assert config_dns_pins == [{"rebind.example": "93.184.216.34"}]
     assert doc.metadata["mode"] == "render"
     assert validation_calls == [("https://rebind.example/private", False, True)]
 
