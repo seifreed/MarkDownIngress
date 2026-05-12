@@ -12,7 +12,7 @@ from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
-_SCREENSHOT_UNSET: Final = object()
+_SCREENSHOT_UNSET: Final[Any] = object()
 
 # Lazy import for stealth injection
 try:
@@ -76,7 +76,7 @@ def build_renderer_config(
     block_media: bool | None = None,
     block_ads: bool | None = None,
     block_trackers: bool | None = None,
-    screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
+    screenshot: bool | str | None = _SCREENSHOT_UNSET,
     allow_local_urls: bool | None = None,
 ) -> RenderConfig:
     """Normalize init inputs into a concrete RenderConfig."""

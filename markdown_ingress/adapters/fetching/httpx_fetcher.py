@@ -762,7 +762,9 @@ class Fetcher(IFetcher):
                 if dns_attempt < _MAX_RETRIES - 1:
                     sleep_for = min(0.5 * (2**dns_attempt), 4.0)
                     time.sleep(sleep_for)
-        raise last_dns_exc  # type: ignore[misc]
+        if last_dns_exc is not None:
+            raise last_dns_exc
+        raise RuntimeError(f"DNS validation failed for {url}")
 
     async def fetch(self, url: str) -> FetchResult:
         url, logical_url, host_header, sni_hostname, host = (
@@ -902,7 +904,7 @@ class Fetcher(IFetcher):
                     and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
                 ):
                     logger.warning(
-                        "SSL verification failed for %s, retrying with verify=False (insecure). "
+                        "SSL verification failed for %s, retrying with certificate verification disabled. "
                         "This bypass is insecure and should only be used for testing.",
                         url,
                     )
@@ -1233,7 +1235,7 @@ class Fetcher(IFetcher):
                     and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
                 ):
                     logger.warning(
-                        "SSL verification failed for %s, retrying with verify=False (insecure). "
+                        "SSL verification failed for %s, retrying with certificate verification disabled. "
                         "This bypass is insecure and should only be used for testing.",
                         url,
                     )

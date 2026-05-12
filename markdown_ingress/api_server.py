@@ -94,7 +94,7 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 # ---------------------------------------------------------------------------
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
-_request_counts: dict[str, deque] = {}  # type: ignore[var-annotated]
+_request_counts: dict[str, deque[float]] = {}
 _rate_limit_lock = threading.Lock()
 _rate_limit_cleanup_counter: int = 0  # Counter for periodic cleanup
 _RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000  # Cleanup every N requests

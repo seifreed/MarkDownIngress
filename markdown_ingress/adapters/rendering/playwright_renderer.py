@@ -112,7 +112,7 @@ class Renderer(IRenderer):
         block_media: bool | None = None,
         block_ads: bool | None = None,
         block_trackers: bool | None = None,
-        screenshot: bool | str | None = _SCREENSHOT_UNSET,  # type: ignore[assignment]
+        screenshot: bool | str | None = _SCREENSHOT_UNSET,
         allow_local_urls: bool | None = None,
     ):
         config = build_renderer_config(
