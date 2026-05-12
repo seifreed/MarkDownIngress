@@ -42,3 +42,10 @@ def test_case_insensitive_headers_pop_with_none_default_matches_dict():
     headers = CaseInsensitiveHeaders({"Content-Type": "text/html"})
 
     assert headers.pop("missing", None) is None
+
+
+def test_case_insensitive_headers_tolerate_non_string_lookup_defaults():
+    headers = CaseInsensitiveHeaders({"Content-Type": "text/html"})
+
+    assert headers.get(None, "fallback") == "fallback"
+    assert headers.pop(None, "fallback") == "fallback"

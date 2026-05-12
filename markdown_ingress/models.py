@@ -39,27 +39,39 @@ class CaseInsensitiveHeaders(dict[str, str]):
     def __delitem__(self, key: str) -> None:
         super().__delitem__(self._normalize_key(key))
 
-    def get(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
+    def get(self, key: object, default: Any = None) -> Any:
+        if not isinstance(key, str):
+            return default
         return super().get(self._normalize_key(key), default)
 
-    def pop(self, key: str, default: Any = _MISSING) -> Any:
+    def pop(self, key: object, default: Any = _MISSING) -> Any:
+        if not isinstance(key, str):
+            if default is _MISSING:
+                raise KeyError(key)
+            return default
         normalized = self._normalize_key(key)
         if default is _MISSING:
             return super().pop(normalized)
         return super().pop(normalized, default)
 
-    def setdefault(self, key: str, default: str | None = None) -> str | None:  # type: ignore[override]
+    def setdefault(self, key: str, default: str = "") -> str:
         normalized = self._normalize_key(key)
         if normalized in self:
             return super().__getitem__(normalized)
-        if default is None:
-            return None
         super().__setitem__(normalized, default)
         return default
 
-    def update(self, other: Mapping[str, str] | None = None, **kwargs: str) -> None:  # type: ignore[override]
+    def update(
+        self,
+        *args: Any,
+        **kwargs: str,
+    ) -> None:
+        if len(args) > 1:
+            raise TypeError(f"update expected at most 1 argument, got {len(args)}")
+        other = args[0] if args else None
         if other:
-            for key, value in other.items():
+            items = other.items() if isinstance(other, Mapping) else other
+            for key, value in items:
                 self[key] = value
         for key, value in kwargs.items():
             self[key] = value
