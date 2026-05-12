@@ -246,8 +246,11 @@ class IngestUseCase:
         self.playwright_available = (
             PLAYWRIGHT_AVAILABLE if playwright_available is None else playwright_available
         )
-        # Lambda defers to self.fetcher_factory so reassigning it after __init__ is honoured.
-        self._fetcher_mgr = _SharedFetcherManager(lambda config: self.fetcher_factory(config))
+
+        def current_fetcher_factory(config: IngestConfig) -> IFetcher:
+            return self.fetcher_factory(config)
+
+        self._fetcher_mgr = _SharedFetcherManager(current_fetcher_factory)
         self._auto_fetcher_user_agent = _select_stable_fetcher_user_agent()
         self._cache_resolver = _CacheResolutionHelper(self.orchestrator)
 
