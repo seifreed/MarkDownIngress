@@ -614,6 +614,17 @@ def test_memory_cache_ttl_zero_raises():
         MemoryCache(default_ttl=0)
 
 
+@pytest.mark.parametrize("bad_ttl", [True, 1.5, "60"])
+def test_memory_cache_rejects_non_integer_ttl(sample_document, bad_ttl):
+    cache = MemoryCache()
+
+    with pytest.raises(ValueError, match="TTL must be an int"):
+        cache.set("key", sample_document, ttl=bad_ttl)
+
+    with pytest.raises(ValueError, match="default_ttl must be an int"):
+        MemoryCache(default_ttl=bad_ttl)
+
+
 def test_memory_cache_negative_ttl_raises():
     """Test that negative TTL raises ValueError"""
     cache = MemoryCache()
@@ -724,6 +735,21 @@ def test_sqlite_cache_cleanup_threshold_zero(sample_document, tmp_path):
     cache.close()
 
 
+@pytest.mark.parametrize("bad_threshold", [True, 1.5, "3"])
+def test_sqlite_cache_rejects_non_integer_cleanup_threshold(tmp_path, bad_threshold):
+    db_path = tmp_path / "test.db"
+
+    with pytest.raises(ValueError, match="cleanup_threshold must be an int"):
+        SQLiteCache(db_path=str(db_path), cleanup_threshold=bad_threshold)
+
+
+def test_sqlite_cache_rejects_negative_cleanup_threshold(tmp_path):
+    db_path = tmp_path / "test.db"
+
+    with pytest.raises(ValueError, match="cleanup_threshold must be >= 0"):
+        SQLiteCache(db_path=str(db_path), cleanup_threshold=-1)
+
+
 def test_sqlite_cache_negative_ttl_raises(tmp_path):
     """Test that negative TTL raises ValueError in SQLiteCache"""
     db_path = tmp_path / "test.db"
@@ -754,6 +780,19 @@ def test_sqlite_cache_ttl_zero_raises(tmp_path):
 
     with pytest.raises(ValueError, match="positive"):
         SQLiteCache(db_path=str(db_path), default_ttl=0)
+
+
+@pytest.mark.parametrize("bad_ttl", [True, 1.5, "60"])
+def test_sqlite_cache_rejects_non_integer_ttl(sample_document, tmp_path, bad_ttl):
+    db_path = tmp_path / "test.db"
+    cache = SQLiteCache(db_path=str(db_path))
+
+    with pytest.raises(ValueError, match="TTL must be an int"):
+        cache.set("key", sample_document, ttl=bad_ttl)
+
+    cache.close()
+    with pytest.raises(ValueError, match="default_ttl must be an int"):
+        SQLiteCache(db_path=str(db_path), default_ttl=bad_ttl)
 
 
 def test_sqlite_cache_path_validation_empty():
@@ -885,3 +924,9 @@ def test_memory_cache_negative_max_entries_raises():
     """Negative max_entries must raise ValueError instead of silently becoming unlimited."""
     with pytest.raises(ValueError, match="max_entries must be >= 0"):
         MemoryCache(max_entries=-1)
+
+
+@pytest.mark.parametrize("bad_max_entries", [True, 1.5, "10"])
+def test_memory_cache_rejects_non_integer_max_entries(bad_max_entries):
+    with pytest.raises(ValueError, match="max_entries must be an int"):
+        MemoryCache(max_entries=bad_max_entries)

@@ -146,6 +146,12 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         # Validate and resolve the database path
         self.db_path = self._validate_db_path(db_path, allow_absolute_paths)
         self.default_ttl = _validate_ttl_value(default_ttl, field_name="default_ttl")
+        if isinstance(cleanup_threshold, bool) or not isinstance(cleanup_threshold, int):
+            raise ValueError(
+                f"cleanup_threshold must be an int, got {type(cleanup_threshold).__name__}"
+            )
+        if cleanup_threshold < 0:
+            raise ValueError(f"cleanup_threshold must be >= 0, got {cleanup_threshold}")
         self.cleanup_threshold = cleanup_threshold
         self._closed = False
 

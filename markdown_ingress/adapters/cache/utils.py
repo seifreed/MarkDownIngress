@@ -100,6 +100,8 @@ def _collect_public_identity_attrs(cache_backend: object) -> dict[str, Any]:
 
 
 def _validate_ttl_value(ttl: int, *, field_name: str) -> int:
+    if isinstance(ttl, bool) or not isinstance(ttl, int):
+        raise ValueError(f"{field_name} must be an int, got {type(ttl).__name__}")
     if ttl <= 0:
         raise ValueError(
             f"{field_name} must be positive, got {ttl}. Permanent entries (TTL=0) are not supported to prevent unbounded growth."

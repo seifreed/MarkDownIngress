@@ -40,6 +40,8 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
             ValueError: If default_ttl is not positive
         """
         self.default_ttl = _validate_ttl_value(default_ttl, field_name="default_ttl")
+        if isinstance(max_entries, bool) or not isinstance(max_entries, int):
+            raise ValueError(f"max_entries must be an int, got {type(max_entries).__name__}")
         if max_entries < 0:
             raise ValueError(f"max_entries must be >= 0, got {max_entries}")
         self.max_entries = max_entries
