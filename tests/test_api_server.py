@@ -7,8 +7,10 @@ import importlib
 import logging
 import socket
 import sqlite3
+import sys
 import threading
 import time
+import types
 from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -564,6 +566,51 @@ def test_rate_limit_cleanup_evicts_oldest_clients_first(monkeypatch):
     # After adding "trigger" (4 clients) and evicting down to max=2,
     # the two least recently active clients remain: "new" and "trigger"
     assert sorted(api_server._request_counts) == ["new", "trigger"]
+
+
+def test_redis_rate_limit_client_initializes_once_under_concurrency(monkeypatch):
+    import markdown_ingress.api_server_auth as auth
+
+    created_clients: list[object] = []
+
+    class FakeClient:
+        def ping(self):
+            time.sleep(0.01)
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(url, decode_responses=True):
+            client = FakeClient()
+            created_clients.append(client)
+            time.sleep(0.01)
+            return client
+
+    fake_redis = types.SimpleNamespace(Redis=FakeRedis)
+    monkeypatch.setitem(sys.modules, "redis", fake_redis)
+    monkeypatch.setattr(auth, "_rate_limit_redis_client", None)
+
+    worker_count = 8
+    start = threading.Barrier(worker_count)
+    results: list[object] = []
+    errors: list[BaseException] = []
+
+    def load_client():
+        try:
+            start.wait()
+            results.append(auth._get_redis_rate_limit_client())
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=load_client) for _ in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(results) == worker_count
+    assert len({id(result) for result in results}) == 1
+    assert len(created_clients) == 1
 
 
 @patch("markdown_ingress.api_server.ingest")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from markdown_ingress.api_server_env import _read_positive_int_env
@@ -29,6 +30,7 @@ _RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip()
 _RATE_LIMIT_REDIS_URL: str = os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
 _RATE_LIMIT_REDIS_PREFIX: str = os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:")
 _rate_limit_redis_client: Any | None = None
+_rate_limit_redis_lock = threading.Lock()
 
 
 def _get_redis_rate_limit_client():
@@ -36,20 +38,25 @@ def _get_redis_rate_limit_client():
     global _rate_limit_redis_client
     if _rate_limit_redis_client is not None:
         return _rate_limit_redis_client
-    try:
-        import redis  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise RuntimeError(
-            "MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package. "
-            "Install with: pip install redis"
-        ) from exc
-    client = redis.Redis.from_url(_RATE_LIMIT_REDIS_URL, decode_responses=True)
-    try:
-        client.ping()
-    except Exception as exc:  # pragma: no cover — depends on env
-        raise RuntimeError(f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}") from exc
-    _rate_limit_redis_client = client
-    return client
+    with _rate_limit_redis_lock:
+        if _rate_limit_redis_client is not None:
+            return _rate_limit_redis_client
+        try:
+            import redis  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError(
+                "MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package. "
+                "Install with: pip install redis"
+            ) from exc
+        client = redis.Redis.from_url(_RATE_LIMIT_REDIS_URL, decode_responses=True)
+        try:
+            client.ping()
+        except Exception as exc:  # pragma: no cover — depends on env
+            raise RuntimeError(
+                f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}"
+            ) from exc
+        _rate_limit_redis_client = client
+        return client
 
 
 def _check_rate_limit_redis(client_id: str) -> tuple[bool, int]:
