@@ -9,6 +9,7 @@ import socket
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -38,6 +39,7 @@ from markdown_ingress.api_server_handlers import handle_batch_submit, handle_syn
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     DomainPolicyModel,
+    HTMLCompareRequest,
     IngestRequest,
     RetryIngestRequest,
 )
@@ -210,6 +212,63 @@ def test_request_models_accept_server_managed_screenshot_values(screenshot: bool
 
     assert ingest_request.screenshot is screenshot
     assert batch_request.screenshot is screenshot
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: IngestRequest(url=cast(Any, "https://example.com"), strict=cast(Any, "false")),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda: IngestRequest(url=cast(Any, "https://example.com"), timeout=cast(Any, "30")),
+            "Input should be a valid number",
+        ),
+        (
+            lambda: IngestRequest(
+                url=cast(Any, "https://example.com"), chunk_size=cast(Any, "1000")
+            ),
+            "Input should be a valid integer",
+        ),
+        (
+            lambda: BatchIngestRequest(
+                urls=[cast(Any, "https://example.com")], strict=cast(Any, "false")
+            ),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda: BatchIngestRequest(
+                urls=[cast(Any, "https://example.com")], max_concurrent=cast(Any, "2")
+            ),
+            "Input should be a valid integer",
+        ),
+        (
+            lambda: RetryIngestRequest(
+                url=cast(Any, "https://example.com"), enable_stealth=cast(Any, "false")
+            ),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda: DomainPolicyModel(domain="example.com", strict=cast(Any, "false")),
+            "Input should be a valid boolean",
+        ),
+        (
+            lambda: DomainPolicyModel(domain="example.com", timeout=cast(Any, "10")),
+            "Input should be a valid number",
+        ),
+        (
+            lambda: HTMLCompareRequest(html=cast(Any, 123)),
+            "Input should be a valid string",
+        ),
+    ],
+)
+def test_request_models_reject_coerced_scalar_types(
+    factory: Callable[[], object],
+    message: str,
+):
+    with pytest.raises(ValueError, match=message):
+        factory()
 
 
 @pytest.mark.parametrize(

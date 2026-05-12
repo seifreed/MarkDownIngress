@@ -97,7 +97,7 @@ def _validate_api_screenshot_value(value: Any) -> bool | None:
 
 
 class DomainPolicyModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     domain: str
     include_subdomains: bool = True
@@ -131,7 +131,7 @@ class DomainPolicyModel(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     url: HttpUrl
     mode: Mode = Field(default="auto")
@@ -202,7 +202,7 @@ class IngestRequest(BaseModel):
 
 
 class RetryIngestRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     url: HttpUrl
     mode: Mode = Field(default="auto")
@@ -229,7 +229,7 @@ class RetryIngestRequest(BaseModel):
 
 
 class BatchIngestRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     urls: list[HttpUrl] = Field(..., max_length=MAX_BATCH_URLS)
     mode: Mode = Field(default="auto")
@@ -377,6 +377,8 @@ class BatchJobResponse(BaseModel):
 
 
 class HTMLCompareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     html: str = Field(..., min_length=1, max_length=2_000_000)
     model: str = Field(default="gpt-4")
 
