@@ -7,6 +7,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -152,6 +153,30 @@ class TestSecurityReport:
         assert report.risk_level == "LOW"
         assert report.url == "http://example.com"
         assert report.token_estimate == 200
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"injection_score": cast(Any, "0.5")}, "injection_score must be a finite number"),
+            ({"injection_score": 1.5}, "injection_score must be between 0.0 and 1.0"),
+            ({"token_estimate": cast(Any, "200")}, "token_estimate must be an int"),
+            ({"hidden_elements_count": -1}, "hidden_elements_count must be non-negative"),
+            (
+                {"imperative_density": cast(Any, "0.2")},
+                "imperative_density must be a finite number",
+            ),
+        ],
+    )
+    def test_security_report_rejects_invalid_metric_values(
+        self,
+        kwargs: dict[str, Any],
+        message: str,
+    ):
+        payload = {"injection_score": 0.0, "risk_level": "LOW"}
+        payload.update(kwargs)
+
+        with pytest.raises(ValueError, match=message):
+            SecurityReport(**cast(Any, payload))
 
     def test_security_report_save_and_load(self):
         """Save and load SecurityReport to/from file"""

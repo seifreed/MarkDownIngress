@@ -6,6 +6,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -44,6 +45,32 @@ def test_safe_document_invalid_negative_injection_score():
             flags=[],
             removed_elements={},
         )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"injection_score": cast(Any, "0.5")}, "injection_score must be a finite number"),
+        ({"token_estimate": cast(Any, "1")}, "token_estimate must be an int"),
+        ({"token_estimate": cast(Any, True)}, "token_estimate must be an int"),
+    ],
+)
+def test_safe_document_rejects_invalid_metric_types(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import SafeDocument
+
+    payload = dict(
+        markdown="",
+        metadata={},
+        token_estimate=0,
+        content_hash="",
+        injection_score=0.0,
+        flags=[],
+        removed_elements={},
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        SafeDocument(**cast(Any, payload))
 
 
 # ---------------------------------------------------------------------------

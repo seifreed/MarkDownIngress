@@ -3,12 +3,42 @@ Data models for MarkDownIngress
 """
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 _MISSING = object()
+
+
+def _ensure_int_metric(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
+    return value
+
+
+def _ensure_non_negative_int_metric(field_name: str, value: object) -> int:
+    metric = _ensure_int_metric(field_name, value)
+    if metric < 0:
+        raise ValueError(f"{field_name} must be non-negative, got {metric}")
+    return metric
+
+
+def _ensure_finite_float_metric(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
+    metric = float(value)
+    if not math.isfinite(metric):
+        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    return metric
+
+
+def _ensure_score(field_name: str, value: object) -> float:
+    score = _ensure_finite_float_metric(field_name, value)
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
+    return score
 
 
 class CaseInsensitiveHeaders(dict[str, str]):
@@ -106,12 +136,8 @@ class SafeDocument:
 
     def __post_init__(self):
         """Validate field constraints."""
-        if not 0.0 <= self.injection_score <= 1.0:
-            raise ValueError(
-                f"injection_score must be between 0.0 and 1.0, got {self.injection_score}"
-            )
-        if self.token_estimate < 0:
-            raise ValueError(f"token_estimate must be non-negative, got {self.token_estimate}")
+        self.injection_score = _ensure_score("injection_score", self.injection_score)
+        self.token_estimate = _ensure_non_negative_int_metric("token_estimate", self.token_estimate)
 
 
 @dataclass
@@ -231,6 +257,30 @@ class SecurityReport:
     language: str | None = None
     explanation: dict = field(default_factory=dict)
     observability: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate report metrics after construction or JSON loading."""
+        self.injection_score = _ensure_score("injection_score", self.injection_score)
+        self.hidden_elements_count = _ensure_non_negative_int_metric(
+            "hidden_elements_count", self.hidden_elements_count
+        )
+        self.imperative_density = _ensure_finite_float_metric(
+            "imperative_density", self.imperative_density
+        )
+        if self.imperative_density < 0.0:
+            raise ValueError(
+                f"imperative_density must be non-negative, got {self.imperative_density}"
+            )
+        self.token_estimate = _ensure_non_negative_int_metric("token_estimate", self.token_estimate)
+        self.token_reduction_percent = _ensure_finite_float_metric(
+            "token_reduction_percent", self.token_reduction_percent
+        )
+        self.original_size_bytes = _ensure_non_negative_int_metric(
+            "original_size_bytes", self.original_size_bytes
+        )
+        self.cleaned_size_bytes = _ensure_non_negative_int_metric(
+            "cleaned_size_bytes", self.cleaned_size_bytes
+        )
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
