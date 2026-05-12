@@ -51,7 +51,7 @@ class MarkdownConverter(IMarkdownConverter):
             normalized_href = self.normalizer.normalize_url(original_href)
             link["href"] = normalized_href
 
-        for index, pre in enumerate(soup.find_all("pre"), start=1):
+        for pre in soup.find_all("pre"):
             code = pre.get_text(strip=False)
             language = None
             code_tag = pre.find("code")
@@ -82,7 +82,7 @@ class MarkdownConverter(IMarkdownConverter):
             placeholders[token] = rendered
             pre.replace_with(token)
 
-        for index, table in enumerate(soup.find_all("table"), start=1):
+        for table in soup.find_all("table"):
             rows = []
             first_row_has_th = False
             for i, tr in enumerate(table.find_all("tr")):

@@ -162,7 +162,7 @@ def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str
         if not addr_info:
             raise ValueError(f"No IP addresses resolved for {hostname}")
         validated_ip: str | None = None
-        for family, _, _, _, sockaddr in addr_info:
+        for _family, _, _, _, sockaddr in addr_info:
             ip_str = str(sockaddr[0])
             try:
                 ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(ip_str))

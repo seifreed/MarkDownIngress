@@ -306,11 +306,11 @@ def _prune_job_queue_history() -> None:
         for queue in _JOB_QUEUE_HISTORY:
             try:
                 if _queue_still_has_visible_jobs(queue):
-                    setattr(queue, "_history_read_failures", 0)
+                    cast(Any, queue)._history_read_failures = 0
                     kept.append(queue)
             except _TransientLegacyQueueReadError:
                 failures = int(getattr(queue, "_history_read_failures", 0)) + 1
-                setattr(queue, "_history_read_failures", failures)
+                cast(Any, queue)._history_read_failures = failures
                 if failures < _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD:
                     kept.append(queue)
         _JOB_QUEUE_HISTORY[:] = kept

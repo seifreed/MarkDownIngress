@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -585,7 +585,7 @@ class Fetcher(IFetcher):
 
         now = time.monotonic()
         first_seen = self._failure_first_seen.get(host, now)
-        current = self._failures_by_host.get(host, 0)
+        current: int = self._failures_by_host.get(host, 0)
 
         if current > 0 and first_seen:
             elapsed = now - first_seen
@@ -593,8 +593,10 @@ class Fetcher(IFetcher):
                 self._failures_by_host[host] = 0
                 self._failure_first_seen[host] = now
                 return 0
-            decay_factor = 0.5 ** (elapsed / self.failure_decay_seconds)
-            return int(round(current * decay_factor))
+            failure_decay_seconds = cast(float, self.failure_decay_seconds)
+            decay_factor = 0.5 ** (elapsed / failure_decay_seconds)
+            decayed: int = round(float(current) * decay_factor)
+            return decayed
         return current
 
     def _apply_failure_decay(self, host: str) -> int:

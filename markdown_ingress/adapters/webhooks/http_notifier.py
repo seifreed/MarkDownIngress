@@ -8,6 +8,7 @@ import socket
 import ssl
 import time
 from http.client import HTTPConnection, HTTPSConnection
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -262,7 +263,7 @@ class HTTPWebhookNotifier:
 
                 def connect(self) -> None:
                     source_address = getattr(self, "source_address", None)
-                    context = getattr(self, "_context")
+                    context = cast(Any, self)._context
                     raw_sock = socket.create_connection(
                         (self._validated_ip, self.port),
                         self.timeout,

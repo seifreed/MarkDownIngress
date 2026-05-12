@@ -15,7 +15,7 @@ Concrete implementations (MemoryCache, SQLiteCache) live in
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 from markdown_ingress.core.ssrf import normalize_url_for_identity
 from markdown_ingress.models import SafeDocument
@@ -87,7 +87,7 @@ def cache_backend_identity(cache_backend: object | None) -> dict[str, Any] | Non
         return None
 
     while hasattr(cache_backend, "__wrapped__"):
-        cache_backend = getattr(cache_backend, "__wrapped__")
+        cache_backend = cast(Any, cache_backend).__wrapped__
 
     identity: dict[str, Any] = {
         "type": f"{cache_backend.__class__.__module__}.{cache_backend.__class__.__qualname__}",

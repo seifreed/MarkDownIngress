@@ -131,7 +131,7 @@ class PluginLoader:
                 spec.loader.exec_module(module)
 
                 # Find Plugin subclasses
-                for name, obj in inspect.getmembers(module, inspect.isclass):
+                for _name, obj in inspect.getmembers(module, inspect.isclass):
                     if (
                         obj.__module__ == module.__name__
                         and issubclass(obj, Plugin)
