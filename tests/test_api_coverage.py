@@ -379,6 +379,30 @@ def test_build_runtime_config_isolates_cache_object_identity():
     assert getattr(resolved.cache, "__wrapped__", None) is cache
 
 
+def test_build_runtime_config_isolated_cache_delegates_backend_methods():
+    cache = MemoryCache(default_ttl=60)
+    config = IngestConfig(mode="fast", cache=cache)
+    document = SafeDocument(
+        markdown="ok",
+        metadata={},
+        token_estimate=1,
+        content_hash="sha256:test",
+        injection_score=0.0,
+    )
+
+    resolved = build_runtime_config(config=config)
+    isolated_cache = resolved.cache
+
+    isolated_cache.set("key", document)
+    assert cache.exists("key") is True
+    assert isolated_cache.get("key").markdown == "ok"
+    isolated_cache.delete("key")
+    assert cache.exists("key") is False
+    isolated_cache.set("key", document)
+    isolated_cache.clear()
+    assert cache.exists("key") is False
+
+
 def test_build_runtime_config_revalidates_invalid_mode_override():
     config = IngestConfig(mode="fast")
 

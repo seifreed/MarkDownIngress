@@ -592,6 +592,8 @@ async def test_fetcher_close_inside_running_loop_schedules_async_client_close():
     fetcher.close()
 
     await asyncio.wait_for(closed.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    assert fetcher._async_close_tasks == set()
 
 
 def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):

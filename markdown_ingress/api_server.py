@@ -13,7 +13,7 @@ from collections import deque
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -95,6 +95,26 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
 _request_counts: dict[str, deque[float]] = {}
+
+
+class _JobSubsystemSnapshot(TypedDict):
+    status: str
+    current_state: str
+    current_db_path: str
+    current_ttl_seconds: int | None
+    current_max_queued_jobs: int | None
+    current_pending: int | None
+    legacy_pending: int
+    pending_visible_total: int | None
+    legacy_visible_queues: int
+    legacy_db_paths: list[str]
+    pending_unknown: bool
+    current_unknown_ttl_jobs: int
+    legacy_unknown_ttl_jobs: int
+    legacy_unknown_ttl_seconds: int
+    repair_in_progress: bool
+
+
 _rate_limit_lock = threading.Lock()
 _rate_limit_cleanup_counter: int = 0  # Counter for periodic cleanup
 _RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000  # Cleanup every N requests
@@ -619,11 +639,18 @@ def _get_job_record(job_id: str):
     return None
 
 
-def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
+def _optional_int_attr(source: object | None, name: str) -> int | None:
+    value = getattr(source, name, None)
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapshot:
     if start_repair:
         _maybe_start_job_queue_repair()
 
-    def read_pending(queue_obj) -> int | None:
+    def read_pending(queue_obj: Any) -> int | None:
         if queue_obj is None:
             return None
         try:
@@ -636,7 +663,7 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
             except (RuntimeError, SQLiteError):
                 return None
 
-    def count_unknown_ttl_jobs(queue_obj) -> int:
+    def count_unknown_ttl_jobs(queue_obj: Any) -> int:
         connect = getattr(queue_obj, "_connect", None)
         if not callable(connect):
             return 0
@@ -667,16 +694,16 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
         current_queue = JOB_QUEUE
         history = list(_JOB_QUEUE_HISTORY)
         repair_thread = _JOB_QUEUE_REPAIR_THREAD
-        current_ttl_seconds = getattr(current_queue, "ttl_seconds", None)
-        current_max_queued_jobs = getattr(current_queue, "max_queued_jobs", None)
+        current_ttl_seconds = _optional_int_attr(current_queue, "ttl_seconds")
+        current_max_queued_jobs = _optional_int_attr(current_queue, "max_queued_jobs")
 
-    current_state = getattr(current_queue, "state", "uninitialized")
+    current_state = str(getattr(current_queue, "state", "uninitialized"))
     current_pending = read_pending(current_queue)
     legacy_pending = 0
     legacy_unknown_ttl_jobs = 0
     legacy_visible_queues = 0
     legacy_db_paths: list[str] = []
-    seen_db_paths = set()
+    seen_db_paths: set[str] = set()
     if current_queue is not None:
         seen_db_paths.add(str(getattr(current_queue, "db_path", JOB_DB_PATH)))
     pending_unknown = current_pending is None
@@ -811,17 +838,17 @@ async def extractor_comparison_endpoint(request: HTMLCompareRequest):
 async def stats_endpoint():
     """Expose process-level observability stats."""
     snapshot = _snapshot_job_subsystem(start_repair=False)
-    payload = {
+    jobs_payload: dict[str, Any] = {
+        "pending": snapshot["pending_visible_total"],
+        "ttl_seconds": snapshot["current_ttl_seconds"],
+        "ttl_applies_to": "completed_jobs_with_persisted_ttl_or_legacy_compatibility_ttl",
+        "max_queued_jobs": snapshot["current_max_queued_jobs"],
+    }
+    payload: dict[str, Any] = {
         "version": API_VERSION,
         "stats": get_ingest_stats(),
-        "job_queue": {
-            "pending": snapshot["pending_visible_total"],
-            "ttl_seconds": snapshot["current_ttl_seconds"],
-            "ttl_applies_to": "completed_jobs_with_persisted_ttl_or_legacy_compatibility_ttl",
-            "max_queued_jobs": snapshot["current_max_queued_jobs"],
-        },
+        "job_queue": jobs_payload,
     }
-    jobs_payload = payload["job_queue"]
     jobs_payload["current_state"] = snapshot["current_state"]
     # Only expose the basename — full filesystem paths are sensitive.
     jobs_payload["current_db_name"] = Path(snapshot["current_db_path"]).name

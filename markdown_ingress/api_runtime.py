@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
 from markdown_ingress.core.config import (
@@ -13,6 +13,8 @@ from markdown_ingress.core.config import (
     _validate_regex_patterns,
     _validate_string_list,
 )
+from markdown_ingress.core.interfaces import ICacheBackend
+from markdown_ingress.models import SafeDocument
 
 UNSET = object()
 
@@ -20,25 +22,25 @@ UNSET = object()
 class _IsolatedCacheBackend:
     """Per-clone cache handle that preserves behavior without sharing object identity."""
 
-    def __init__(self, backend: object) -> None:
+    def __init__(self, backend: ICacheBackend) -> None:
         self.__wrapped__ = backend
 
-    def get(self, key):
+    def get(self, key: str) -> SafeDocument | None:
         return self.__wrapped__.get(key)
 
-    def set(self, key, document, ttl=None):
+    def set(self, key: str, document: SafeDocument, ttl: int | None = None) -> None:
         return self.__wrapped__.set(key, document, ttl=ttl)
 
-    def delete(self, key):
+    def delete(self, key: str) -> None:
         return self.__wrapped__.delete(key)
 
-    def clear(self):
+    def clear(self) -> None:
         return self.__wrapped__.clear()
 
-    def exists(self, key):
+    def exists(self, key: str) -> bool:
         return self.__wrapped__.exists(key)
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.__wrapped__, name)
 
 
@@ -79,7 +81,7 @@ def clone_ingest_config(config: IngestConfig) -> IngestConfig:
     """Copy a runtime config so concurrent callers do not mutate shared state."""
     cloned = config.clone()
     if getattr(cloned, "cache", None) is not None:
-        cloned.cache = _IsolatedCacheBackend(cloned.cache)
+        cloned.cache = _IsolatedCacheBackend(cast(ICacheBackend, cloned.cache))
     return cloned
 
 

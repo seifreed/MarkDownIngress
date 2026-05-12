@@ -45,7 +45,9 @@ class MarkdownConverter(IMarkdownConverter):
         placeholders: dict[str, str] = {}
 
         for link in soup.find_all("a", href=True):
-            original_href = link["href"]
+            original_href = link.get("href")
+            if not isinstance(original_href, str):
+                continue
             normalized_href = self.normalizer.normalize_url(original_href)
             link["href"] = normalized_href
 

@@ -1,6 +1,7 @@
 """Integration tests for full pipeline"""
 
 from markdown_ingress.adapters.extractors.readability_extractor import Extractor
+from markdown_ingress.adapters.markdown import markdownify_converter
 from markdown_ingress.adapters.markdown.markdownify_converter import MarkdownConverter
 from markdown_ingress.core.hashing import Hasher
 from markdown_ingress.core.security import SecurityAnalyzer
@@ -88,3 +89,33 @@ def test_markdown_converter_preserves_blank_lines_inside_code_blocks():
     markdown = converter.convert(html)
 
     assert "line1\n\n\nline2" in markdown
+
+
+def test_markdown_converter_ignores_non_string_href_attributes(monkeypatch):
+    class FakeLink:
+        def get(self, name):
+            assert name == "href"
+            return ["https://example.test/?utm_source=x"]
+
+        def __setitem__(self, name, value):
+            raise AssertionError("non-string href should not be normalized or reassigned")
+
+    class FakeSoup:
+        def find_all(self, name, *args, **kwargs):
+            if name == "a":
+                return [FakeLink()]
+            return []
+
+        def __str__(self):
+            return '<a href="https://example.test/?utm_source=x">example</a>'
+
+    monkeypatch.setattr(
+        markdownify_converter,
+        "BeautifulSoup",
+        lambda html, parser: FakeSoup(),
+    )
+
+    prepared, placeholders = MarkdownConverter()._prepare_html("<a>example</a>")
+
+    assert prepared == '<a href="https://example.test/?utm_source=x">example</a>'
+    assert placeholders == {}

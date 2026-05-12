@@ -216,6 +216,23 @@ class Fetcher(IFetcher):
         self._ssl_bypass_ttl: float = 300.0
         self._ssl_bypass_lock = Lock()
         self._closing = False
+        self._async_close_tasks: set[asyncio.Task[None]] = set()
+
+    def _track_async_close_task(self, task: asyncio.Task[None]) -> None:
+        self._async_close_tasks.add(task)
+
+        def _finalize_close_task(done_task: asyncio.Task[None]) -> None:
+            self._async_close_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.debug(
+                    "Background async HTTP client close failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+
+        task.add_done_callback(_finalize_close_task)
 
     def _is_ssl_bypass_active(self, host: str) -> bool:
         with self._ssl_bypass_lock:
@@ -390,7 +407,7 @@ class Fetcher(IFetcher):
             )
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(client_to_close.aclose())
+                self._track_async_close_task(loop.create_task(client_to_close.aclose()))
             except Exception as exc:
                 logger.debug(
                     "Failed to schedule async client close as background task: %s",
