@@ -1,5 +1,6 @@
 """Tests for caching"""
 
+import json
 import time
 
 import pytest
@@ -893,6 +894,36 @@ def test_sqlite_cache_non_object_json_entry_deleted(tmp_path, caplog):
     assert "Cache deserialization failed" in caplog.text
     cursor = cache.conn.execute("SELECT COUNT(*) FROM cache WHERE key = 'list_key'")
     assert cursor.fetchone()[0] == 0
+
+    cache.close()
+
+
+def test_sqlite_cache_accepts_integer_injection_score_from_legacy_json(tmp_path):
+    """Legacy JSON may contain 0 instead of 0.0 for numeric score fields."""
+    db_path = tmp_path / "test.db"
+    cache = SQLiteCache(db_path=str(db_path), default_ttl=3600)
+
+    legacy_json = json.dumps(
+        {
+            "markdown": "# Test",
+            "metadata": {},
+            "token_estimate": 1,
+            "content_hash": "sha256:abc",
+            "injection_score": 0,
+        }
+    )
+    with cache._db_lock:
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            ("legacy_key", legacy_json, 0.0, time.time() + 3600),
+        )
+        cache.conn.commit()
+
+    result = cache.get("legacy_key")
+
+    assert result is not None
+    assert result.injection_score == 0.0
+    assert cache.exists("legacy_key")
 
     cache.close()
 

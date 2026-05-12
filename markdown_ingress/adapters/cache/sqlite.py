@@ -474,7 +474,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             "title": (str, type(None)),
             "url": str,
             "token_estimate": int,
-            "injection_score": float,
+            "injection_score": (int, float),
             "content_hash": (str, type(None)),
         }
         for field_name, expected in _primitive_field_types.items():
