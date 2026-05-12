@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import math
 import os
 
 _logger = logging.getLogger(__name__)
@@ -48,6 +49,9 @@ def _read_optional_float_env(
     try:
         value = float(raw)
     except ValueError:
+        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
+        return None
+    if not math.isfinite(value):
         _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
         return None
     is_invalid = value < minimum or (exclusive_minimum and value == minimum)

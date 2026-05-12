@@ -143,6 +143,15 @@ def test_batch_request_rejects_invalid_output_formats_early():
         BatchIngestRequest(urls=["https://example.com"], output_formats=["bogus"])
 
 
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_read_optional_float_env_rejects_non_finite_values(monkeypatch, raw_value: str):
+    from markdown_ingress.api_server_env import _read_optional_float_env
+
+    monkeypatch.setenv("MDI_TEST_FLOAT", raw_value)
+
+    assert _read_optional_float_env("MDI_TEST_FLOAT", minimum=0.0) is None
+
+
 def test_ingest_request_rejects_invalid_policy_name_early():
     with pytest.raises(ValueError, match="policy_name has invalid value 'bogus'"):
         IngestRequest(url="https://example.com", policy_name="bogus")
