@@ -50,12 +50,12 @@ def _allowed_db_roots() -> list[Path]:
     override = os.getenv("MDI_ALLOWED_DB_DIRS")
     if override:
         roots: list[Path] = []
-        for raw in override.split(os.pathsep):
-            raw = raw.strip()
-            if not raw:
+        for raw_root in override.split(os.pathsep):
+            stripped_root = raw_root.strip()
+            if not stripped_root:
                 continue
             try:
-                roots.append(Path(raw).expanduser().resolve())
+                roots.append(Path(stripped_root).expanduser().resolve())
             except OSError:
                 continue
         if roots:

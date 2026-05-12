@@ -519,7 +519,7 @@ def _apply_domain_policy_metadata(
         }
 
 
-def _assemble_document_metadata(  # noqa: PLR0913
+def _assemble_document_metadata(
     config: IngestConfig,
     fetch_result: FetchResult,
     extraction_result,
@@ -598,7 +598,7 @@ def _apply_policy_decision(
     return policy_action
 
 
-def _construct_safe_document_instance(  # noqa: PLR0913
+def _construct_safe_document_instance(
     markdown: str,
     metadata: dict,
     token_count: int,
@@ -655,7 +655,7 @@ def _construct_safe_document_instance(  # noqa: PLR0913
     return document
 
 
-def _build_safe_document(  # noqa: PLR0913 — coordinator function by design
+def _build_safe_document(
     *,
     config: IngestConfig,
     fetch_result: FetchResult,

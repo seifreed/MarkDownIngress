@@ -90,7 +90,7 @@ def _terminate_batch_process(process) -> None:
 
 async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
     """Poll the subprocess result queue until the worker finishes or an error occurs."""
-    from markdown_ingress.models import SafeDocument  # noqa: F811 — runtime import
+    from markdown_ingress.models import SafeDocument
 
     def read_payload(timeout: float | None = None) -> tuple[str, Any] | None:
         try:

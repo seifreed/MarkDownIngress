@@ -65,9 +65,11 @@ try:
 except ImportError:  # pragma: no cover
     STEALTH_AVAILABLE = False  # pragma: no cover
 
-try:  # noqa: I001
-    from playwright.async_api import (  # noqa: I001
+try:
+    from playwright.async_api import (
         Error as PlaywrightError,
+    )
+    from playwright.async_api import (
         TimeoutError as PlaywrightTimeoutError,
     )
 except ImportError:  # pragma: no cover

@@ -87,7 +87,7 @@ _register_all_factories()
 # -------------------------------------------------------------------------------
 
 try:
-    import playwright.async_api as _playwright_check  # noqa: F401
+    import playwright.async_api as _playwright_check
 
     PLAYWRIGHT_AVAILABLE: bool = True
     del _playwright_check

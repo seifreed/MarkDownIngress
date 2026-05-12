@@ -51,13 +51,13 @@ class Plugin(ABC):
         """
         return {}
 
-    def on_load(self):
+    def on_load(self) -> None:
         """Optional: Called when plugin is loaded"""
-        pass
+        return None
 
-    def on_unload(self):
+    def on_unload(self) -> None:
         """Optional: Called when plugin is unloaded"""
-        pass
+        return None
 
 
 class PluginLoader:

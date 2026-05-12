@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 try:
-    from nova import NovaMatcher, NovaParser, NovaRule  # type: ignore[import-untyped]  # noqa: F401
+    from nova import NovaMatcher, NovaParser  # type: ignore[import-untyped]
 
     NOVA_AVAILABLE = True
 except ImportError:  # pragma: no cover

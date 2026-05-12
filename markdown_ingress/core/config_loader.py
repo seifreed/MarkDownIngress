@@ -245,9 +245,12 @@ class ConfigLoader:
         explicit: set,
     ) -> None:
         """Validate and restore categorical/enum fields that may have been set to invalid values."""
-        restore = lambda a, m, *args: self._restore_field(  # noqa: E731
-            config, a, previous_values, previous_explicit, explicit, m, *args
-        )
+
+        def restore(attr, message, *args) -> None:
+            self._restore_field(
+                config, attr, previous_values, previous_explicit, explicit, message, *args
+            )
+
         if config.mode not in VALID_MODES:
             restore(
                 "mode",
@@ -339,9 +342,12 @@ class ConfigLoader:
         explicit: set,
     ) -> None:
         """Validate and restore numeric fields that fall outside their allowed bounds."""
-        restore = lambda a, m, *args: self._restore_field(  # noqa: E731
-            config, a, previous_values, previous_explicit, explicit, m, *args
-        )
+
+        def restore(attr, message, *args) -> None:
+            self._restore_field(
+                config, attr, previous_values, previous_explicit, explicit, message, *args
+            )
+
         if config.timeout <= 0 or config.timeout > 3600:
             restore(
                 "timeout",

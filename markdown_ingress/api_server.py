@@ -31,7 +31,9 @@ from markdown_ingress.api_server_auth import (
     _check_rate_limit_redis,
 )
 from markdown_ingress.api_server_dependencies import (
-    _rate_limit_client_id,  # noqa: F401 — re-exported for test access via api_server.*
+    _rate_limit_client_id as _rate_limit_client_id,
+)
+from markdown_ingress.api_server_dependencies import (
     _require_api_key,
     _require_rate_limit,
 )
