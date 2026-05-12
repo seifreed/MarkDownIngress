@@ -10,7 +10,7 @@ class Normalizer:  # implements INormalizer protocol
 
     # Zero-width and invisible Unicode characters
     # Comprehensive list including directional marks, format characters, etc.
-    ZERO_WIDTH_CHARS = [
+    ZERO_WIDTH_CHARS = (
         "\u200b",  # Zero-width space
         "\u200c",  # Zero-width non-joiner
         "\u200d",  # Zero-width joiner
@@ -40,35 +40,37 @@ class Normalizer:  # implements INormalizer protocol
         "\u2067",  # Right-to-left isolate
         "\u2068",  # First strong isolate
         "\u2069",  # Pop directional isolate
-    ]
+    )
 
     # Common tracking parameters
     # Note: 'ref' and 'source' removed as they are often legitimate parameters
-    TRACKING_PARAMS = {
-        "utm_source",
-        "utm_medium",
-        "utm_campaign",
-        "utm_term",
-        "utm_content",
-        "fbclid",
-        "gclid",
-        "msclkid",
-        "mc_cid",
-        "mc_eid",
-        "_ga",
-        "_gl",
-        # Modern tracking parameters
-        "_ga_client_id",  # Google Analytics 4
-        "yclid",  # Yahoo
-        "ttwid",  # TikTok
-        "li_fat_id",  # LinkedIn
-        "igshid",  # Instagram
-        "_p_id",  # Pinterest
-        "fb_action_ids",  # Facebook
-        "fb_action_types",  # Facebook
-        "fb_source",  # Facebook
-        "fb_ref",  # Facebook
-    }
+    TRACKING_PARAMS = frozenset(
+        {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "fbclid",
+            "gclid",
+            "msclkid",
+            "mc_cid",
+            "mc_eid",
+            "_ga",
+            "_gl",
+            # Modern tracking parameters
+            "_ga_client_id",  # Google Analytics 4
+            "yclid",  # Yahoo
+            "ttwid",  # TikTok
+            "li_fat_id",  # LinkedIn
+            "igshid",  # Instagram
+            "_p_id",  # Pinterest
+            "fb_action_ids",  # Facebook
+            "fb_action_types",  # Facebook
+            "fb_source",  # Facebook
+            "fb_ref",  # Facebook
+        }
+    )
 
     def __init__(self):
         self.zero_width_pattern = re.compile("|".join(map(re.escape, self.ZERO_WIDTH_CHARS)))

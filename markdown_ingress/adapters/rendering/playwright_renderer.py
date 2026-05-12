@@ -81,20 +81,20 @@ class Renderer(IRenderer):
     DEFAULT_TIMEOUT = 30000
     DEFAULT_WAIT_UNTIL = "domcontentloaded"
 
-    LOAD_STRATEGIES = [
+    LOAD_STRATEGIES = (
         ("domcontentloaded", 45000),
         ("load", 90000),
         ("networkidle", 120000),
-    ]
+    )
 
-    CONTENT_SELECTORS = [
+    CONTENT_SELECTORS = (
         "article",
         "main",
         '[role="main"]',
         ".content",
         "#content",
         "body",
-    ]
+    )
 
     def __init__(
         self,

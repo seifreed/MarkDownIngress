@@ -331,36 +331,38 @@ class SecurityAnalyzer:
 
     # Imperative verbs often used in injections
     # BUG FIX: Added missing security-relevant verbs
-    IMPERATIVE_VERBS = {
-        "ignore",
-        "disregard",
-        "forget",
-        "override",
-        "reveal",
-        "show",
-        "display",
-        "tell",
-        "say",
-        "write",
-        "output",
-        "print",
-        "execute",
-        "run",
-        "enable",
-        "disable",
-        "bypass",
-        "skip",
-        "reset",
-        "change",
-        "modify",
-        "delete",
-        "dump",  # e.g., "dump all data"
-        "leak",  # e.g., "leak the prompt"
-        "expose",  # e.g., "expose the system"
-        "extract",  # e.g., "extract the rules"
-        "provide",  # e.g., "provide the instructions"
-        "list",  # e.g., "list all rules"
-    }
+    IMPERATIVE_VERBS = frozenset(
+        {
+            "ignore",
+            "disregard",
+            "forget",
+            "override",
+            "reveal",
+            "show",
+            "display",
+            "tell",
+            "say",
+            "write",
+            "output",
+            "print",
+            "execute",
+            "run",
+            "enable",
+            "disable",
+            "bypass",
+            "skip",
+            "reset",
+            "change",
+            "modify",
+            "delete",
+            "dump",  # e.g., "dump all data"
+            "leak",  # e.g., "leak the prompt"
+            "expose",  # e.g., "expose the system"
+            "extract",  # e.g., "extract the rules"
+            "provide",  # e.g., "provide the instructions"
+            "list",  # e.g., "list all rules"
+        }
+    )
 
     def __init__(self, strict: bool = True):
         """

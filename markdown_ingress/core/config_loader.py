@@ -37,14 +37,14 @@ def _parse_csv_string_list(field_name: str, value: str) -> list[str]:
 class ConfigLoader:
     """Load configuration from files and environment variables"""
 
-    DEFAULT_LOCATIONS = [
+    DEFAULT_LOCATIONS = (
         ".markdowningress.yaml",
         ".markdowningress.yml",
         ".markdowningress.json",
         "~/.config/markdowningress/config.yaml",
         "~/.config/markdowningress/config.yml",
         "~/.config/markdowningress/config.json",
-    ]
+    )
 
     def __init__(self, config_path: str | None = None):
         """

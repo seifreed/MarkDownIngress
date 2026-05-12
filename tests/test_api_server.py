@@ -3410,6 +3410,13 @@ def test_stats_uses_current_queue_capacity_when_available(monkeypatch):
     assert response.json()["job_queue"]["max_queued_jobs"] == 42
 
 
+def test_close_queue_for_repair_ignores_external_owner_wrapper_without_close():
+    class ExternalOwnerQueue:
+        state = "external_owner"
+
+    api_server._close_queue_for_repair(ExternalOwnerQueue())
+
+
 def test_health_endpoint_degrades_when_pending_count_raises_sqlite_operational_error(monkeypatch):
     class Queue:
         state = "open"

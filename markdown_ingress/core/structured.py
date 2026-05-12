@@ -4,7 +4,8 @@ Structured extraction helpers for block-level and chunk-level outputs.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 
 from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
 
@@ -80,21 +81,23 @@ def _escape_markdown_table_cell(cell: str) -> str:
 class HTMLStructureExtractor:
     """Extract structured blocks from cleaned HTML."""
 
-    BLOCK_TAGS = {
-        "h1": ("heading", 1),
-        "h2": ("heading", 2),
-        "h3": ("heading", 3),
-        "h4": ("heading", 4),
-        "h5": ("heading", 5),
-        "h6": ("heading", 6),
-        "p": ("paragraph", None),
-        "blockquote": ("quote", None),
-        "pre": ("code", None),
-        "table": ("table", None),
-        "ul": ("list", None),
-        "ol": ("list", None),
-    }
-    CONTAINER_TAGS = {"pre", "table", "ul", "ol", "blockquote", "li", "td", "th"}
+    BLOCK_TAGS: Mapping[str, tuple[str, int | None]] = MappingProxyType(
+        {
+            "h1": ("heading", 1),
+            "h2": ("heading", 2),
+            "h3": ("heading", 3),
+            "h4": ("heading", 4),
+            "h5": ("heading", 5),
+            "h6": ("heading", 6),
+            "p": ("paragraph", None),
+            "blockquote": ("quote", None),
+            "pre": ("code", None),
+            "table": ("table", None),
+            "ul": ("list", None),
+            "ol": ("list", None),
+        }
+    )
+    CONTAINER_TAGS = frozenset({"pre", "table", "ul", "ol", "blockquote", "li", "td", "th"})
 
     def __init__(self, hasher: Hasher | None = None):
         self.hasher = hasher or Hasher()

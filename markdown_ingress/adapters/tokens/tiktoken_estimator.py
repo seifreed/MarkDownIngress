@@ -1,5 +1,8 @@
 """Token estimation adapter using tiktoken."""
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 import tiktoken
 
 from markdown_ingress.core.interfaces import ITokenEstimator
@@ -8,14 +11,16 @@ from markdown_ingress.core.interfaces import ITokenEstimator
 class TokenEstimator(ITokenEstimator):
     """Estimate token counts for different LLM models using tiktoken."""
 
-    MODEL_ENCODINGS = {
-        "gpt-4": "cl100k_base",
-        "gpt-4-turbo": "cl100k_base",
-        "gpt-3.5-turbo": "cl100k_base",
-        "claude": "cl100k_base",
-        "claude-3": "cl100k_base",
-        "text-davinci-003": "p50k_base",
-    }
+    MODEL_ENCODINGS: Mapping[str, str] = MappingProxyType(
+        {
+            "gpt-4": "cl100k_base",
+            "gpt-4-turbo": "cl100k_base",
+            "gpt-3.5-turbo": "cl100k_base",
+            "claude": "cl100k_base",
+            "claude-3": "cl100k_base",
+            "text-davinci-003": "p50k_base",
+        }
+    )
 
     def __init__(self, model: str = "gpt-4"):
         self.model = model

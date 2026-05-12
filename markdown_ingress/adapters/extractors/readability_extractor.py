@@ -38,7 +38,7 @@ _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
 class Extractor(IExtractor):
     """Extract main content and remove unnecessary elements."""
 
-    REMOVE_TAGS = [
+    REMOVE_TAGS = (
         "script",
         "style",
         "nav",
@@ -50,7 +50,7 @@ class Extractor(IExtractor):
         "embed",
         "applet",
         "base",
-    ]
+    )
 
     def __init__(self, strict: bool = True):
         self.strict = strict

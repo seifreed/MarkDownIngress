@@ -205,11 +205,16 @@ def _is_stale_heartbeat(heartbeat_at: str) -> bool:
     return age_seconds > _QUEUE_LEASE_TIMEOUT_SECONDS
 
 
-def _close_queue_for_repair(queue: PersistentJobQueue) -> None:
+def _close_queue_for_repair(queue: object) -> None:
+    close = getattr(queue, "close", None)
+    if not callable(close):
+        if getattr(queue, "state", None) == "external_owner":
+            return
+        raise RuntimeError("Job queue cannot be closed for repair")
     try:
-        queue.close(inline_wait_timeout=0.0, preserve_state_on_inline_timeout=True)
+        close(inline_wait_timeout=0.0, preserve_state_on_inline_timeout=True)
     except TypeError:
-        queue.close()
+        close()
 
 
 def _read_job_from_queue(queue, job_id: str):
