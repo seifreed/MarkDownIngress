@@ -1609,6 +1609,35 @@ def test_cleanup_expired_drops_rows_with_missing_completed_at_and_persisted_ttl(
     queue.close()
 
 
+def test_cleanup_expired_drops_rows_with_corrupt_persisted_ttl(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=120)
+    with closing(queue._connect()) as conn:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "persisted-ttl-corrupt",
+                "completed",
+                "2026-03-30T00:00:00+00:00",
+                (datetime.now(UTC) + timedelta(seconds=60)).isoformat(),
+                json.dumps({"ok": True}),
+                None,
+                None,
+                "not-an-int",
+                None,
+            ),
+        )
+        conn.commit()
+
+    queue.cleanup_expired()
+
+    assert queue.get("persisted-ttl-corrupt", cleanup_expired=False) is None
+    queue.close()
+
+
 def test_cleanup_expired_drops_legacy_rows_with_missing_completed_at_and_expired_legacy_expiry(
     tmp_path: Path,
 ):

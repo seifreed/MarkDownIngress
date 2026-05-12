@@ -973,6 +973,17 @@ class PersistentJobQueue:
             (now_iso,),
         )
 
+    def _delete_corrupt_ttl_jobs(self, conn) -> None:
+        conn.execute("""
+            DELETE FROM jobs
+            WHERE status NOT IN ('queued', 'running')
+              AND ttl_seconds IS NOT NULL
+              AND (
+                  typeof(ttl_seconds) != 'integer'
+                  OR ttl_seconds <= 0
+              )
+            """)
+
     def _delete_legacy_expired_jobs(self, conn, now_iso: str) -> None:
         conn.execute(
             """
@@ -1046,6 +1057,7 @@ class PersistentJobQueue:
         now_dt = datetime.now(UTC)
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
+            self._delete_corrupt_ttl_jobs(conn)
             self._delete_ttl_expired_jobs(conn, now_iso)
             self._delete_legacy_expired_jobs(conn, now_iso)
             self._delete_corrupt_legacy_jobs(conn)
