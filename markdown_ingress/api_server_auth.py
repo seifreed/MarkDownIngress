@@ -4,14 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
-from collections import deque
 from typing import Any
 
-from markdown_ingress.api_server_env import (
-    _detect_multiworker_environment,
-    _read_positive_int_env,
-)
+from markdown_ingress.api_server_env import _read_positive_int_env
 
 _logger = logging.getLogger(__name__)
 
@@ -30,27 +25,8 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 RATE_LIMIT_REQUESTS: int = _read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100)
 RATE_LIMIT_WINDOW_SECONDS: int = _read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60)
 
-# BUG FIX: Use deque with maxlen to prevent unbounded growth per client
-# Each client can have at most 2x rate limit requests worth of timestamps
-_RATE_LIMIT_MAX_TIMESTAMPS_PER_CLIENT: int = RATE_LIMIT_REQUESTS * 2
-_request_counts: dict[str, deque] = {}  # type: ignore[var-annotated]
-_rate_limit_lock: threading.Lock = threading.Lock()
-_rate_limit_cleanup_counter: int = 0  # Counter for periodic cleanup
-_RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000  # Cleanup every N requests
-_RATE_LIMIT_MAX_CLIENTS: int = 10000  # Max clients before forced cleanup (memory leak prevention)
-
-# BUG FIX: Warn about per-worker rate limiting in multi-worker deployments
-if _detect_multiworker_environment():
-    _logger.warning(
-        "Rate limiting is per-worker in multi-worker deployments. "
-        "Each worker process maintains separate rate limit state. "
-        "Consider using Redis-backed rate limiting for production deployments."
-    )
-
 _RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
-_RATE_LIMIT_REDIS_URL: str = os.getenv(
-    "MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0"
-)
+_RATE_LIMIT_REDIS_URL: str = os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
 _RATE_LIMIT_REDIS_PREFIX: str = os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:")
 _rate_limit_redis_client: Any | None = None
 
@@ -71,9 +47,7 @@ def _get_redis_rate_limit_client():
     try:
         client.ping()
     except Exception as exc:  # pragma: no cover — depends on env
-        raise RuntimeError(
-            f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}"
-        ) from exc
+        raise RuntimeError(f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}") from exc
     _rate_limit_redis_client = client
     return client
 

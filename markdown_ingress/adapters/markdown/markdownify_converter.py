@@ -7,8 +7,8 @@ import uuid
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
-from markdown_ingress.core.interfaces import IMarkdownConverter
 from markdown_ingress.adapters.normalizing.normalizer import Normalizer
+from markdown_ingress.core.interfaces import IMarkdownConverter
 from markdown_ingress.core.structured import render_code_fence, render_markdown_table
 
 
@@ -53,19 +53,26 @@ class MarkdownConverter(IMarkdownConverter):
             code = pre.get_text(strip=False)
             language = None
             code_tag = pre.find("code")
-            if code_tag:
-                raw_classes = code_tag.get("class")
-                if isinstance(raw_classes, str):
-                    classes: list[str] = [raw_classes]
+
+            # Collect classes from <pre> or <code> — GFM often puts the
+            # language-* class on <pre> itself, not on the inner <code>.
+            raw_classes: list[str] = []
+            for el in (pre, code_tag):
+                if el is None:
+                    continue
+                candidates = el.get("class")
+                if isinstance(candidates, str):
+                    raw_classes.append(candidates)
                 else:
-                    classes = list(raw_classes or [])
-                for _pfx in ("language-", "lang-", "highlight-"):
-                    for class_name in classes:
-                        if class_name.startswith(_pfx):
-                            language = class_name[len(_pfx):]
-                            break
-                    if language:
+                    raw_classes.extend(list(candidates or []))
+
+            for _pfx in ("language-", "lang-", "highlight-"):
+                for class_name in raw_classes:
+                    if class_name.startswith(_pfx):
+                        language = class_name[len(_pfx) :]
                         break
+                if language:
+                    break
             token = f"\x00MDI_CODE_{uuid.uuid4().hex}\x00"
             rendered = render_code_fence(code, language)
             if not rendered.endswith("\n"):
@@ -107,6 +114,6 @@ class MarkdownConverter(IMarkdownConverter):
             if prev == markdown:
                 break
             prev = markdown
-            markdown = re.sub(r"(\n[-*+]\s.+)\n\n(\s*[-*+]\s)", r"\1\n\2", markdown)
+            markdown = re.sub(r"(\n[-*+]\s.+)\n\n(\s*[-*+]\s.+)", r"\1\n\2", markdown)
 
         return markdown.strip() + "\n"

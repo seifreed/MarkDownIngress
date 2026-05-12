@@ -183,7 +183,10 @@ def _compute_retry_attempt_params(
     timeout = initial_timeout + attempt * _RETRY_TIMEOUT_INCREMENT_S
     if max_timeout is not None:
         timeout = min(timeout, max_timeout)
-    return timeout, enable_stealth and attempt >= 1, attempt > 0 and attempt == max_retries - 1
+    # Extreme mode fires on the last retry attempt, but at least attempt 1
+    # so it isn't deferred unreasonably when max_retries is set high.
+    extreme_attempt = max(1, max_retries - 2)
+    return timeout, enable_stealth and attempt >= 1, attempt > 0 and attempt >= extreme_attempt
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -192,12 +195,14 @@ def _is_retryable_error(exc: Exception) -> bool:
 
     if isinstance(exc, PolicyBlockedError):
         return False
-    if isinstance(exc, (TimeoutError, httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
+    if isinstance(
+        exc, (TimeoutError, httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)
+    ):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in _RETRYABLE_HTTP_STATUSES
-    retryable_names = ("ConnectTimeout", "ReadTimeout", "ConnectionError", "TargetClosedError")
-    return any(type(exc).__name__.startswith(name) for name in retryable_names)
+    retryable_names = {"ConnectTimeout", "ReadTimeout", "ConnectionError", "TargetClosedError"}
+    return type(exc).__name__ in retryable_names
 
 
 def retry_ingest_impl(
@@ -243,10 +248,13 @@ def retry_ingest_impl(
                 stealth=use_stealth,
                 extreme_mode=use_extreme,
             )
-            doc.metadata["retry_attempts"] = attempt + 1
-            doc.metadata["retry_enabled"] = use_stealth
-            doc.metadata["extreme_mode_enabled"] = use_extreme
-            doc.metadata["final_timeout"] = timeout
+            doc.metadata = {
+                **doc.metadata,
+                "retry_attempts": attempt + 1,
+                "retry_enabled": use_stealth,
+                "extreme_mode_enabled": use_extreme,
+                "final_timeout": timeout,
+            }
             if attempt > 0:
                 logger.info("Success on attempt %d", attempt + 1)
             return doc
@@ -256,10 +264,13 @@ def retry_ingest_impl(
             is_retryable = _is_retryable_error(exc)
             if attempt < max_retries - 1:
                 if is_retryable:
-                    wait_time = 2**attempt
+                    wait_time = min(2**attempt, 60)
                     logger.warning("%s on attempt %d: %s", error_type, attempt + 1, exc)
                     logger.info("Waiting %ds before retry...", wait_time)
-                    time.sleep(wait_time)
+                    try:
+                        time.sleep(wait_time)
+                    except (OSError, ValueError):
+                        pass
                 else:
                     logger.error("Non-retryable error %s: %s", error_type, exc)
                     raise exc
@@ -277,9 +288,7 @@ def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     config = build_runtime_config(**runtime_kwargs)
     use_case = IngestUseCase(playwright_available=PLAYWRIGHT_AVAILABLE)
     try:
-        report = GenerateSecurityReportUseCase(
-            ingest_use_case=use_case
-        ).execute(url, config)
+        report = GenerateSecurityReportUseCase(ingest_use_case=use_case).execute(url, config)
     finally:
         use_case.close()
     if config.save_reports:

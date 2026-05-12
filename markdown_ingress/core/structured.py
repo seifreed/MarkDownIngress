@@ -257,7 +257,9 @@ class HTMLStructureExtractor:
 class ChunkBuilder:
     """Create stable chunks from structured blocks."""
 
-    def __init__(self, hasher: Hasher | None = None, token_estimator: ITokenEstimator | None = None):
+    def __init__(
+        self, hasher: Hasher | None = None, token_estimator: ITokenEstimator | None = None
+    ):
         self.hasher = hasher or Hasher()
         if token_estimator is None:
             if _token_estimator_factory is None:
@@ -306,11 +308,7 @@ class ChunkBuilder:
         for index, group in enumerate(groups):
             # Preserve structurally significant code/table blocks whose text is
             # empty but whose markdown still carries emitted content.
-            block_texts = [
-                text
-                for block in group
-                if (text := self._chunk_text_for_block(block))
-            ]
+            block_texts = [text for block in group if (text := self._chunk_text_for_block(block))]
             text = "\n\n".join(block_texts)
             markdown = "\n\n".join(block.markdown.strip() for block in group).strip() + "\n"
             structural_source = "\n".join(block.structural_hash for block in group)

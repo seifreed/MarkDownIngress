@@ -114,7 +114,9 @@ class NovaGuard:
         def _decode_fully(encoded_path: str) -> str:
             """Decode URL-encoded path until fully decoded."""
             decoded = encoded_path
-            for _ in range(25):  # Fixed-point loop breaks early; cap prevents adversarial deep-encoding
+            for _ in range(
+                25
+            ):  # Fixed-point loop breaks early; cap prevents adversarial deep-encoding
                 new_decoded = urllib.parse.unquote(decoded)
                 if new_decoded == decoded:
                     break

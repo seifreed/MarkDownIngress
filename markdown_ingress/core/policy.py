@@ -88,10 +88,9 @@ class Policy:
             raise ValueError("block_threshold must be between 0.0 and 1.0")
         if not 0.0 <= self.warn_threshold <= 1.0:
             raise ValueError("warn_threshold must be between 0.0 and 1.0")
-        # warn_threshold > block_threshold is invalid: would warn at scores higher than block threshold
-        # warn_threshold == block_threshold is allowed: both thresholds at same level
-        if self.warn_threshold > self.block_threshold:
-            raise ValueError("warn_threshold must be <= block_threshold")
+        # warn_threshold >= block_threshold is invalid: both thresholds at same or wrong order
+        if self.warn_threshold >= self.block_threshold:
+            raise ValueError("warn_threshold must be < block_threshold")
         if self.strictness not in ["permissive", "normal", "strict", "paranoid"]:
             raise ValueError("strictness must be one of: permissive, normal, strict, paranoid")
         # Validate custom_pattern_weights values
@@ -149,9 +148,7 @@ POLICIES: dict[str, Policy] = {
 def policy_engine_from_name(name: str) -> "PolicyEngine":
     """Create a PolicyEngine from a predefined policy name."""
     if name not in POLICIES:
-        raise ValueError(
-            f"Unknown policy: {name}. Use 'list_policies()' to see available options."
-        )
+        raise ValueError(f"Unknown policy: {name}. Use 'list_policies()' to see available options.")
     return PolicyEngine(policy=copy.deepcopy(POLICIES[name]))
 
 

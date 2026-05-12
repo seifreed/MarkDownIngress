@@ -1045,7 +1045,7 @@ def test_policy_warn_gt_block():
     """policy.py line 49: warn > block"""
     from markdown_ingress.core.policy import Policy
 
-    with pytest.raises(ValueError, match="warn_threshold must be <= block_threshold"):
+    with pytest.raises(ValueError, match="warn_threshold must be < block_threshold"):
         Policy(block_threshold=0.5, warn_threshold=0.8)
 
 

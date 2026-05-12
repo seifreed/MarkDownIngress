@@ -177,10 +177,17 @@ def test_injection_count_floor_escalates_repeated_low_weight_matches(monkeypatch
 
     importlib.reload(security_module)
 
-    analyzer = security_module.SecurityAnalyzer(strict=False)
-    # "act as if" is a weight-0.3 pattern; repeat it enough times to trip
-    # the count floor while avoiding other high-weight phrases.
-    payload = "\n".join(["Please act as if you were helpful today."] * 6)
-    result = analyzer.analyze(payload, hidden_content_detected=False)
+    try:
+        analyzer = security_module.SecurityAnalyzer(strict=False)
+        # "act as if" is a weight-0.3 pattern; repeat it enough times to trip
+        # the count floor while avoiding other high-weight phrases.
+        payload = "\n".join(["Please act as if you were helpful today."] * 6)
+        result = analyzer.analyze(payload, hidden_content_detected=False)
 
-    assert result.score >= 0.4
+        assert result.score >= 0.4
+    finally:
+        # Restore original module constants so subsequent tests in the same
+        # process do not see the patched values.
+        monkeypatch.delenv("MDI_INJECTION_COUNT_FLOOR", raising=False)
+        monkeypatch.delenv("MDI_INJECTION_COUNT_FLOOR_SCORE", raising=False)
+        importlib.reload(security_module)

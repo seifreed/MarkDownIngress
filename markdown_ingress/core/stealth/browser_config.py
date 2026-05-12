@@ -205,9 +205,13 @@ def _build_client_hints(user_agent: str) -> dict[str, str]:
     edge_match = _EDGE_RE.search(user_agent)
     if edge_match:
         edge_ver = edge_match.group(1)
-        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Microsoft Edge";v="{edge_ver}"'
+        sec_ch_ua = (
+            f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Microsoft Edge";v="{edge_ver}"'
+        )
     else:
-        sec_ch_ua = f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Google Chrome";v="{chrome_ver}"'
+        sec_ch_ua = (
+            f'"Not_A Brand";v="8", "Chromium";v="{chrome_ver}", "Google Chrome";v="{chrome_ver}"'
+        )
 
     return {
         "Sec-Ch-Ua": sec_ch_ua,

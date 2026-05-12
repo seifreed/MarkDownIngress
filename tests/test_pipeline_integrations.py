@@ -406,16 +406,14 @@ def test_ingest_cache_invalidates_when_plugin_file_changes(monkeypatch, tmp_path
     )
 
     plugin_file = tmp_path / "versioned_plugin.py"
-    plugin_file.write_text(
-        """
+    plugin_file.write_text("""
 from markdown_ingress.core.plugin import Plugin
 
 
 class VersionedPlugin(Plugin):
     def get_patterns(self):
         return [r"alpha_marker"]
-""".strip()
-    )
+""".strip())
 
     cache = MemoryCache()
     first = ingest(
@@ -429,16 +427,14 @@ class VersionedPlugin(Plugin):
     assert first.metadata["custom_patterns_count"] == 1
     assert len(first.metadata["pattern_matches"]) == 0
 
-    plugin_file.write_text(
-        """
+    plugin_file.write_text("""
 from markdown_ingress.core.plugin import Plugin
 
 
 class VersionedPlugin(Plugin):
     def get_patterns(self):
         return [r"beta_marker", r"unused_marker"]
-""".strip()
-    )
+""".strip())
 
     second = ingest(
         "https://unit.test/versioned-plugin",

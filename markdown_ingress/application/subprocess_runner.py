@@ -1,4 +1,5 @@
 """Subprocess execution utilities for batch ingestion."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +8,7 @@ import multiprocessing
 import os
 import queue as queue_module
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from markdown_ingress.application.exceptions import _copy_batch_exception, _make_picklable
 
@@ -31,7 +32,7 @@ def _execute_batch_ingest_in_subprocess(
         from markdown_ingress.application.use_cases import IngestUseCase
 
         document = IngestUseCase(playwright_available=playwright_available).execute(url, config)
-        document.metadata = _make_picklable(document.metadata)
+        document.metadata = cast(dict[str, Any], _make_picklable(document.metadata))
         queue.put(("result", document))
     except Exception as exc:  # pragma: no cover - child process path
         try:
@@ -89,25 +90,25 @@ def _terminate_batch_process(process) -> None:
 
 async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
     """Poll the subprocess result queue until the worker finishes or an error occurs."""
-    from typing import cast
-
     from markdown_ingress.models import SafeDocument  # noqa: F811 — runtime import
 
-    def read_payload(timeout: float | None = None):
+    def read_payload(timeout: float | None = None) -> tuple[str, Any] | None:
         try:
             if timeout is not None:
-                return queue.get(timeout=timeout)
-            return queue.get_nowait()
+                return cast(tuple[str, Any], queue.get(timeout=timeout))
+            return cast(tuple[str, Any], queue.get_nowait())
         except queue_module.Empty:
             return None
 
-    def handle_payload(payload):
+    def handle_payload(payload: tuple[str, Any]) -> SafeDocument:
         kind, value = payload
         process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
         if kind == "result":
             return cast(SafeDocument, value)
         if kind == "exception":
-            raise value
+            if isinstance(value, BaseException):
+                raise value
+            raise RuntimeError(str(value))
         if kind == "exception_payload":
             raise RuntimeError(f"{value['type']}: {value['message']}")
         raise RuntimeError(f"Batch worker returned an unknown payload for {url}")

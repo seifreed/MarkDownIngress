@@ -463,7 +463,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                 elif f.default_factory is not dataclasses.MISSING:
                     filtered[f.name] = f.default_factory()
         # Basic type validation for primitive fields to reject corrupted cache entries.
-        _primitive_field_types: dict[str, type] = {
+        _primitive_field_types: dict[str, type | tuple[type, ...]] = {
             "markdown": str,
             "title": (str, type(None)),
             "url": str,

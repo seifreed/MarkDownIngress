@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
+from typing import cast
 from urllib.parse import urlparse
 
 from markdown_ingress import __version__
@@ -61,7 +62,7 @@ def load_runtime_config(args) -> Config:
 
     config_path = getattr(args, "config", None)
     loader = ConfigLoader(config_path)
-    return loader.load()
+    return cast(Config, loader.load())
 
 
 def prepare_ingest_params(args, runtime_config: Config | None = None):

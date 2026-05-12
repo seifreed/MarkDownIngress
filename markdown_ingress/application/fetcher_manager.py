@@ -1,4 +1,5 @@
 """Shared fetcher lifecycle management for the application layer."""
+
 from __future__ import annotations
 
 import hashlib

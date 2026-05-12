@@ -89,6 +89,8 @@ class IngestOrchestrator:
         self.link_analyzer = link_analyzer
         self._inflight_registry_was_injected = inflight_registry is not None
         self.inflight_registry = inflight_registry or InFlightRegistry()
+        if not self._inflight_registry_was_injected:
+            self.inflight_registry.start_periodic_cleanup()
         self._default_inflight_registry = (
             self.inflight_registry if not self._inflight_registry_was_injected else None
         )
@@ -120,10 +122,12 @@ class IngestOrchestrator:
     def timed_stage(self, stage: str, fn):
         """Execute a stage and record aggregate timing."""
         started = time.perf_counter()
-        result = fn()
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        record_stage_timing(stage, duration_ms)
-        return result
+        try:
+            result = fn()
+            return result
+        finally:
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            record_stage_timing(stage, duration_ms)
 
     def process_fetched_content(
         self,

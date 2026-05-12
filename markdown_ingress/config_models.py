@@ -441,7 +441,9 @@ class IngestConfig:
                 f"Invalid mode '{self.mode}'. Must be one of: {', '.join(valid_modes)}"
             )
 
-        if self.fetcher_user_agent and ("\r" in self.fetcher_user_agent or "\n" in self.fetcher_user_agent):
+        if self.fetcher_user_agent and (
+            "\r" in self.fetcher_user_agent or "\n" in self.fetcher_user_agent
+        ):
             raise ValueError("fetcher_user_agent must not contain CR or LF characters")
 
         if self.policy_name not in VALID_POLICY_NAMES:

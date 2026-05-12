@@ -698,7 +698,9 @@ def test_ingest_many_persists_policy_blocked_documents(tmp_path):
             "markdown_ingress.application.use_cases._select_execution_strategy",
             return_value=("local", None),
         ),
-        patch("markdown_ingress.application.batch_processor.persist_report_for_document") as persist,
+        patch(
+            "markdown_ingress.application.batch_processor.persist_report_for_document"
+        ) as persist,
     ):
         result = ingest_many(
             ["https://example.com/blocked"],
@@ -1034,7 +1036,9 @@ def test_ingest_auto_mode_fast_fails_playwright_fallback(error_server):
             )
 
     with (
-        patch.object(IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))),
+        patch.object(
+            IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))
+        ),
         patch("markdown_ingress.api.PLAYWRIGHT_AVAILABLE", True),
     ):
         # error_server returns 403 → fast Fetcher raises → render fallback
@@ -1117,7 +1121,9 @@ def test_orchestrator_auto_playwright_fallback(error_server):
             )
 
     with (
-        patch.object(IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))),
+        patch.object(
+            IngestUseCase, "_default_renderer_factory", staticmethod(lambda rc: FakeRenderer(rc))
+        ),
         patch("markdown_ingress.application.use_cases.PLAYWRIGHT_AVAILABLE", True),
     ):
         # error_server returns 403 → fetcher.fetch_sync raises → render fallback

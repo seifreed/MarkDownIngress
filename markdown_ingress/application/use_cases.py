@@ -133,7 +133,7 @@ class _CacheResolutionHelper:
     def make_cache_key(
         url: str,
         resolved_config: IngestConfig,
-        request_identity: str,
+        request_identity: dict[str, object],
         cache_backend: Cache | None,
     ) -> str | None:
         if cache_backend is None:
@@ -168,7 +168,7 @@ class _CacheResolutionHelper:
             bump_ingest_stat("cache_misses")
             return None
         try:
-            cached_copy = self._orchestrator.clone_cached_document(cached)
+            cached_copy = cast(SafeDocument, self._orchestrator.clone_cached_document(cached))
             bump_ingest_stat("cache_hits")
             cached_copy.metadata[REQUESTED_MODE] = requested_mode
             record_mode_result(requested_mode, success=True)
@@ -234,8 +234,12 @@ class IngestUseCase:
         if _used_default_orchestrator:
             from markdown_ingress.core.orchestrator import IngestOrchestrator
 
-            orchestrator = IngestOrchestrator()
-        self.orchestrator: IIngestOrchestrator = orchestrator
+            selected_orchestrator = cast(IIngestOrchestrator, IngestOrchestrator())
+        else:
+            if orchestrator is None:
+                raise RuntimeError("orchestrator unexpectedly missing")
+            selected_orchestrator = orchestrator
+        self.orchestrator: IIngestOrchestrator = selected_orchestrator
         self._used_default_orchestrator = _used_default_orchestrator
         self.fetcher_factory = fetcher_factory or self._default_fetcher_factory
         self.renderer_factory = renderer_factory or self._default_renderer_factory
@@ -300,7 +304,7 @@ class IngestUseCase:
             self._used_default_orchestrator
             and not getattr(orchestrator, "_inflight_registry_was_injected", False)
             and getattr(orchestrator, "_default_inflight_registry", None)
-            is orchestrator.inflight_registry
+            is getattr(orchestrator, "inflight_registry", None)
             and all(
                 getattr(orchestrator, name) is None
                 for name in (
@@ -321,11 +325,18 @@ class IngestUseCase:
     def _cleanup_orphaned_screenshot(config: IngestConfig | RenderConfig) -> None:
         """Remove temporary screenshot file from a failed render attempt."""
         import os
+        import tempfile
 
         screenshot = config.screenshot
         if screenshot is True:
             return  # auto-temp path — renderer handles cleanup
         if isinstance(screenshot, str) and os.path.isfile(screenshot):
+            # Only delete files that actually live in a temporary directory to
+            # avoid destroying user-provided paths.
+            abs_path = os.path.abspath(screenshot)
+            tmp_root = os.path.abspath(tempfile.gettempdir())
+            if not abs_path.startswith(tmp_root + os.sep):
+                return
             try:
                 os.unlink(screenshot)
             except OSError as exc:
@@ -462,14 +473,19 @@ class _FetchPipeline:
         budget: _CostBudget,
     ) -> SafeDocument:
         fetch_result, operational_flags = self._fetch_result(url, config, budget)
-        return self._orchestrator.process_fetched_content(
-            fetch_result=fetch_result,
-            config=config,
-            matched_domain_policy=matched_domain_policy,
-            operational_flags=operational_flags,
+        return cast(
+            SafeDocument,
+            self._orchestrator.process_fetched_content(
+                fetch_result=fetch_result,
+                config=config,
+                matched_domain_policy=matched_domain_policy,
+                operational_flags=operational_flags,
+            ),
         )
 
-    def _fetch_result(self, url: str, config: IngestConfig, budget: _CostBudget):
+    def _fetch_result(
+        self, url: str, config: IngestConfig, budget: _CostBudget
+    ) -> tuple[FetchResult, list[str]]:
         operational_flags: list[str] = []
         stage_timings: dict[str, float] = {}
 
@@ -477,7 +493,13 @@ class _FetchPipeline:
             return timed_stage_with_snapshot(stage_timings, stage, fn)
 
         if config.mode == "render":
-            fetch_result = self._fetch_render(url, config, budget, timed_stage, operational_flags)
+            try:
+                fetch_result = self._fetch_render(
+                    url, config, budget, timed_stage, operational_flags
+                )
+            except Exception:
+                IngestUseCase._cleanup_orphaned_screenshot(config)
+                raise
         else:
             fetch_result = self._fetch_fast(url, config, budget, timed_stage)
 
@@ -525,9 +547,16 @@ class _FetchPipeline:
         timed_stage: Callable[[str, Callable[[], Any]], Any],
         operational_flags: list[str],
     ) -> FetchResult:
-        budget.consume(1, "degraded fast fallback from render")
+        try:
+            budget.consume(1, "degraded fast fallback from render")
+        except RuntimeError:
+            _logger.warning(
+                "Budget exceeded during degraded fallback; proceeding without budget charge"
+            )
         fetcher = self._get_shared_fetcher(config)
-        fetch_result = timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(url))
+        fetch_result = cast(
+            FetchResult, timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(url))
+        )
         operational_flags.extend(
             [
                 "render_failed_fast_degraded_fallback",
@@ -575,7 +604,9 @@ class _FetchPipeline:
         """Run the Playwright render; fall back to a plain HTTP fetch on retryable failure."""
         renderer = self._renderer_factory(render_config)
         try:
-            fetch_result = timed_stage("fetch_render", lambda: renderer.render_sync(url))
+            fetch_result = cast(
+                FetchResult, timed_stage("fetch_render", lambda: renderer.render_sync(url))
+            )
             if screenshot_was_temp:
                 reported_screenshot_path = fetch_result.metadata.get("screenshot_path")
                 if reported_screenshot_path:
@@ -650,7 +681,7 @@ class _FetchPipeline:
         budget.consume(1, "fetch mode")
         fetcher = self._get_shared_fetcher(config)
         try:
-            return timed_stage("fetch_fast", lambda: fetcher.fetch_sync(url))
+            return cast(FetchResult, timed_stage("fetch_fast", lambda: fetcher.fetch_sync(url)))
         except DomainCircuitOpenError:
             bump_ingest_stat("circuit_breaker_rejections")
             raise
@@ -708,7 +739,7 @@ class _AutoModeSelector:
             render_doc = self._pipeline.execute_mode(
                 url, render_config, matched_domain_policy, budget
             )
-        except RenderUrlRequiresDnsPinningError as render_exc:
+        except Exception as render_exc:
             raise exc from render_exc
         render_doc.metadata[AUTO_MODE_USED] = "render"
         render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
@@ -738,14 +769,6 @@ class _AutoModeSelector:
             render_doc = self._pipeline.execute_mode(
                 url, render_config, matched_domain_policy, budget
             )
-        except RenderUrlRequiresDnsPinningError as exc:
-            _logger.warning(
-                "auto mode: render skipped because URL cannot be safely DNS-pinned. Error: %s",
-                exc,
-            )
-            fast_doc.metadata[AUTO_MODE_USED] = "fast"
-            fast_doc.metadata[AUTO_MODE_REASON] = "render_blocked_ssrf"
-            return fast_doc
         except Exception as exc:
             if not _should_attempt_fast_degraded_fallback(exc):
                 raise
@@ -763,23 +786,30 @@ class _AutoModeSelector:
         render_fetch_metadata = render_doc.metadata.get(FETCH_METADATA, {})
         render_attempt_degraded = bool(render_fetch_metadata.get(DEGRADED_RENDER_FALLBACK))
         improvement_threshold = max(1, int(fast_doc.token_estimate * _AUTO_RENDER_MIN_IMPROVEMENT))
+
+        def _merge_operational_flags(target_doc: SafeDocument, source_doc: SafeDocument) -> None:
+            existing_flags = list(target_doc.metadata.get(OPERATIONAL_FLAGS, []))
+            for flag in source_doc.metadata.get(OPERATIONAL_FLAGS, []):
+                if flag not in existing_flags:
+                    existing_flags.append(flag)
+            target_doc.metadata[OPERATIONAL_FLAGS] = existing_flags
+
         if render_attempt_degraded:
             if render_doc.token_estimate >= fast_doc.token_estimate + improvement_threshold:
                 render_doc.metadata[AUTO_MODE_USED] = "render"
                 render_doc.metadata[AUTO_MODE_REASON] = "degraded_render"
                 render_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
+                _merge_operational_flags(render_doc, fast_doc)
                 return render_doc
-            existing_flags = list(fast_doc.metadata.get(OPERATIONAL_FLAGS, []))
-            for flag in render_doc.metadata.get(OPERATIONAL_FLAGS, []):
-                if flag not in existing_flags:
-                    existing_flags.append(flag)
-            fast_doc.metadata[OPERATIONAL_FLAGS] = existing_flags
+            _merge_operational_flags(fast_doc, render_doc)
             fast_doc.metadata[AUTO_MODE_USED] = "fast"
             fast_doc.metadata[AUTO_MODE_REASON] = "render_fallback"
+            fast_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
             return fast_doc
         if render_doc.token_estimate >= fast_doc.token_estimate + improvement_threshold:
             render_doc.metadata[AUTO_MODE_USED] = "render"
             render_doc.metadata[FAST_MODE_TOKENS] = fast_doc.token_estimate
+            _merge_operational_flags(render_doc, fast_doc)
             fast_fetch_metadata = fast_doc.metadata.get(FETCH_METADATA, {})
             if fast_fetch_metadata.get(SCREENSHOT_TEMP):
                 _cleanup_screenshot(fast_fetch_metadata.get("screenshot_path"))

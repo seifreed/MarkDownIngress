@@ -95,7 +95,9 @@ def create_batch_processor(args):
         if args.timeout is not None
         else (runtime_config.batch_timeout if runtime_config is not None else 30.0)
     )
-    if args.timeout is not None or (runtime_config is not None and runtime_config.batch_timeout is not None):
+    if args.timeout is not None or (
+        runtime_config is not None and runtime_config.batch_timeout is not None
+    ):
         explicit_overrides.add("timeout")
     if timeout is not None and timeout <= 0:
         raise ValueError(f"timeout must be > 0, got {timeout}")
@@ -343,6 +345,7 @@ def cmd_benchmark(args):
     urls = load_urls_from_file(args.file)
     try:
         from markdown_ingress.adapters.extractors.comparison import compare_extractors as _cmp_fn
+
         _compare_fn = _cmp_fn
     except ImportError:
         _compare_fn = None

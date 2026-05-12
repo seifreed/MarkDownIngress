@@ -138,8 +138,13 @@ class Benchmark:
                 try:
                     if self._fetcher_factory is None:
                         raise RuntimeError("No fetcher_factory provided to Benchmark.")
-                    with self._fetcher_factory() as fetcher:
+                    fetcher = self._fetcher_factory()
+                    try:
                         fetch_result = fetcher.fetch_sync(url)
+                    finally:
+                        close = getattr(fetcher, "close", None)
+                        if callable(close):
+                            close()
                     extractor_comparison = self._compare_fn(fetch_result.html, self.model)
                 except Exception as e:
                     _logger.debug("Extractor comparison failed: %s", e)

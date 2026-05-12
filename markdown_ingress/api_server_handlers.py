@@ -206,7 +206,7 @@ async def handle_batch_submit(
         if _is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc))
         if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail="Invalid request")
         _logger.exception("Unexpected batch submit error")
         raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
 

@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 import time
 from contextlib import closing
@@ -830,6 +831,7 @@ def test_validate_webhook_url_resolves_dns_on_submit(tmp_path: Path, monkeypatch
         nonlocal resolved
         resolved = True
         import socket as _socket
+
         return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
 
     monkeypatch.setattr("socket.getaddrinfo", mock_getaddrinfo)
@@ -933,7 +935,18 @@ def test_resolve_and_validate_ip_rejects_mixed_public_private_answers(monkeypatc
 
     monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
 
-    assert _resolve_and_validate_ip("mixed.example.test") is None
+    with pytest.raises(ValueError, match="private IP"):
+        _resolve_and_validate_ip("mixed.example.test")
+
+
+def test_resolve_and_validate_ip_propagates_dns_resolution_failure(monkeypatch):
+    def fake_getaddrinfo(hostname, port):
+        raise socket.gaierror("temporary failure")
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(socket.gaierror, match="temporary failure"):
+        _resolve_and_validate_ip("unresolved.example.test")
 
 
 def test_api_batch_jobs_submit_uses_async_queue_path(monkeypatch):

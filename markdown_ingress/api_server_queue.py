@@ -260,9 +260,7 @@ def _queue_still_has_visible_jobs(queue) -> bool:
     except sqlite3.Error as exc:
         raise _TransientLegacyQueueReadError(str(exc)) from exc
     except (AttributeError, TypeError, KeyError) as exc:
-        raise _TransientLegacyQueueReadError(
-            f"legacy queue inspection failed: {exc}"
-        ) from exc
+        raise _TransientLegacyQueueReadError(f"legacy queue inspection failed: {exc}") from exc
     now = datetime.now(UTC)
     for row in rows:
         status = row["status"] if isinstance(row, sqlite3.Row) else row[0]

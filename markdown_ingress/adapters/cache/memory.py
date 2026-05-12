@@ -3,6 +3,7 @@ In-memory LRU cache implementation.
 """
 
 import copy
+import logging
 import threading
 import time
 from typing import Any
@@ -10,6 +11,8 @@ from typing import Any
 from markdown_ingress.adapters.cache.utils import _validate_ttl_value
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.models import SafeDocument
+
+_logger = logging.getLogger(__name__)
 
 
 class MemoryCache(Cache):  # implements ICacheBackend protocol
@@ -82,6 +85,7 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
         doc = entry_copy["document"]
         if isinstance(doc, SafeDocument):
             return copy.deepcopy(doc)
+        _logger.warning("Cache returned non-SafeDocument object of type %s", type(doc).__name__)
         return None
 
     def set(self, key: str, document: SafeDocument, ttl: int | None = None) -> None:
@@ -106,7 +110,11 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
         with self._lock:
             # Evict BEFORE insert to keep cache within max_entries limit.
             # >= is correct: evict first so the cache never holds more than max_entries items.
-            if self.max_entries > 0 and len(self._cache) >= self.max_entries and key not in self._cache:
+            if (
+                self.max_entries > 0
+                and len(self._cache) >= self.max_entries
+                and key not in self._cache
+            ):
                 self._evict_lru_locked()
 
             self._cache[key] = {

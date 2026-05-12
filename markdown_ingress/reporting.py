@@ -39,9 +39,7 @@ def persist_security_report(
     reports_path = Path(reports_dir)
     # Reject paths that contain traversal sequences in the raw input
     if ".." in reports_path.parts:
-        raise ValueError(
-            f"reports_dir must not contain '..' path segments: {reports_dir!r}"
-        )
+        raise ValueError(f"reports_dir must not contain '..' path segments: {reports_dir!r}")
     if base_dir is not None:
         if reports_path.is_absolute() or PureWindowsPath(reports_dir).is_absolute():
             raise ValueError(

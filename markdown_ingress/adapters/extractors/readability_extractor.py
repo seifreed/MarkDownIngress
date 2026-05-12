@@ -11,6 +11,12 @@ from markdown_ingress.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
 
+
+def _is_empty_body(html: str) -> bool:
+    """Detect an empty/whitespace-only body element (case-insensitive)."""
+    return bool(re.search(r"<\s*body\s*>\s*<\s*/\s*body\s*>", html, re.IGNORECASE))
+
+
 _DANGEROUS_DATA_URL_PREFIXES = (
     "text/html",
     "text/javascript",
@@ -24,9 +30,7 @@ _DANGEROUS_DATA_URL_PREFIXES = (
     "image/svg",
 )
 
-_SAFE_DATA_URL_MEDIA_TYPES = frozenset(
-    {"image/png", "image/jpeg", "image/gif", "image/webp"}
-)
+_SAFE_DATA_URL_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
 
@@ -79,7 +83,7 @@ class Extractor(IExtractor):
             title = None
             content_html = pre_cleaned_html
 
-        if len(content_html.strip()) < 50 or "<body></body>" in content_html:
+        if len(content_html.strip()) < 50 or _is_empty_body(content_html):
             tree_fallback = HTMLParser(pre_cleaned_html)
             body = tree_fallback.css_first("body")
             if body:
@@ -183,7 +187,12 @@ class Extractor(IExtractor):
                 if name.strip().lower() != property_name:
                     continue
                 normalized_value = value.strip().lower()
-                match = re.match(r"^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:[a-z%]*)$", normalized_value)
+                if normalized_value.endswith("!important"):
+                    normalized_value = normalized_value[: -len("!important")].strip()
+                match = re.match(
+                    r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:[a-z%]*)$",
+                    normalized_value,
+                )
                 if match is None:
                     continue
                 try:
@@ -202,6 +211,7 @@ class Extractor(IExtractor):
                 if name.strip().lower() != property_name:
                     continue
                 normalized_value = re.sub(r"\s+", "", value.strip().lower())
+                normalized_value = re.sub(r"/\*.*?\*/", "", normalized_value)
                 if normalized_value.endswith("!important"):
                     normalized_value = normalized_value[: -len("!important")]
                 if normalized_value in expected_values:
@@ -236,7 +246,10 @@ class Extractor(IExtractor):
                 normalized_value = re.sub(r"\s+", "", value.strip().lower())
                 if normalized_value.endswith("!important"):
                     normalized_value = normalized_value[: -len("!important")]
-                match = re.match(r"^([+-]?(?:\d+(?:\.\d+)?|\.\d+))(?:[a-z%]*)$", normalized_value)
+                match = re.match(
+                    r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:[a-z%]*)$",
+                    normalized_value,
+                )
                 if match is None:
                     continue
                 try:
@@ -313,7 +326,11 @@ class Extractor(IExtractor):
 
                 if attr_name_lower in {"srcset", "imagesrcset"}:
                     attrs_to_remove.append(attr_name)
-                    result["data_urls"] += 1
+                    if attr_value:
+                        for part in str(attr_value).split(","):
+                            if part.strip().startswith("data:"):
+                                result["data_urls"] += 1
+                                break
                     continue
 
                 if attr_name_lower.startswith("on"):
@@ -328,7 +345,9 @@ class Extractor(IExtractor):
 
                 if attr_name_lower in url_attributes:
                     clean_value = str(attr_value).strip().lower()
-                    clean_value = "".join(c for c in clean_value if c not in "\t\n\r\x0b\x0c")
+                    clean_value = "".join(
+                        c for c in clean_value if c not in "\x00\x1a\t\n\r\x0b\x0c"
+                    )
 
                     if clean_value.startswith("javascript:"):
                         attrs_to_remove.append(attr_name)
@@ -345,7 +364,8 @@ class Extractor(IExtractor):
                             else ""
                         )
                         if not media_type_part:
-                            media_type_part = "application/octet-stream"
+                            # RFC 2397: data:,hello  -> media type is text/plain by default
+                            media_type_part = "text/plain"
                         if media_type_part not in _SAFE_DATA_URL_MEDIA_TYPES:
                             attrs_to_remove.append(attr_name)
                             result["data_urls"] += 1
@@ -353,12 +373,20 @@ class Extractor(IExtractor):
             for attr_name in attrs_to_remove:
                 try:
                     del node.attrs[attr_name]
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to delete dangerous attribute %s on <%s>: %s",
+                        attr_name,
+                        node.tag,
+                        exc,
+                    )
                     try:
-                        node.attrs[attr_name] = ""  # type: ignore[assignment]
+                        node.attrs[attr_name] = ""
                     except Exception:
-                        logger.debug(
-                            "Unable to remove attribute %s on <%s>", attr_name, node.tag
+                        logger.warning(
+                            "Unable to neutralize dangerous attribute %s on <%s>",
+                            attr_name,
+                            node.tag,
                         )
 
         return result

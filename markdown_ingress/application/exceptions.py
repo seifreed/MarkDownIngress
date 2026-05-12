@@ -1,8 +1,10 @@
 """Exception handling utilities for the application layer."""
+
 from __future__ import annotations
 
 import copy
-import pickle
+
+_SIMPLE_PICKLABLE_TYPES = (str, int, float, bool, bytes, type(None))
 
 
 def _copy_custom_attrs(source: Exception, target: Exception) -> None:
@@ -11,7 +13,7 @@ def _copy_custom_attrs(source: Exception, target: Exception) -> None:
     for attr, value in getattr(source, "__dict__", {}).items():
         if attr not in skip:
             try:
-                setattr(target, attr, value)
+                setattr(target, attr, _make_picklable(value))
             except (AttributeError, TypeError):
                 pass
 
@@ -60,21 +62,16 @@ def _copy_batch_exception(exc: Exception) -> Exception:
                 return runtime_exc
 
 
-def _is_picklable(obj: object) -> bool:
-    """Check if an object can be pickled."""
-    try:
-        pickle.dumps(obj)
-        return True
-    except Exception:
-        return False
-
-
 def _make_picklable(value: object) -> object:
-    """Make a value picklable by converting non-picklable leaves to strings."""
+    """Convert metadata/exception payloads to conservative Queue-safe values."""
+    if isinstance(value, _SIMPLE_PICKLABLE_TYPES):
+        return value
     if isinstance(value, dict):
-        return {k: _make_picklable(v) for k, v in value.items()}
+        return {_make_picklable(k): _make_picklable(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_make_picklable(v) for v in value]
-    if not _is_picklable(value):
-        return str(value)
-    return value
+    if isinstance(value, tuple):
+        return tuple(_make_picklable(v) for v in value)
+    if isinstance(value, set):
+        return [_make_picklable(v) for v in sorted(value, key=repr)]
+    return str(value)

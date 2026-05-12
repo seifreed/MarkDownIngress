@@ -39,6 +39,8 @@ _MAX_RETRIES = 3
 _HTML_CONTENT_TYPES = (
     "text/html",
     "application/xhtml+xml",
+    "application/xml",
+    "text/xml",
 )
 _HOST_SOFT_THROTTLE_HINTS = {
     "amazon.com": (3.0, 2.5),
@@ -110,6 +112,8 @@ def _parse_retry_after(value: str | None) -> float | None:
         pass
     try:
         retry_at = parsedate_to_datetime(raw)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
     except Exception:
         return None
     return max(0.25, (retry_at - datetime.now(UTC)).total_seconds())
@@ -202,17 +206,16 @@ class Fetcher(IFetcher):
         self._last_cleanup = time.monotonic()
         self._last_failure_cleanup = self._last_cleanup
         self._cleanup_lock = Lock()
+        self._cleanup_running = False
         self._async_client: httpx.AsyncClient | None = None
         self._sync_client: httpx.Client | None = None
         self._client_lock = Lock()
         self._async_client_lock_guard = Lock()
         self._async_client_lock: asyncio.Lock | None = None
-        self._async_client_lock_loop: asyncio.AbstractEventLoop | None = None
-        self._pending_async_closes: list[asyncio.Task] = []
-        self._pending_closes_lock = Lock()
         self._ssl_bypass_hosts: dict[str, float] = {}
         self._ssl_bypass_ttl: float = 300.0
         self._ssl_bypass_lock = Lock()
+        self._closing = False
 
     def _is_ssl_bypass_active(self, host: str) -> bool:
         with self._ssl_bypass_lock:
@@ -281,8 +284,12 @@ class Fetcher(IFetcher):
         redirect_url = str(httpx.URL(logical_url).join(location))
         return self._prepare_request_url(redirect_url)
 
-    def _build_ssl_context(self) -> ssl.SSLContext:
+    def _build_ssl_context(self, *, verify_certificates: bool = True) -> ssl.SSLContext:
         ctx = ssl.create_default_context()
+        if not verify_certificates:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
         if self.ca_bundle:
             if Path(self.ca_bundle).is_dir():
                 ctx.load_verify_locations(capath=self.ca_bundle)
@@ -292,7 +299,7 @@ class Fetcher(IFetcher):
 
     @property
     def user_agent(self) -> str:
-        if self._fixed_ua:
+        if self._fixed_ua is not None:
             return self._fixed_ua
         if not self.rotate_ua:
             if self._stable_ua is None:
@@ -301,7 +308,7 @@ class Fetcher(IFetcher):
         return self._next_user_agent(previous=self._last_rotating_ua)
 
     def _next_user_agent(self, *, previous: str | None = None) -> str:
-        if self._fixed_ua:
+        if self._fixed_ua is not None:
             return self._fixed_ua
         if not self.rotate_ua:
             return self.user_agent
@@ -329,22 +336,17 @@ class Fetcher(IFetcher):
 
     def _get_async_client_lock(self) -> asyncio.Lock:
         with self._async_client_lock_guard:
-            try:
-                current_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                current_loop = None
-            if self._async_client_lock is not None and (
-                current_loop is None or self._async_client_lock_loop is not current_loop
-            ):
-                self._async_client_lock = None
             if self._async_client_lock is None:
                 self._async_client_lock = asyncio.Lock()
-                self._async_client_lock_loop = current_loop
             return self._async_client_lock
 
     async def _get_async_client(self) -> httpx.AsyncClient:
+        if self._closing:
+            raise RuntimeError("Fetcher is closing")
         if self._async_client is None:
             async with self._get_async_client_lock():
+                if self._closing:
+                    raise RuntimeError("Fetcher is closing")
                 if self._async_client is None:
                     self._async_client = httpx.AsyncClient(
                         timeout=self.timeout,
@@ -356,6 +358,7 @@ class Fetcher(IFetcher):
         return self._async_client
 
     def close(self) -> None:
+        self._closing = True
         with self._client_lock:
             if self._sync_client is not None:
                 self._sync_client.close()
@@ -363,7 +366,6 @@ class Fetcher(IFetcher):
         with self._async_client_lock_guard:
             client_to_close = self._async_client
             self._async_client = None
-            self._async_client_lock = None
         if client_to_close is None:
             return
         try:
@@ -388,28 +390,20 @@ class Fetcher(IFetcher):
             )
             try:
                 loop = asyncio.get_running_loop()
-                close_future = loop.create_task(client_to_close.aclose())
-                with self._pending_closes_lock:
-                    self._pending_async_closes.append(close_future)
-            except Exception:
-                logger.debug("Failed to schedule async client close as background task")
+                loop.create_task(client_to_close.aclose())
+            except Exception as exc:
+                logger.debug(
+                    "Failed to schedule async client close as background task: %s",
+                    exc,
+                    exc_info=True,
+                )
 
     async def aclose(self) -> None:
+        self._closing = True
         async with self._get_async_client_lock():
             if self._async_client is not None:
                 await self._async_client.aclose()
                 self._async_client = None
-        with self._async_client_lock_guard:
-            self._async_client_lock = None
-        with self._pending_closes_lock:
-            pending = list(self._pending_async_closes)
-            self._pending_async_closes.clear()
-        for task in pending:
-            if not task.done():
-                try:
-                    await task
-                except Exception:
-                    pass
 
     def __enter__(self) -> "Fetcher":
         return self
@@ -424,8 +418,22 @@ class Fetcher(IFetcher):
         await self.aclose()
 
     def __del__(self) -> None:
-        sync_client_exists = hasattr(self, "_sync_client") and self._sync_client is not None
-        async_client_exists = hasattr(self, "_async_client") and self._async_client is not None
+        sync_client_exists = False
+        async_client_exists = False
+        try:
+            with self._client_lock:
+                sync_client_exists = self._sync_client is not None
+        except Exception as exc:
+            logger.debug(
+                "Could not inspect sync client during finalization: %s", exc, exc_info=True
+            )
+        try:
+            with self._async_client_lock_guard:
+                async_client_exists = getattr(self, "_async_client", None) is not None
+        except Exception as exc:
+            logger.debug(
+                "Could not inspect async client during finalization: %s", exc, exc_info=True
+            )
 
         if sync_client_exists or async_client_exists:
             import warnings
@@ -437,20 +445,18 @@ class Fetcher(IFetcher):
                 stacklevel=2,
             )
         try:
-            if (
-                hasattr(self, "_client_lock")
-                and hasattr(self, "_sync_client")
-                and self._sync_client is not None
-            ):
-                self._sync_client.close()
-                self._sync_client = None
-        except Exception:
-            pass
-        if hasattr(self, "_async_client"):
-            self._async_client = None
-        if hasattr(self, "_async_client_lock_guard"):
+            with self._client_lock:
+                if self._sync_client is not None:
+                    self._sync_client.close()
+                    self._sync_client = None
+        except Exception as exc:
+            logger.debug("Could not close sync client during finalization: %s", exc, exc_info=True)
+        try:
             with self._async_client_lock_guard:
+                self._async_client = None
                 self._async_client_lock = None
+        except Exception as exc:
+            logger.debug("Could not clear async client during finalization: %s", exc, exc_info=True)
 
     def _build_headers(self, ua: str, *, host_header: str | None = None) -> dict:
         headers = dict(_SAFE_HEADERS)
@@ -460,8 +466,28 @@ class Fetcher(IFetcher):
         return headers
 
     @staticmethod
+    def _stream_extensions(sni_hostname: str | None) -> dict[str, Any] | None:
+        if sni_hostname is None:
+            return None
+        return {"sni_hostname": sni_hostname.encode("ascii")}
+
+    @staticmethod
     def _resolve_allow_local_urls(allow_local_urls: bool | None) -> bool:
         return resolve_allow_local_urls(allow_local_urls)
+
+    @staticmethod
+    def _is_dns_transient_error(exc: Exception) -> bool:
+        """Return True when the exception indicates a transient DNS failure."""
+        import socket
+
+        if isinstance(exc, socket.gaierror):
+            return True
+        if isinstance(exc, ValueError):
+            msg = str(exc).lower()
+            for hint in ("dns", "resolve", "nxdomain", "timeout", "temporary failure"):
+                if hint in msg:
+                    return True
+        return False
 
     @staticmethod
     def _validate_url(url: str, *, allow_local_urls: bool = False) -> str:
@@ -485,24 +511,32 @@ class Fetcher(IFetcher):
     def _cleanup_domain_state(self) -> None:
         now = time.monotonic()
         with self._cleanup_lock:
-            if now - self._last_cleanup < 60.0:
+            if now - self._last_cleanup < 60.0 or self._cleanup_running:
                 return
             self._last_cleanup = now
+            self._cleanup_running = True
+        try:
+            self._do_cleanup_domain_state(now)
+        finally:
+            with self._cleanup_lock:
+                self._cleanup_running = False
 
-        if self.domain_state_ttl <= 0:
-            return
+    def _do_cleanup_domain_state(self, now: float) -> None:
+        stale_hosts_set: set[str] = set()
+
+        if self.domain_state_ttl > 0:
+            with self._domain_lock:
+                stale_hosts = [
+                    host
+                    for host, ts in self._domain_state_timestamp.items()
+                    if now - ts > self.domain_state_ttl
+                ]
+                stale_hosts_set = set(stale_hosts)
+                for host in stale_hosts:
+                    self._next_allowed_by_host.pop(host, None)
+                    self._domain_state_timestamp.pop(host, None)
 
         with self._domain_lock:
-            stale_hosts = [
-                host
-                for host, ts in self._domain_state_timestamp.items()
-                if now - ts > self.domain_state_ttl
-            ]
-            stale_hosts_set = set(stale_hosts)
-            for host in stale_hosts:
-                self._next_allowed_by_host.pop(host, None)
-                self._domain_state_timestamp.pop(host, None)
-
             if len(self._next_allowed_by_host) > self.max_hosts:
                 sorted_hosts = sorted(
                     self._domain_state_timestamp.items(),
@@ -518,7 +552,6 @@ class Fetcher(IFetcher):
             for host in stale_hosts_set:
                 self._failures_by_host.pop(host, None)
                 self._failure_first_seen.pop(host, None)
-                self._open_until_by_host.pop(host, None)
 
             remaining_stale = [
                 host
@@ -528,7 +561,6 @@ class Fetcher(IFetcher):
             for host in remaining_stale:
                 self._failures_by_host.pop(host, None)
                 self._failure_first_seen.pop(host, None)
-                self._open_until_by_host.pop(host, None)
 
     def _apply_failure_decay_locked(self, host: str) -> int:
         if self.failure_decay_seconds is None or self.failure_decay_seconds <= 0:
@@ -543,7 +575,6 @@ class Fetcher(IFetcher):
             if elapsed > self.failure_decay_seconds:
                 self._failures_by_host[host] = 0
                 self._failure_first_seen[host] = now
-                self._open_until_by_host.pop(host, None)
                 return 0
             decay_factor = 0.5 ** (elapsed / self.failure_decay_seconds)
             return int(round(current * decay_factor))
@@ -645,7 +676,6 @@ class Fetcher(IFetcher):
         with self._failure_lock:
             self._failures_by_host.pop(host, None)
             self._failure_first_seen.pop(host, None)
-            self._open_until_by_host.pop(host, None)
 
     @staticmethod
     def _decode_content(content: bytes, charset_encoding: str | None) -> str:
@@ -654,6 +684,30 @@ class Fetcher(IFetcher):
             return content.decode(encoding)
         except (UnicodeDecodeError, LookupError):
             return content.decode("utf-8", errors="replace")
+
+    async def _read_async_response_content(self, response: httpx.Response) -> bytes:
+        chunks: list[bytes] = []
+        total_size = 0
+        async for chunk in response.aiter_bytes():
+            total_size += len(chunk)
+            if self.max_response_size is not None and total_size > self.max_response_size:
+                raise ResponseSizeLimitError(
+                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    def _read_sync_response_content(self, response: httpx.Response) -> bytes:
+        chunks: list[bytes] = []
+        total_size = 0
+        for chunk in response.iter_bytes():
+            total_size += len(chunk)
+            if self.max_response_size is not None and total_size > self.max_response_size:
+                raise ResponseSizeLimitError(
+                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     def _make_fetch_result(
         self,
@@ -695,8 +749,25 @@ class Fetcher(IFetcher):
             self._defer_host(response_host, retry_delay)
             self._record_failure(response_host)
 
+    def _prepare_request_url_with_dns_retry(self, url: str) -> _PreparedRequest:
+        """Call _prepare_request_url, retrying on transient DNS failures."""
+        last_dns_exc: Exception | None = None
+        for dns_attempt in range(_MAX_RETRIES):
+            try:
+                return self._prepare_request_url(url)
+            except (ValueError, OSError) as exc:
+                if not self._is_dns_transient_error(exc):
+                    raise
+                last_dns_exc = exc
+                if dns_attempt < _MAX_RETRIES - 1:
+                    sleep_for = min(0.5 * (2**dns_attempt), 4.0)
+                    time.sleep(sleep_for)
+        raise last_dns_exc  # type: ignore[misc]
+
     async def fetch(self, url: str) -> FetchResult:
-        url, logical_url, host_header, sni_hostname, host = self._prepare_request_url(url)
+        url, logical_url, host_header, sni_hostname, host = (
+            self._prepare_request_url_with_dns_retry(url)
+        )
         requested_logical_url = logical_url
 
         last_exc: Exception | None = None
@@ -718,12 +789,13 @@ class Fetcher(IFetcher):
             start_time = time.perf_counter()
 
             try:
-                _stream_kw: dict[str, object] = {
-                    "headers": self._build_headers(ua, host_header=host_header)
-                }
-                if sni_hostname:
-                    _stream_kw["extensions"] = {"sni_hostname": sni_hostname.encode("ascii")}
-                async with client.stream("GET", url, **_stream_kw) as response:
+                headers = self._build_headers(ua, host_header=host_header)
+                extensions = self._stream_extensions(sni_hostname)
+                if extensions is None:
+                    stream = client.stream("GET", url, headers=headers)
+                else:
+                    stream = client.stream("GET", url, headers=headers, extensions=extensions)
+                async with stream as response:
                     response_host = host
 
                     if self._should_follow_redirect(response):
@@ -749,19 +821,7 @@ class Fetcher(IFetcher):
                             )
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
-                        chunks: list[bytes] = []
-                        total_size = 0
-                        async for chunk in response.aiter_bytes():
-                            total_size += len(chunk)
-                            if (
-                                self.max_response_size is not None
-                                and total_size > self.max_response_size
-                            ):
-                                raise ResponseSizeLimitError(
-                                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
-                                )
-                            chunks.append(chunk)
-                        content = b"".join(chunks)
+                        content = await self._read_async_response_content(response)
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
                         self._record_success(response_host)
                         return self._make_fetch_result(
@@ -792,20 +852,7 @@ class Fetcher(IFetcher):
                     response.raise_for_status()
                     _validate_content_type(response)
 
-                    chunks: list[bytes] = []
-                    total_size = 0
-                    async for chunk in response.aiter_bytes():
-                        total_size += len(chunk)
-                        if (
-                            self.max_response_size is not None
-                            and total_size > self.max_response_size
-                        ):
-                            raise ResponseSizeLimitError(
-                                f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
-                            )
-                        chunks.append(chunk)
-
-                    content = b"".join(chunks)
+                    content = await self._read_async_response_content(response)
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
@@ -883,7 +930,7 @@ class Fetcher(IFetcher):
                     timeout=self.timeout,
                     follow_redirects=False,
                     max_redirects=self.max_redirects,
-                    verify=False,
+                    verify=self._build_ssl_context(verify_certificates=False),
                     trust_env=False,
                 ) as client:
                     try:
@@ -897,14 +944,15 @@ class Fetcher(IFetcher):
                                 self._ensure_circuit_closed(host)
                             start_time = time.perf_counter()
 
-                            _ssl_stream_kw: dict[str, object] = {
-                                "headers": self._build_headers(ua, host_header=host_header)
-                            }
-                            if sni_hostname:
-                                _ssl_stream_kw["extensions"] = {
-                                    "sni_hostname": sni_hostname.encode("ascii")
-                                }
-                            async with client.stream("GET", url, **_ssl_stream_kw) as response:
+                            headers = self._build_headers(ua, host_header=host_header)
+                            extensions = self._stream_extensions(sni_hostname)
+                            if extensions is None:
+                                stream = client.stream("GET", url, headers=headers)
+                            else:
+                                stream = client.stream(
+                                    "GET", url, headers=headers, extensions=extensions
+                                )
+                            async with stream as response:
                                 response_host = host
 
                                 if self._should_follow_redirect(response):
@@ -942,19 +990,7 @@ class Fetcher(IFetcher):
                                     self._is_redirect_response(response)
                                     and not self.follow_redirects
                                 ):
-                                    ssl_chunks: list[bytes] = []
-                                    ssl_total_size = 0
-                                    async for chunk in response.aiter_bytes():
-                                        ssl_total_size += len(chunk)
-                                        if (
-                                            self.max_response_size is not None
-                                            and ssl_total_size > self.max_response_size
-                                        ):
-                                            raise ResponseSizeLimitError(
-                                                f"Response content size {ssl_total_size} exceeds max_response_size {self.max_response_size}"
-                                            )
-                                        ssl_chunks.append(chunk)
-                                    ssl_content = b"".join(ssl_chunks)
+                                    ssl_content = await self._read_async_response_content(response)
                                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                                     self._record_success(response_host)
                                     with self._ssl_bypass_lock:
@@ -976,20 +1012,7 @@ class Fetcher(IFetcher):
                                 response.raise_for_status()
                                 _validate_content_type(response)
 
-                                ssl_chunks: list[bytes] = []
-                                ssl_total_size = 0
-                                async for chunk in response.aiter_bytes():
-                                    ssl_total_size += len(chunk)
-                                    if (
-                                        self.max_response_size is not None
-                                        and ssl_total_size > self.max_response_size
-                                    ):
-                                        raise ResponseSizeLimitError(
-                                            f"Response content size {ssl_total_size} exceeds max_response_size {self.max_response_size}"
-                                        )
-                                    ssl_chunks.append(chunk)
-
-                                ssl_content = b"".join(ssl_chunks)
+                                ssl_content = await self._read_async_response_content(response)
 
                             elapsed_ms = (time.perf_counter() - start_time) * 1000
                             self._record_success(response_host)
@@ -1074,7 +1097,9 @@ class Fetcher(IFetcher):
         )  # pragma: no cover
 
     def fetch_sync(self, url: str) -> FetchResult:
-        url, logical_url, host_header, sni_hostname, host = self._prepare_request_url(url)
+        url, logical_url, host_header, sni_hostname, host = (
+            self._prepare_request_url_with_dns_retry(url)
+        )
         requested_logical_url = logical_url
 
         last_exc: Exception | None = None
@@ -1096,12 +1121,13 @@ class Fetcher(IFetcher):
             start_time = time.perf_counter()
 
             try:
-                _stream_kw: dict[str, object] = {
-                    "headers": self._build_headers(ua, host_header=host_header)
-                }
-                if sni_hostname:
-                    _stream_kw["extensions"] = {"sni_hostname": sni_hostname.encode("ascii")}
-                with client.stream("GET", url, **_stream_kw) as response:
+                headers = self._build_headers(ua, host_header=host_header)
+                extensions = self._stream_extensions(sni_hostname)
+                if extensions is None:
+                    stream = client.stream("GET", url, headers=headers)
+                else:
+                    stream = client.stream("GET", url, headers=headers, extensions=extensions)
+                with stream as response:
                     response_host = host
                     if self._should_follow_redirect(response):
                         redirect_target = self._prepare_redirect_url(
@@ -1126,19 +1152,7 @@ class Fetcher(IFetcher):
                             )
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
-                        sync_chunks: list[bytes] = []
-                        sync_total_size = 0
-                        for chunk in response.iter_bytes():
-                            sync_total_size += len(chunk)
-                            if (
-                                self.max_response_size is not None
-                                and sync_total_size > self.max_response_size
-                            ):
-                                raise ResponseSizeLimitError(
-                                    f"Response content size {sync_total_size} exceeds max_response_size {self.max_response_size}"
-                                )
-                            sync_chunks.append(chunk)
-                        sync_content = b"".join(sync_chunks)
+                        sync_content = self._read_sync_response_content(response)
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
                         self._record_success(response_host)
                         return self._make_fetch_result(
@@ -1169,20 +1183,7 @@ class Fetcher(IFetcher):
                     response.raise_for_status()
                     _validate_content_type(response)
 
-                    sync_chunks: list[bytes] = []
-                    sync_total_size = 0
-                    for chunk in response.iter_bytes():
-                        sync_total_size += len(chunk)
-                        if (
-                            self.max_response_size is not None
-                            and sync_total_size > self.max_response_size
-                        ):
-                            raise ResponseSizeLimitError(
-                                f"Response content size {sync_total_size} exceeds max_response_size {self.max_response_size}"
-                            )
-                        sync_chunks.append(chunk)
-
-                    sync_content = b"".join(sync_chunks)
+                    sync_content = self._read_sync_response_content(response)
 
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 self._record_success(response_host)
@@ -1260,7 +1261,7 @@ class Fetcher(IFetcher):
                     timeout=self.timeout,
                     follow_redirects=False,
                     max_redirects=self.max_redirects,
-                    verify=False,
+                    verify=self._build_ssl_context(verify_certificates=False),
                     trust_env=False,
                 ) as client:
                     try:
@@ -1274,14 +1275,15 @@ class Fetcher(IFetcher):
                                 self._ensure_circuit_closed(host)
                             start_time = time.perf_counter()
 
-                            _ssl_stream_kw: dict[str, object] = {
-                                "headers": self._build_headers(ua, host_header=host_header)
-                            }
-                            if sni_hostname:
-                                _ssl_stream_kw["extensions"] = {
-                                    "sni_hostname": sni_hostname.encode("ascii")
-                                }
-                            with client.stream("GET", url, **_ssl_stream_kw) as response:
+                            headers = self._build_headers(ua, host_header=host_header)
+                            extensions = self._stream_extensions(sni_hostname)
+                            if extensions is None:
+                                stream = client.stream("GET", url, headers=headers)
+                            else:
+                                stream = client.stream(
+                                    "GET", url, headers=headers, extensions=extensions
+                                )
+                            with stream as response:
                                 response_host = host
 
                                 if self._should_follow_redirect(response):
@@ -1319,19 +1321,7 @@ class Fetcher(IFetcher):
                                     self._is_redirect_response(response)
                                     and not self.follow_redirects
                                 ):
-                                    ssl_sync_chunks: list[bytes] = []
-                                    ssl_sync_total = 0
-                                    for chunk in response.iter_bytes():
-                                        ssl_sync_total += len(chunk)
-                                        if (
-                                            self.max_response_size is not None
-                                            and ssl_sync_total > self.max_response_size
-                                        ):
-                                            raise ResponseSizeLimitError(
-                                                f"Response content size {ssl_sync_total} exceeds max_response_size {self.max_response_size}"
-                                            )
-                                        ssl_sync_chunks.append(chunk)
-                                    ssl_sync_content = b"".join(ssl_sync_chunks)
+                                    ssl_sync_content = self._read_sync_response_content(response)
                                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                                     self._record_success(response_host)
                                     with self._ssl_bypass_lock:
@@ -1353,20 +1343,7 @@ class Fetcher(IFetcher):
                                 response.raise_for_status()
                                 _validate_content_type(response)
 
-                                ssl_sync_chunks: list[bytes] = []
-                                ssl_sync_total = 0
-                                for chunk in response.iter_bytes():
-                                    ssl_sync_total += len(chunk)
-                                    if (
-                                        self.max_response_size is not None
-                                        and ssl_sync_total > self.max_response_size
-                                    ):
-                                        raise ResponseSizeLimitError(
-                                            f"Response content size {ssl_sync_total} exceeds max_response_size {self.max_response_size}"
-                                        )
-                                    ssl_sync_chunks.append(chunk)
-
-                                ssl_sync_content = b"".join(ssl_sync_chunks)
+                                ssl_sync_content = self._read_sync_response_content(response)
 
                             elapsed_ms = (time.perf_counter() - start_time) * 1000
                             self._record_success(response_host)

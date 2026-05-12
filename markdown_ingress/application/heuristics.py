@@ -1,4 +1,5 @@
 """URL and content detection heuristics for the application layer."""
+
 from __future__ import annotations
 
 from urllib.parse import urlsplit

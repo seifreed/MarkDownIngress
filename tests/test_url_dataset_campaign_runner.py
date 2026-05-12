@@ -103,7 +103,9 @@ def test_collect_available_urls_replaces_unavailable_entries(monkeypatch, tmp_pa
             raise RuntimeError("timed out")
         return object()
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     selected, dropped, errors, checked = asyncio.run(
         collect_available_urls(total_limit=3, concurrency=4, timeout=1.0)
@@ -140,7 +142,9 @@ def test_collect_available_urls_reuses_persisted_pool(monkeypatch, tmp_path: Pat
             raise RuntimeError("Client error '403 Forbidden'")
         return object()
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync", fake_fetch_sync
+    )
 
     selected_first, _, _, checked_first = asyncio.run(
         collect_available_urls(total_limit=2, concurrency=4, timeout=1.0)

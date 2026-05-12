@@ -89,8 +89,10 @@ def test_api_server_models_block_hostnames_resolving_private(monkeypatch):
     with pytest.raises(ValueError, match="SSRF protection"):
         RetryIngestRequest(url="http://public.example.test/private")
 
-    with pytest.raises(ValueError, match="SSRF protection"):
-        BatchIngestRequest(urls=["http://public.example.test/private"])
+    # BatchIngestRequest defers DNS-based SSRF validation to the async endpoint
+    # handler to avoid blocking the event loop with synchronous DNS lookups.
+    batch = BatchIngestRequest(urls=["http://public.example.test/private"])
+    assert str(batch.urls[0]) == "http://public.example.test/private"
 
 
 def test_batch_request_blocks_metadata_azure_webhook_url():
@@ -291,7 +293,7 @@ def test_handle_batch_submit_maps_webhook_validation_error_to_http_400():
         asyncio.run(handle_batch_submit(request, lambda **kwargs: None, BadQueue(), 3600))
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "webhook_url blocked: hostname resolves to blocked IP"
+    assert exc_info.value.detail == "Invalid request"
 
 
 def test_handle_sync_batch_maps_policy_block_to_http_403():
@@ -487,9 +489,9 @@ def test_rate_limit_cleanup_evicts_oldest_clients_first(monkeypatch):
 
     assert allowed is True
     assert retry_after == 0
-    # Cleanup now runs before the rate limit check, so with 3 existing clients
-    # and max=2, the oldest (old) is evicted (3-2=1), leaving mid+new+trigger
-    assert sorted(api_server._request_counts) == ["mid", "new", "trigger"]
+    # After adding "trigger" (4 clients) and evicting down to max=2,
+    # the two least recently active clients remain: "new" and "trigger"
+    assert sorted(api_server._request_counts) == ["new", "trigger"]
 
 
 @patch("markdown_ingress.api_server.ingest")
@@ -1070,7 +1072,6 @@ def test_batch_endpoint_forwards_output_flags(mock_ingest_many):
             "use_llm": True,
             "policy_name": "strict",
             "custom_patterns": ["secret"],
-
             "output_format": "json",
             "output_profile": "llm_safe",
             "output_formats": ["markdown", "security"],
@@ -1246,7 +1247,6 @@ def test_security_report_endpoint_forwards_runtime_contract(mock_report):
             "use_llm": True,
             "policy_name": "strict",
             "custom_patterns": ["secret"],
-
             "output_profile": "llm_safe",
             "extract_blocks": True,
             "chunking_strategy": "heading",
@@ -2031,13 +2031,18 @@ def test_ensure_job_queue_initialized_retries_after_failed_attempt(monkeypatch):
 
     api_server._ensure_job_queue_initialized()
     assert api_server.JOB_QUEUE is None
-    # After failure, _job_queue_initialized is True to prevent repeated retries
-    assert api_server._job_queue_initialized is True
+    # After failure, _job_queue_initialized remains False so transient
+    # failures can be retried on the next request.
+    assert api_server._job_queue_initialized is False
 
-    # Second call should be a no-op (no retry)
+    # Reset backoff so the next call retries immediately (production uses
+    # a short backoff to avoid log spam).
+    monkeypatch.setattr(api_server, "_job_queue_init_failed_at", None)
+
+    # Second call should retry and succeed
     api_server._ensure_job_queue_initialized()
-    assert calls["count"] == 1
-    assert api_server.JOB_QUEUE is None
+    assert calls["count"] == 2
+    assert api_server.JOB_QUEUE is not None
 
 
 def test_health_endpoint_reports_degraded_job_queue_state(monkeypatch):

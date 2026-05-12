@@ -298,7 +298,7 @@ class BatchIngestRequest(BaseModel):
     def validate_urls_ssrf(self):
         """Prevent SSRF attacks by blocking internal IPs and metadata endpoints."""
         for url in self.urls:
-            _validate_url_no_ssrf(str(url))
+            _validate_url_no_ssrf(str(url), resolve_dns=False)
         if self.webhook_url is not None:
             _validate_url_no_ssrf(
                 str(self.webhook_url),

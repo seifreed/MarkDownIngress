@@ -41,7 +41,13 @@ def raise_for_render_status(response: Any | None, url: str) -> None:
     if response is None:
         return
     status_code = getattr(response, "status", None)
-    if not isinstance(status_code, int) or status_code < 400:
+    if status_code is None:
+        return
+    try:
+        status_code = int(status_code)
+    except (TypeError, ValueError):
+        return
+    if status_code < 400:
         return
 
     request = httpx.Request("GET", url)

@@ -55,9 +55,10 @@ class TestPluginSystem:
         patterns = loader.get_all_patterns()
 
         assert len(patterns) == 3
-        assert "test pattern 1" in patterns
-        assert "test pattern 2" in patterns
-        assert "another pattern" in patterns
+        pattern_strings = [p for p, _ in patterns]
+        assert "test pattern 1" in pattern_strings
+        assert "test pattern 2" in pattern_strings
+        assert "another pattern" in pattern_strings
 
     def test_unload_plugin(self):
         """Unload plugin by name"""
@@ -101,7 +102,7 @@ class MyCustomPlugin(Plugin):
             assert len(loader.plugins) == 1
 
             patterns = loader.get_all_patterns()
-            assert "custom pattern" in patterns
+            assert "custom pattern" in [p for p, _ in patterns]
 
     def test_load_from_directory_is_deterministic_by_filename(self):
         """Load plugins from directory in filename order."""
@@ -129,7 +130,7 @@ class APlugin(Plugin):
             count = loader.load_from_directory(tmpdir)
 
             assert count == 2
-            assert loader.get_all_patterns() == ["pattern-a", "pattern-b"]
+            assert [p for p, _ in loader.get_all_patterns()] == ["pattern-a", "pattern-b"]
 
     def test_load_from_directory_ignores_imported_plugin_subclasses(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,7 +170,7 @@ class RealPlugin(Plugin):
 
             assert count == 2
             assert sorted(loader.plugins) == ["ImportedPlugin", "RealPlugin"]
-            assert loader.get_all_patterns() == ["imported-pattern", "real-pattern"]
+            assert [p for p, _ in loader.get_all_patterns()] == ["imported-pattern", "real-pattern"]
 
     def test_plugin_already_loaded_error(self):
         """Loading same plugin twice raises error"""

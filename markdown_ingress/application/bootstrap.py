@@ -13,7 +13,7 @@ from markdown_ingress.core.structured import register_token_estimator_factory
 
 def _default_cache_factory(cache_type: str, sqlite_path: str | None, ttl: int) -> Cache:
     if cache_type == "sqlite":
-        return SQLiteCache(db_path=sqlite_path, default_ttl=ttl)
+        return SQLiteCache(db_path=sqlite_path or ".cache/markdowningress.db", default_ttl=ttl)
     return MemoryCache(default_ttl=ttl)
 
 

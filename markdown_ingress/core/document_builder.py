@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import os
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Sequence
+from typing import Any
 from urllib.parse import urlsplit
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
@@ -34,6 +37,7 @@ _logger = logging.getLogger(__name__)
 _extractor_factory: Callable[[bool], IExtractor] | None = None
 _md_converter_factory: Callable[[], IMarkdownConverter] | None = None
 _token_estimator_factory: Callable[[str], ITokenEstimator] | None = None
+PatternSpec = str | tuple[str, float]
 
 
 def register_document_builder_factories(
@@ -55,28 +59,29 @@ def _dedupe_preserving_order(values: list[str]) -> list[str]:
 def _merge_pattern_matches(*groups: list[dict]) -> list[dict]:
     """Merge pattern matches while deduplicating by description."""
     merged: dict[str, dict] = {}
+    _anon_counter = 0
     for group in groups:
         for match in group:
-            key = (
-                str(match.get("pattern"))
-                if match.get("pattern") is not None
-                else f"_anon_{match.get('description', '')}"
-            )
+            if match.get("pattern") is not None:
+                key = str(match.get("pattern"))
+            else:
+                _anon_counter += 1
+                key = f"_anon_{_anon_counter}_{match.get('description', '')}"
             existing = merged.get(key)
             if existing is None:
                 merged[key] = {
                     "pattern": match.get("pattern"),
                     "weight": match.get("weight"),
-                    "occurrences": int(match.get("occurrences", 0)),
+                    "occurrences": int(match.get("occurrences") or 0),
                     "samples": list(match.get("samples", [])),
                 }
                 continue
 
-            existing["occurrences"] = int(existing.get("occurrences", 0)) + int(
-                match.get("occurrences", 0)
+            existing["occurrences"] = int(existing.get("occurrences") or 0) + int(
+                match.get("occurrences") or 0
             )
             existing["weight"] = max(
-                float(existing.get("weight", 0.0)), float(match.get("weight", 0.0))
+                float(existing.get("weight") or 0.0), float(match.get("weight") or 0.0)
             )
             samples = list(existing.get("samples", []))
             for sample in match.get("samples", []):
@@ -115,6 +120,8 @@ def build_policy_engine(
     if custom.warn_threshold >= custom.block_threshold:
         if custom.block_threshold > 0.0:
             adjusted = custom.block_threshold - 0.01
+            if adjusted < 0.0:
+                adjusted = custom.block_threshold * 0.9
             if adjusted < 0.0:
                 adjusted = 0.0
             custom.warn_threshold = adjusted
@@ -175,8 +182,11 @@ def _extract_and_apply_domain_rules(
             lambda: extractor.extract(filtered_html, fetch_result.url),
         )
         extraction_result.text_content = re_extracted.text_content
-        extraction_result.removed_hidden = re_extracted.removed_hidden
-        extraction_result.removed_tags = re_extracted.removed_tags
+        extraction_result.title = re_extracted.title
+        extraction_result.author = re_extracted.author
+        extraction_result.removed_hidden += re_extracted.removed_hidden
+        for tag, count in re_extracted.removed_tags.items():
+            extraction_result.removed_tags[tag] = extraction_result.removed_tags.get(tag, 0) + count
         if any(domain_rule_stats.values()):
             operational_flags.append("domain_rules_applied")
     return extraction_result, domain_rule_stats
@@ -277,17 +287,35 @@ def _run_content_pipeline(
         structure_extractor, chunk_builder, config, extraction_result, stage_timings
     )
     return (
-        extraction_result, markdown, structured_blocks, chunks,
-        enriched_metadata, links, operational_flags, domain_rule_stats, chunks_requested,
+        extraction_result,
+        markdown,
+        structured_blocks,
+        chunks,
+        enriched_metadata,
+        links,
+        operational_flags,
+        domain_rule_stats,
+        chunks_requested,
     )
 
 
-def _create_custom_patterns(extra_patterns: list[str]) -> list[InjectionPattern]:
-    """Build InjectionPattern objects from plain string patterns."""
-    return [
-        InjectionPattern(pattern=p, weight=0.5, description=f"custom_pattern_{i + 1}")
-        for i, p in enumerate(extra_patterns)
-    ]
+def _create_custom_patterns(extra_patterns: Sequence[PatternSpec]) -> list[InjectionPattern]:
+    """Build InjectionPattern objects from pattern strings or (pattern, weight) tuples."""
+    patterns = []
+    for i, item in enumerate(extra_patterns):
+        if isinstance(item, tuple):
+            p, weight = item
+        else:
+            p = item
+            weight = 0.5
+        try:
+            re.compile(p)
+        except re.error as exc:
+            raise ValueError(f"Invalid custom pattern at index {i}: {exc}") from exc
+        patterns.append(
+            InjectionPattern(pattern=p, weight=weight, description=f"custom_pattern_{i + 1}")
+        )
+    return patterns
 
 
 def _run_and_merge_custom_analysis(
@@ -302,7 +330,7 @@ def _run_and_merge_custom_analysis(
     """Run custom-pattern-only analysis and merge results into the base security result."""
     # Only include custom patterns — default patterns are already in security_result.
     extended_analyzer = SecurityAnalyzer(strict=config.strict)
-    extended_analyzer.INJECTION_PATTERNS = custom_defs
+    extended_analyzer.INJECTION_PATTERNS = tuple(custom_defs)
     extended_analysis = extended_analyzer.analyze(
         extraction_result.text_content,
         hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
@@ -345,7 +373,7 @@ def _run_and_merge_custom_analysis(
 
 
 def _apply_custom_pattern_analysis(
-    extra_patterns: list[str],
+    extra_patterns: Sequence[PatternSpec],
     security_result: dict,
     extraction_result,
     security_metadata: dict,
@@ -356,8 +384,13 @@ def _apply_custom_pattern_analysis(
     """Extend security_result with custom/plugin patterns and rebuild explanation."""
     custom_defs = _create_custom_patterns(extra_patterns)
     return _run_and_merge_custom_analysis(
-        custom_defs, security_result, extraction_result,
-        security_metadata, security_engine, policy_engine, config,
+        custom_defs,
+        security_result,
+        extraction_result,
+        security_metadata,
+        security_engine,
+        policy_engine,
+        config,
     )
 
 
@@ -414,7 +447,7 @@ def _build_fetch_metadata(
 def _build_content_analysis_metadata(
     fetch_result: FetchResult,
     markdown: str,
-    token_savings: int,
+    token_savings: dict[str, Any],
     structural_hash: str,
     security_result: dict,
     scorer,
@@ -441,7 +474,7 @@ def _build_pipeline_config_metadata(
     fetch_result: FetchResult,
     output_formats: list[str],
     emitted_output_formats: list[str],
-    extra_patterns: list[str],
+    extra_patterns: Sequence[PatternSpec],
     plugins_loaded: int,
     operational_flags: list[str],
     domain_rule_stats: dict,
@@ -491,7 +524,7 @@ def _assemble_document_metadata(  # noqa: PLR0913
     fetch_result: FetchResult,
     extraction_result,
     hostname: str,
-    token_savings: int,
+    token_savings: dict[str, Any],
     structural_hash: str,
     output_formats: list[str],
     emitted_output_formats: list[str],
@@ -499,7 +532,7 @@ def _assemble_document_metadata(  # noqa: PLR0913
     scorer,
     enriched_metadata,
     matched_domain_policy: DomainPolicy | None,
-    extra_patterns: list[str],
+    extra_patterns: Sequence[PatternSpec],
     plugins_loaded: int,
     operational_flags: list[str],
     domain_rule_stats: dict,
@@ -509,12 +542,24 @@ def _assemble_document_metadata(  # noqa: PLR0913
     metadata: dict = {
         **_build_fetch_metadata(fetch_result, extraction_result, hostname, config),
         **_build_content_analysis_metadata(
-            fetch_result, markdown, token_savings, structural_hash,
-            security_result, scorer, extraction_result, config,
+            fetch_result,
+            markdown,
+            token_savings,
+            structural_hash,
+            security_result,
+            scorer,
+            extraction_result,
+            config,
         ),
         **_build_pipeline_config_metadata(
-            config, fetch_result, output_formats, emitted_output_formats,
-            extra_patterns, plugins_loaded, operational_flags, domain_rule_stats,
+            config,
+            fetch_result,
+            output_formats,
+            emitted_output_formats,
+            extra_patterns,
+            plugins_loaded,
+            operational_flags,
+            domain_rule_stats,
         ),
     }
     _apply_language_metadata(metadata, enriched_metadata, config)
@@ -535,7 +580,9 @@ def _apply_policy_decision(
         strict=config.strict,
     )
     injection_score = float(security_result["injection_score"])
-    if injection_score >= block_threshold:
+    if math.isnan(injection_score):
+        policy_action = "block"
+    elif injection_score >= block_threshold:
         policy_action = "block"
     elif injection_score >= warn_threshold:
         policy_action = "warn"
@@ -574,12 +621,15 @@ def _construct_safe_document_instance(  # noqa: PLR0913
         "tags": extraction_result.removed_tags,
         "hidden_elements": extraction_result.removed_hidden,
     }
+    injection_score = float(security_result["injection_score"])
+    if math.isnan(injection_score):
+        injection_score = 1.0
     document = SafeDocument(
         markdown=markdown,
         metadata=metadata,
         token_estimate=token_count,
         content_hash=content_hash,
-        injection_score=security_result["injection_score"],
+        injection_score=injection_score,
         flags=security_result["flags"],
         removed_elements=removed_elements,
         screenshot_path=fetch_result.metadata.get("screenshot_path"),
@@ -623,7 +673,7 @@ def _build_safe_document(  # noqa: PLR0913 — coordinator function by design
     matched_domain_policy: DomainPolicy | None,
     operational_flags: list[str],
     domain_rule_stats: dict,
-    extra_patterns: list[str],
+    extra_patterns: Sequence[PatternSpec],
     plugins_loaded: int,
     stage_timings: dict[str, float],
     policy_engine: PolicyEngine,
@@ -633,29 +683,58 @@ def _build_safe_document(  # noqa: PLR0913 — coordinator function by design
         stage_timings, "hash_content", lambda: hasher.hash_content(markdown)
     )
     structural_hash = timed_stage_with_snapshot(
-        stage_timings, "hash_structural", lambda: hasher.hash_structural(markdown),
+        stage_timings,
+        "hash_structural",
+        lambda: hasher.hash_structural(markdown),
     )
     token_count = timed_stage_with_snapshot(
         stage_timings, "tokens", lambda: token_estimator.estimate(markdown)
     )
     token_savings = token_estimator.estimate_savings(fetch_result.html, markdown)
-    hostname = normalize_hostname(
-        urlsplit(fetch_result.final_url).hostname or urlsplit(fetch_result.url).hostname or ""
-    )
-    output_formats, security_explanation_payload, emitted_output_formats = _determine_output_formats(
-        config, structured_blocks, chunks, enriched_metadata, security_result
+    final_url = fetch_result.final_url or fetch_result.url or ""
+    hostname = normalize_hostname(urlsplit(final_url).hostname or "")
+    output_formats, security_explanation_payload, emitted_output_formats = (
+        _determine_output_formats(
+            config, structured_blocks, chunks, enriched_metadata, security_result
+        )
     )
     metadata = _assemble_document_metadata(
-        config, fetch_result, extraction_result, hostname, token_savings, structural_hash,
-        output_formats, emitted_output_formats, security_result, scorer, enriched_metadata,
-        matched_domain_policy, extra_patterns, plugins_loaded, operational_flags,
-        domain_rule_stats, markdown,
+        config,
+        fetch_result,
+        extraction_result,
+        hostname,
+        token_savings,
+        structural_hash,
+        output_formats,
+        emitted_output_formats,
+        security_result,
+        scorer,
+        enriched_metadata,
+        matched_domain_policy,
+        extra_patterns,
+        plugins_loaded,
+        operational_flags,
+        domain_rule_stats,
+        markdown,
     )
     policy_action = _apply_policy_decision(security_result, policy_engine, config, metadata)
     document = _construct_safe_document_instance(
-        markdown, metadata, token_count, content_hash, security_result, extraction_result,
-        fetch_result, config, links, enriched_metadata, structured_blocks, chunks,
-        chunks_requested, policy_action, stage_timings, security_explanation_payload,
+        markdown,
+        metadata,
+        token_count,
+        content_hash,
+        security_result,
+        extraction_result,
+        fetch_result,
+        config,
+        links,
+        enriched_metadata,
+        structured_blocks,
+        chunks,
+        chunks_requested,
+        policy_action,
+        stage_timings,
+        security_explanation_payload,
     )
     if policy_action == "block":
         raise PolicyBlockedError(
@@ -752,11 +831,27 @@ def process_fetched_content(
     document_url = fetch_result.final_url or fetch_result.url
 
     (
-        extraction_result, markdown, structured_blocks, chunks,
-        enriched_metadata, links, operational_flags, domain_rule_stats, chunks_requested,
+        extraction_result,
+        markdown,
+        structured_blocks,
+        chunks,
+        enriched_metadata,
+        links,
+        operational_flags,
+        domain_rule_stats,
+        chunks_requested,
     ) = _run_content_pipeline(
-        extractor, md_converter, structure_extractor, chunk_builder, orchestrator,
-        fetch_result, config, matched_domain_policy, operational_flags, stage_timings, document_url,
+        extractor,
+        md_converter,
+        structure_extractor,
+        chunk_builder,
+        orchestrator,
+        fetch_result,
+        config,
+        matched_domain_policy,
+        operational_flags,
+        stage_timings,
+        document_url,
     )
 
     security_metadata = {"hidden_elements_count": extraction_result.removed_hidden}
@@ -764,7 +859,7 @@ def process_fetched_content(
         config, extraction_result, security_metadata, stage_timings, matched_domain_policy
     )
 
-    extra_patterns = list(config.custom_patterns)
+    extra_patterns: list[str | tuple[str, float]] = list(config.custom_patterns)
     plugins_loaded = 0
     try:
         if config.plugin_dirs:
@@ -775,8 +870,13 @@ def process_fetched_content(
 
         if extra_patterns:
             security_result = _apply_custom_pattern_analysis(
-                extra_patterns, security_result, extraction_result,
-                security_metadata, security_engine, policy_engine, config,
+                extra_patterns,
+                security_result,
+                extraction_result,
+                security_metadata,
+                security_engine,
+                policy_engine,
+                config,
             )
 
         try:

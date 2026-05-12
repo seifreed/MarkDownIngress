@@ -9,6 +9,8 @@ from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     IngestResponse,
     SecurityReportResponse,
+    _allow_local_webhooks_enabled,
+    _validate_url_no_ssrf,
 )
 from markdown_ingress.models import SafeDocument, SecurityReport
 
@@ -152,7 +154,6 @@ async def sync_batch_response(
         use_llm=request.use_llm,
         policy_name=request.policy_name,
         custom_patterns=request.custom_patterns,
-
         output_format=request.output_format,
         output_profile=request.output_profile,
         output_formats=request.output_formats,
@@ -222,3 +223,19 @@ def make_batch_job_task(request: BatchIngestRequest, ingest_many_func):
         return _serialize_batch_result(request, result)
 
     return run
+
+
+async def validate_batch_request_ssrf_async(request: BatchIngestRequest) -> None:
+    """Validate batch URLs (and webhook) against SSRF using async DNS resolution."""
+
+    def _validate_urls():
+        for url in request.urls:
+            _validate_url_no_ssrf(str(url), resolve_dns=True)
+        if request.webhook_url is not None:
+            _validate_url_no_ssrf(
+                str(request.webhook_url),
+                allow_local=_allow_local_webhooks_enabled(),
+                resolve_dns=True,
+            )
+
+    await asyncio.to_thread(_validate_urls)

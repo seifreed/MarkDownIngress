@@ -8,6 +8,8 @@ Implements progressive security scanning:
 """
 
 import logging
+import math
+from typing import Any
 
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
 from markdown_ingress.core.security import SecurityAnalyzer
@@ -101,20 +103,73 @@ class SecurityEngine:
 
     def _parse_nova_result(self, markdown: str) -> tuple[float, dict, str]:
         """Run Nova scan and parse the result into (nova_score, nova_details, scan_method)."""
+        if self.nova is None:
+            return _NOVA_DISABLED_SCORE, {}, "basic"
         try:
             nova_result = self.nova.scan(markdown)
             if nova_result is None:
-                logger.warning("Nova returned None, using fallback score: %s", self.exception_fallback_score)
-                return self.exception_fallback_score, {"error": "Nova returned None", "scan_incomplete": True}, "nova_failed"
+                logger.warning(
+                    "Nova returned None, using fallback score: %s", self.exception_fallback_score
+                )
+                return (
+                    self.exception_fallback_score,
+                    {"error": "Nova returned None", "scan_incomplete": True},
+                    "nova_failed",
+                )
 
             nova_score_raw = nova_result.get("score")
             if nova_score_raw is None:
-                if nova_result.get("severity") == "disabled":
-                    logger.debug("Nova scanner disabled (no rules loaded), using basic analysis only")
+                severity = nova_result.get("severity")
+                if severity == "disabled":
+                    logger.debug(
+                        "Nova scanner disabled (no rules loaded), using basic analysis only"
+                    )
                     return _NOVA_DISABLED_SCORE, {}, "basic"
-                logger.debug("Nova returned None score, using default: %s", self.exception_fallback_score)
-                return self.exception_fallback_score, nova_result, "nova_llm" if self.use_llm else "nova_semantic"
+                if severity is not None:
+                    logger.warning(
+                        "Nova returned severity '%s' without score, using fallback: %s",
+                        severity,
+                        self.exception_fallback_score,
+                    )
+                    return (
+                        self.exception_fallback_score,
+                        nova_result,
+                        "nova_llm" if self.use_llm else "nova_semantic",
+                    )
+                logger.debug("Nova returned None score, falling back to basic analysis")
+                return _NOVA_DISABLED_SCORE, nova_result, "basic"
 
+            if isinstance(nova_score_raw, float) and math.isnan(nova_score_raw):
+                logger.warning(
+                    "Nova returned NaN score, using fallback: %s", self.exception_fallback_score
+                )
+                return (
+                    self.exception_fallback_score,
+                    nova_result,
+                    "nova_llm" if self.use_llm else "nova_semantic",
+                )
+            try:
+                nova_score_raw = float(nova_score_raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Nova returned non-numeric score %r, using fallback: %s",
+                    nova_score_raw,
+                    self.exception_fallback_score,
+                )
+                return (
+                    self.exception_fallback_score,
+                    nova_result,
+                    "nova_llm" if self.use_llm else "nova_semantic",
+                )
+            if math.isnan(nova_score_raw):
+                logger.warning(
+                    "Nova returned NaN score, using fallback: %s", self.exception_fallback_score
+                )
+                return (
+                    self.exception_fallback_score,
+                    nova_result,
+                    "nova_llm" if self.use_llm else "nova_semantic",
+                )
             nova_score = max(0.0, min(1.0, nova_score_raw))
             scan_method = "nova_llm" if self.use_llm else "nova_semantic"
             scan_time = nova_result.get("scan_time_ms")
@@ -125,7 +180,11 @@ class SecurityEngine:
             return nova_score, nova_result, scan_method
         except Exception as e:
             logger.error(f"Nova scan failed: {e}")
-            return self.exception_fallback_score, {"error": str(e), "scan_incomplete": True}, "nova_error"
+            return (
+                self.exception_fallback_score,
+                {"error": str(e), "scan_incomplete": True},
+                "nova_error",
+            )
 
     @staticmethod
     def effective_thresholds(
@@ -135,9 +194,45 @@ class SecurityEngine:
         strict: bool = False,
     ) -> tuple[float, float]:
         """Return policy thresholds after applying strict-mode tightening."""
+        if math.isnan(block_threshold) or not 0.0 <= block_threshold <= 1.0:
+            if math.isnan(block_threshold):
+                logger.warning(
+                    "block_threshold is NaN, using safe default 1.0",
+                )
+                block_threshold = 1.0
+            else:
+                logger.warning(
+                    "block_threshold %s out of range [0.0, 1.0], clamping",
+                    block_threshold,
+                )
+                block_threshold = max(0.0, min(1.0, block_threshold))
+        if math.isnan(warn_threshold) or not 0.0 <= warn_threshold <= 1.0:
+            if math.isnan(warn_threshold):
+                logger.warning(
+                    "warn_threshold is NaN, using safe default 0.5",
+                )
+                warn_threshold = 0.5
+            else:
+                logger.warning(
+                    "warn_threshold %s out of range [0.0, 1.0], clamping",
+                    warn_threshold,
+                )
+                warn_threshold = max(0.0, min(1.0, warn_threshold))
         if strict:
             block_threshold = min(block_threshold, 0.5)
             warn_threshold = min(warn_threshold, 0.3)
+        # Maintain invariant: warn_threshold must be strictly below block_threshold
+        # so the warning band does not collapse.
+        if warn_threshold >= block_threshold:
+            if block_threshold > 0.0:
+                adjusted = block_threshold - 0.01
+                if adjusted < 0.0:
+                    adjusted = block_threshold * 0.9
+                if adjusted < 0.0:
+                    adjusted = 0.0
+                warn_threshold = adjusted
+            else:
+                warn_threshold = 0.0
         return block_threshold, warn_threshold
 
     def analyze(
@@ -178,10 +273,12 @@ class SecurityEngine:
         # score just below the old threshold from bypassing semantic detection.
         # When advanced_security or strict is enabled, always run Nova.
         nova_score = _NOVA_DISABLED_SCORE
-        nova_details = {}
+        nova_details: dict[str, Any] = {}
         scan_method = "basic"
 
-        if self.nova and (basic_score > 0.05 or self.advanced_security or self.strict):
+        if self.nova and (
+            math.isnan(basic_score) or basic_score >= 0.05 or self.advanced_security or self.strict
+        ):
             nova_score, nova_details, scan_method = self._parse_nova_result(markdown)
 
         # Combine scores: when Nova was never invoked, use basic score directly.
@@ -279,11 +376,14 @@ class SecurityEngine:
         for rule in nova_details.get("matched_rules", []):
             triggers.append({"source": "nova", "name": rule})
 
-        recommendation = "allow"
-        if final_score >= block_threshold:
+        if math.isnan(final_score):
             recommendation = "block"
-        elif final_score >= warn_threshold:
-            recommendation = "warn"
+        else:
+            recommendation = "allow"
+            if final_score >= block_threshold:
+                recommendation = "block"
+            elif final_score >= warn_threshold:
+                recommendation = "warn"
 
         return {
             "scan_method": scan_method,

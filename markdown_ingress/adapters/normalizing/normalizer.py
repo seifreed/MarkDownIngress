@@ -4,6 +4,7 @@ import re
 import unicodedata
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+
 class Normalizer:  # implements INormalizer protocol
     """Normalize content for deterministic output"""
 
@@ -147,6 +148,8 @@ class Normalizer:  # implements INormalizer protocol
                     fenced_code_fence is not None
                     and fence_char == fenced_code_fence[0]
                     and len(current_fence) >= len(fenced_code_fence)
+                    # CommonMark: closing fence must be followed only by whitespace
+                    and stripped[len(current_fence) :].strip() == ""
                 ):
                     in_fenced_code = False
                     fenced_code_fence = None
@@ -190,9 +193,12 @@ class Normalizer:  # implements INormalizer protocol
                     normalized.append(cleaned)
                     previous_blank_outside = False
 
-        # Auto-close unclosed fenced code blocks for consistent output
+        # Auto-close unclosed fenced code blocks for consistent output.
+        # A warning is logged so operators can detect when the output was
+        # altered; the warning level ensures it is visible in production logs.
         if in_fenced_code and fenced_code_fence:
             import logging
+
             _logger = logging.getLogger(__name__)
             _logger.warning(
                 "Unclosed fenced code block detected, auto-closing (fence=%s)",

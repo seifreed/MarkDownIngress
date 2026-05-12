@@ -8,7 +8,6 @@ import os
 from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
-from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
@@ -112,7 +111,7 @@ class ConfigLoader:
 
     def _restore_field(
         self,
-        config: "Config",
+        config: Config,
         attr_name: str,
         previous_values: dict,
         previous_explicit: dict,
@@ -177,7 +176,7 @@ class ConfigLoader:
 
     def _apply_scalar_list_and_custom_overrides(
         self,
-        config: "Config",
+        config: Config,
         env_mapping: dict,
         explicit: set,
         previous_values: dict,
@@ -192,7 +191,10 @@ class ConfigLoader:
                 except (ValueError, TypeError) as e:
                     _logger.warning(
                         "Invalid value for %s (%s=%s): %s. Keeping previous value.",
-                        attr_name, env_var, value, e,
+                        attr_name,
+                        env_var,
+                        value,
+                        e,
                     )
 
         custom_patterns_env = os.getenv("MDI_CUSTOM_PATTERNS")
@@ -204,7 +206,9 @@ class ConfigLoader:
                 except ValueError as e:
                     _logger.warning(
                         "Invalid value for custom_patterns (%s=%s): %s. Keeping previous value.",
-                        "MDI_CUSTOM_PATTERNS", custom_patterns_env, e,
+                        "MDI_CUSTOM_PATTERNS",
+                        custom_patterns_env,
+                        e,
                     )
                 else:
                     config.custom_patterns = patterns
@@ -227,12 +231,15 @@ class ConfigLoader:
             except (ValueError, TypeError) as e:
                 _logger.warning(
                     "Invalid value for %s (%s=%s): %s. Keeping previous value.",
-                    attr_name, env_var, value, e,
+                    attr_name,
+                    env_var,
+                    value,
+                    e,
                 )
 
     def _validate_categorical_fields(
         self,
-        config: "Config",
+        config: Config,
         previous_values: dict,
         previous_explicit: dict,
         explicit: set,
@@ -242,54 +249,91 @@ class ConfigLoader:
             config, a, previous_values, previous_explicit, explicit, m, *args
         )
         if config.mode not in VALID_MODES:
-            restore("mode",
+            restore(
+                "mode",
                 "Invalid mode '%s' from environment, valid values: %s. Keeping previous value %r.",
-                config.mode, VALID_MODES, previous_values["mode"])
+                config.mode,
+                VALID_MODES,
+                previous_values["mode"],
+            )
         if config.cache_type not in VALID_CACHE_TYPES:
-            restore("cache_type",
+            restore(
+                "cache_type",
                 "Invalid cache_type '%s' from environment, valid values: %s. Keeping previous value %r.",
-                config.cache_type, VALID_CACHE_TYPES, previous_values["cache_type"])
+                config.cache_type,
+                VALID_CACHE_TYPES,
+                previous_values["cache_type"],
+            )
         if config.output_format not in VALID_OUTPUT_FORMATS:
-            restore("output_format",
+            restore(
+                "output_format",
                 "Invalid output_format '%s' from environment, valid values: %s. Keeping previous value %r.",
-                config.output_format, VALID_OUTPUT_FORMATS, previous_values["output_format"])
+                config.output_format,
+                VALID_OUTPUT_FORMATS,
+                previous_values["output_format"],
+            )
         try:
-            config.output_profile = _validate_output_profile_name(config.output_profile) or "default"
+            config.output_profile = (
+                _validate_output_profile_name(config.output_profile) or "default"
+            )
         except ValueError as exc:
-            restore("output_profile",
+            restore(
+                "output_profile",
                 "Invalid output_profile '%s' from environment: %s. Keeping previous value %r.",
-                config.output_profile, exc, previous_values["output_profile"])
+                config.output_profile,
+                exc,
+                previous_values["output_profile"],
+            )
         if config.auto_render_threshold < 1:
-            restore("auto_render_threshold",
+            restore(
+                "auto_render_threshold",
                 "Invalid auto_render_threshold %r from environment, must be >= 1. Keeping previous value %r.",
-                config.auto_render_threshold, previous_values["auto_render_threshold"])
+                config.auto_render_threshold,
+                previous_values["auto_render_threshold"],
+            )
         if config.render_cost_budget is not None and config.render_cost_budget < 1:
-            restore("render_cost_budget",
+            restore(
+                "render_cost_budget",
                 "Invalid render_cost_budget %r from environment, must be >= 1. Keeping previous value %r.",
-                config.render_cost_budget, previous_values["render_cost_budget"])
+                config.render_cost_budget,
+                previous_values["render_cost_budget"],
+            )
         if not config.output_formats:
-            restore("output_formats",
+            restore(
+                "output_formats",
                 "Invalid output_formats from environment, list cannot be empty. Keeping previous value %r.",
-                previous_values["output_formats"])
+                previous_values["output_formats"],
+            )
         else:
             try:
                 config.output_formats = _validate_output_representations(config.output_formats)
             except (ValueError, TypeError) as exc:
-                restore("output_formats",
+                restore(
+                    "output_formats",
                     "Invalid output_formats from environment: %s. Keeping previous value %r.",
-                    exc, previous_values["output_formats"])
+                    exc,
+                    previous_values["output_formats"],
+                )
         if config.chunking_strategy not in VALID_CHUNKING_STRATEGIES:
-            restore("chunking_strategy",
+            restore(
+                "chunking_strategy",
                 "Invalid chunking_strategy '%s' from environment, valid values: %s. Keeping previous value %r.",
-                config.chunking_strategy, VALID_CHUNKING_STRATEGIES, previous_values["chunking_strategy"])
+                config.chunking_strategy,
+                VALID_CHUNKING_STRATEGIES,
+                previous_values["chunking_strategy"],
+            )
         if config.policy not in VALID_POLICIES:
-            restore("policy",
+            restore(
+                "policy",
                 "Invalid policy '%s' from environment, valid values: %s. Keeping previous value %r.",
-                config.policy, VALID_POLICIES, previous_values["policy"])
+                config.policy,
+                VALID_POLICIES,
+                previous_values["policy"],
+            )
 
     def _validate_numeric_fields(
         self,
-        config: "Config",
+        config: Config,
         previous_values: dict,
         previous_explicit: dict,
         explicit: set,
@@ -299,47 +343,78 @@ class ConfigLoader:
             config, a, previous_values, previous_explicit, explicit, m, *args
         )
         if config.timeout <= 0 or config.timeout > 3600:
-            restore("timeout",
+            restore(
+                "timeout",
                 "Invalid timeout '%s' from environment, must be > 0 and <= 3600. Keeping previous value %r.",
-                config.timeout, previous_values["timeout"])
+                config.timeout,
+                previous_values["timeout"],
+            )
         if config.chunk_size < 100 or config.chunk_size > 50000:
-            restore("chunk_size",
+            restore(
+                "chunk_size",
                 "Invalid chunk_size '%s' from environment, must be 100-50000. Keeping previous value %r.",
-                config.chunk_size, previous_values["chunk_size"])
+                config.chunk_size,
+                previous_values["chunk_size"],
+            )
         if config.chunk_overlap < 0 or config.chunk_overlap > 10000:
-            restore("chunk_overlap",
+            restore(
+                "chunk_overlap",
                 "Invalid chunk_overlap '%s' from environment, must be 0-10000. Keeping previous value %r.",
-                config.chunk_overlap, previous_values["chunk_overlap"])
+                config.chunk_overlap,
+                previous_values["chunk_overlap"],
+            )
         if config.chunk_overlap >= config.chunk_size:
-            restore("chunk_overlap",
+            restore(
+                "chunk_overlap",
                 "chunk_overlap (%s) must be less than chunk_size (%s) after env overrides. Keeping previous value %r.",
-                config.chunk_overlap, config.chunk_size, previous_values["chunk_overlap"])
+                config.chunk_overlap,
+                config.chunk_size,
+                previous_values["chunk_overlap"],
+            )
         if config.domain_request_interval < 0.0:
-            restore("domain_request_interval",
+            restore(
+                "domain_request_interval",
                 "Invalid domain_request_interval '%s' from environment, must be >= 0.0. Keeping previous value %r.",
-                config.domain_request_interval, previous_values["domain_request_interval"])
+                config.domain_request_interval,
+                previous_values["domain_request_interval"],
+            )
         if config.circuit_breaker_threshold < 1:
-            restore("circuit_breaker_threshold",
+            restore(
+                "circuit_breaker_threshold",
                 "Invalid circuit_breaker_threshold '%s' from environment, must be >= 1. Keeping previous value %r.",
-                config.circuit_breaker_threshold, previous_values["circuit_breaker_threshold"])
+                config.circuit_breaker_threshold,
+                previous_values["circuit_breaker_threshold"],
+            )
         if config.circuit_breaker_open_seconds <= 0.0:
-            restore("circuit_breaker_open_seconds",
+            restore(
+                "circuit_breaker_open_seconds",
                 "Invalid circuit_breaker_open_seconds '%s' from environment, must be > 0.0. Keeping previous value %r.",
-                config.circuit_breaker_open_seconds, previous_values["circuit_breaker_open_seconds"])
+                config.circuit_breaker_open_seconds,
+                previous_values["circuit_breaker_open_seconds"],
+            )
         if config.cache_ttl <= 0:
-            restore("cache_ttl",
+            restore(
+                "cache_ttl",
                 "Invalid cache_ttl '%s' from environment, must be > 0. Keeping previous value %r.",
-                config.cache_ttl, previous_values["cache_ttl"])
+                config.cache_ttl,
+                previous_values["cache_ttl"],
+            )
         if config.batch_max_concurrent < 1:
-            restore("batch_max_concurrent",
+            restore(
+                "batch_max_concurrent",
                 "Invalid batch_max_concurrent '%s' from environment, must be >= 1. Keeping previous value %r.",
-                config.batch_max_concurrent, previous_values["batch_max_concurrent"])
+                config.batch_max_concurrent,
+                previous_values["batch_max_concurrent"],
+            )
         if config.batch_timeout <= 0.0:
-            restore("batch_timeout",
+            restore(
+                "batch_timeout",
                 "Invalid batch_timeout '%s' from environment, must be > 0.0. Keeping previous value %r.",
-                config.batch_timeout, previous_values["batch_timeout"])
+                config.batch_timeout,
+                previous_values["batch_timeout"],
+            )
 
-    def _apply_env_overrides(self, config: "Config") -> "Config":
+    def _apply_env_overrides(self, config: Config) -> Config:
         """Apply environment variable overrides."""
         explicit = set(config.explicit_keys())
         previous_explicit = {

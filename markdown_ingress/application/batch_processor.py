@@ -100,13 +100,14 @@ class _BatchContext:
             return
         async with self.progress_lock:
             self.completed += 1
+            current = self.completed
             try:
-                self.on_progress(self.completed, self.total, url)
+                self.on_progress(current, self.total, url)
             except Exception as exc:
                 _logger.warning(
                     "Batch progress callback failed for %s (%d/%d): %s",
                     url,
-                    self.completed,
+                    current,
                     self.total,
                     exc,
                     exc_info=True,
@@ -209,6 +210,9 @@ class _BatchUrlProcessor:
         ctx = self._ctx
         async with ctx.batch_inflight_lock:
             record = ctx.batch_inflight.get(prepared.request_key)
+            if record is not None and record.future.done():
+                ctx.batch_inflight.pop(prepared.request_key, None)
+                record = None
             if record is None:
                 record = _BatchInFlightRecord(future=asyncio.get_running_loop().create_future())
                 ctx.batch_inflight[prepared.request_key] = record
@@ -235,7 +239,7 @@ class _BatchUrlProcessor:
             # find a cancelled future and deadlock.
             async with ctx.batch_inflight_lock:
                 rec = ctx.batch_inflight.get(prepared.request_key)
-                if rec is not None and rec.future.done():
+                if rec is record and rec.future.done():
                     ctx.batch_inflight.pop(prepared.request_key, None)
             raise
         except Exception as exc:
@@ -312,9 +316,29 @@ class _BatchUrlProcessor:
                 )
         document.metadata[REQUESTED_MODE] = prepared.requested_mode
         async with ctx.batch_inflight_lock:
-            shared_count = record.followers
-            shared_document = copy.deepcopy(document)
             try:
+                shared_document = copy.deepcopy(document)
+            except Exception as exc:
+                _logger.error(
+                    "Batch deepcopy failed for %s: %s",
+                    prepared.request_key[:32],
+                    exc,
+                    exc_info=True,
+                )
+                try:
+                    record.future.set_exception(exc)
+                except asyncio.InvalidStateError as state_exc:
+                    _logger.debug(
+                        "Batch inflight future already resolved after deepcopy failure for %s: %s",
+                        prepared.request_key[:32],
+                        state_exc,
+                        exc_info=True,
+                    )
+                if ctx.batch_inflight.get(prepared.request_key) is record:
+                    ctx.batch_inflight.pop(prepared.request_key, None)
+                raise exc
+            try:
+                shared_count = record.followers
                 record.future.set_result((shared_document, shared_count))
             except asyncio.InvalidStateError:
                 _logger.warning(
@@ -323,8 +347,6 @@ class _BatchUrlProcessor:
                     prepared.request_key[:32],
                     getattr(record.future, "_state", "unknown"),
                 )
-            if ctx.batch_inflight.get(prepared.request_key) is record:
-                ctx.batch_inflight.pop(prepared.request_key, None)
         document.metadata[INFLIGHT_DEDUPLICATED] = False
         document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
         document.metadata.setdefault(CACHE_HIT, False)
@@ -334,7 +356,9 @@ class _BatchUrlProcessor:
         await self._report_completion(prepared.url)
         return True
 
-    async def _execute_direct(self, prepared: _PreparedBatchRequest) -> bool:
+    async def _execute_direct(
+        self, prepared: _PreparedBatchRequest, started_at: float | None = None
+    ) -> bool:
         """Execute an item without batch in-flight sharing."""
         ctx = self._ctx
         if ctx.batch_tracks_metrics:
@@ -350,6 +374,10 @@ class _BatchUrlProcessor:
         ctx.set_document(prepared.index, document)
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=True)
+        else:
+            self._record_shortcut_request_for_local_strategy(
+                prepared, success=True, started_at=started_at
+            )
         await self._report_completion(prepared.url)
         return True
 
@@ -396,15 +424,29 @@ class _BatchUrlProcessor:
         if record is not None:
             async with ctx.batch_inflight_lock:
                 try:
-                    if record.followers > 0 and not record.future.done():
+                    if not record.future.done():
                         record.future.set_exception(_copy_batch_exception(exc))
                 except asyncio.InvalidStateError:
                     _logger.warning(
                         "Batch inflight future already done when setting exception for %s",
                         prepared.request_key[:32],
                     )
-                if ctx.batch_inflight.get(prepared.request_key) is record:
-                    ctx.batch_inflight.pop(prepared.request_key, None)
+                # If there are no followers, consume the exception ourselves so
+                # asyncio does not log "Future exception was never retrieved".
+                if record.followers == 0 and record.future.done():
+                    try:
+                        record.future.exception()
+                    except Exception as future_exc:
+                        _logger.debug(
+                            "Consumed batch inflight exception for %s: %s",
+                            prepared.request_key[:32],
+                            future_exc,
+                            exc_info=True,
+                        )
+                # Intentionally leave the record in batch_inflight so that
+                # any followers currently waiting on the semaphore can detect
+                # it and receive the exception.  _register_inflight cleans up
+                # stale done entries on the next attempt.
         await ctx.append_error(
             BatchErrorItem(
                 index=prepared.index,
@@ -428,6 +470,7 @@ class _BatchUrlProcessor:
             record_mode_request(prepared.requested_mode)
         record: _BatchInFlightRecord | None = None
         semaphore_held = False
+        cache_hit = False
         try:
             # Acquire semaphore for cache check + inflight detection.
             # This preserves sequential cache reuse (with max_concurrent=1
@@ -435,9 +478,10 @@ class _BatchUrlProcessor:
             await ctx.semaphore.acquire()
             semaphore_held = True
             if await self._try_cache(prepared, started_at):
+                cache_hit = True
                 return True
             if self._uses_uncacheable_screenshot(prepared):
-                return await self._execute_direct(prepared)
+                return await self._execute_direct(prepared, started_at)
             record, is_leader = await self._register_inflight(prepared)
             if not is_leader:
                 semaphore_held = False  # _handle_follower releases the semaphore
@@ -451,7 +495,7 @@ class _BatchUrlProcessor:
         finally:
             if semaphore_held:
                 ctx.semaphore.release()
-            if ctx.batch_tracks_metrics:
+            if ctx.batch_tracks_metrics and not cache_hit:
                 record_mode_timing(
                     prepared.requested_mode,
                     (time.perf_counter() - started_at) * 1000.0,

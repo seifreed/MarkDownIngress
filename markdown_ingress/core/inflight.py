@@ -103,6 +103,7 @@ class InFlightRegistry:
                     to_notify: list[InFlightEntry] = []
                     with registry._lock:
                         to_notify = registry._cleanup_orphaned_entries_locked()
+                        to_notify.extend(registry._evict_lru_entries_locked())
                     for entry in to_notify:
                         with entry.condition:
                             entry.leader_active = False
@@ -120,7 +121,7 @@ class InFlightRegistry:
             self._cleanup_stop.set()
         thread.join(timeout=_INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS)
         with self._cleanup_control_lock:
-            if self._cleanup_thread is thread:
+            if self._cleanup_thread is thread and not thread.is_alive():
                 self._cleanup_thread = None
 
     def _cleanup_orphaned_entries_locked(self) -> list[InFlightEntry]:
@@ -187,7 +188,7 @@ class InFlightRegistry:
             if now - self._last_orphan_cleanup_at >= _INFLIGHT_CLEANUP_INTERVAL_SECONDS:
                 to_notify = self._cleanup_orphaned_entries_locked()
                 self._last_orphan_cleanup_at = now
-            count = len(self._requests)
+            count = sum(1 for e in self._requests.values() if not e.done)
         for entry in to_notify:
             with entry.condition:
                 entry.leader_active = False
@@ -248,7 +249,9 @@ class InFlightRegistry:
             try:
                 while not entry.done:
                     if not entry.leader_active:
-                        raise RuntimeError("In-flight ingestion failed - leader was marked inactive")
+                        raise RuntimeError(
+                            "In-flight ingestion failed - leader was marked inactive"
+                        )
 
                     if not entry.condition.wait(timeout=_INFLIGHT_WAIT_TIMEOUT):
                         if entry.done:
@@ -294,10 +297,6 @@ class InFlightRegistry:
                 entry.followers,
             )
             followers = entry.followers
-            for e in to_notify:
-                with e.condition:
-                    e.leader_active = False
-                    e.condition.notify_all()
             return True, followers
 
     def release(
@@ -318,6 +317,7 @@ class InFlightRegistry:
                 )
                 if should_bail:
                     return followers
+            # Note: shared_count will be read inside entry.condition to avoid race.
 
         for e in to_notify:
             with e.condition:
@@ -329,7 +329,6 @@ class InFlightRegistry:
 
         with entry.condition:
             shared_count = entry.followers
-            entry.completing = True
             try:
                 entry.document = copy.deepcopy(document) if document is not None else None
                 if entry.document is not None:
@@ -347,6 +346,7 @@ class InFlightRegistry:
             except Exception as exc:
                 entry.error = exc
             finally:
+                entry.completing = True
                 entry.done = True
                 entry.condition.notify_all()
 

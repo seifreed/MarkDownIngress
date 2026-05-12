@@ -77,7 +77,6 @@ def _validate_string_list(field_name: str, value: Any) -> list[str]:
     return normalized
 
 
-
 def _normalize_domain_policies(value: Any) -> list[DomainPolicy]:
     if not isinstance(value, list):
         raise ValueError(
@@ -255,21 +254,29 @@ class Config:
 
         # Validate positive values
         if self.timeout <= 0 or self.timeout > _MAX_TIMEOUT_SECONDS:
-            raise ValueError(f"timeout must be > 0 and <= {_MAX_TIMEOUT_SECONDS}, got {self.timeout}")
+            raise ValueError(
+                f"timeout must be > 0 and <= {_MAX_TIMEOUT_SECONDS}, got {self.timeout}"
+            )
         if self.auto_render_threshold < 1:
             raise ValueError(
                 "auto_render_threshold must be >= 1, " f"got {self.auto_render_threshold}"
             )
         if self.batch_max_concurrent < _MIN_BATCH_CONCURRENCY:
-            raise ValueError(f"batch_max_concurrent must be >= {_MIN_BATCH_CONCURRENCY}, got {self.batch_max_concurrent}")
+            raise ValueError(
+                f"batch_max_concurrent must be >= {_MIN_BATCH_CONCURRENCY}, got {self.batch_max_concurrent}"
+            )
         if self.batch_timeout <= 0:
             raise ValueError(f"batch_timeout must be positive, got {self.batch_timeout}")
         if self.cache_ttl < _MIN_CACHE_TTL:
             raise ValueError(f"cache_ttl must be positive, got {self.cache_ttl}")
         if self.chunk_size < _MIN_CHUNK_SIZE or self.chunk_size > _MAX_CHUNK_SIZE:
-            raise ValueError(f"chunk_size must be between {_MIN_CHUNK_SIZE} and {_MAX_CHUNK_SIZE}, got {self.chunk_size}")
+            raise ValueError(
+                f"chunk_size must be between {_MIN_CHUNK_SIZE} and {_MAX_CHUNK_SIZE}, got {self.chunk_size}"
+            )
         if self.chunk_overlap < _MIN_CHUNK_OVERLAP or self.chunk_overlap > _MAX_CHUNK_OVERLAP:
-            raise ValueError(f"chunk_overlap must be between {_MIN_CHUNK_OVERLAP} and {_MAX_CHUNK_OVERLAP}, got {self.chunk_overlap}")
+            raise ValueError(
+                f"chunk_overlap must be between {_MIN_CHUNK_OVERLAP} and {_MAX_CHUNK_OVERLAP}, got {self.chunk_overlap}"
+            )
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError(
                 f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
@@ -512,11 +519,13 @@ def load_config(config_path: str | None = None) -> "Config":
         Loaded Config object
     """
     from markdown_ingress.core.config_loader import ConfigLoader
+
     return ConfigLoader(config_path).load()
 
 
 def __getattr__(name: str):
     if name == "ConfigLoader":
         from markdown_ingress.core.config_loader import ConfigLoader
+
         return ConfigLoader
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -248,7 +248,7 @@ class SecurityAnalyzer:
         cls._PATTERNS_LOCK = threading.Lock()
 
     # Pattern-based detection rules
-    INJECTION_PATTERNS = [
+    INJECTION_PATTERNS: tuple[InjectionPattern, ...] = (
         InjectionPattern(
             pattern=r"\bignore\s+(previous|all|prior)\s+(instructions?|prompts?|commands?)\b",
             weight=0.8,
@@ -327,7 +327,7 @@ class SecurityAnalyzer:
             weight=0.5,
             description="Role-play injection",
         ),
-    ]
+    )
 
     # Imperative verbs often used in injections
     # BUG FIX: Added missing security-relevant verbs

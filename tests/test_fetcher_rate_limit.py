@@ -351,7 +351,9 @@ def test_fetch_async_server_errors_open_circuit_breaker(monkeypatch):
     async def fake_sleep(seconds: float):
         return None
 
-    monkeypatch.setattr("markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep
+    )
 
     request = httpx.Request("GET", "https://example.com/server-error")
     response = httpx.Response(
@@ -398,6 +400,7 @@ def test_fetch_async_server_errors_open_circuit_breaker(monkeypatch):
 
     async def run():
         try:
+
             async def get_async_client():
                 return client
 
@@ -571,6 +574,24 @@ def test_fetch_sync_invalid_redirect_location_is_not_retried_or_circuited():
         server.server_close()
 
     assert Handler.count == 2
+
+
+@pytest.mark.asyncio
+async def test_fetcher_close_inside_running_loop_schedules_async_client_close():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    closed = asyncio.Event()
+
+    class FakeAsyncClient:
+        async def aclose(self):
+            closed.set()
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0)
+    fetcher._async_client = FakeAsyncClient()
+
+    fetcher.close()
+
+    await asyncio.wait_for(closed.wait(), timeout=1.0)
 
 
 def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):

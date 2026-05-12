@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import threading
+import time
 from collections import deque
 from contextlib import closing
 from datetime import UTC, datetime
@@ -73,6 +75,7 @@ from markdown_ingress.api_server_queue import (
     _read_job_from_queue,
     _TransientLegacyQueueReadError,
 )
+from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
@@ -117,8 +120,6 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
     Returns:
         Tuple of (is_allowed, retry_after_seconds)
     """
-    import time
-
     if _RATE_LIMIT_BACKEND == "redis":
         return _check_rate_limit_redis(client_id)
 
@@ -137,15 +138,6 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
             for cid in stale_clients:
                 del _request_counts[cid]
 
-        # Size-based cleanup before rate limit check to prevent unbounded memory growth
-        if len(_request_counts) > _RATE_LIMIT_MAX_CLIENTS:
-            client_ages = [
-                (cid, max(reqs) if reqs else float("-inf")) for cid, reqs in _request_counts.items()
-            ]
-            client_ages.sort(key=lambda x: x[1])  # Least recently active first
-            for cid, _ in client_ages[: len(client_ages) - _RATE_LIMIT_MAX_CLIENTS]:
-                del _request_counts[cid]
-
         if client_id not in _request_counts:
             # No maxlen: rely solely on explicit window-expiry cleanup to avoid
             # auto-eviction silently dropping timestamps still within the window.
@@ -154,8 +146,9 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         while requests and now - requests[0] >= RATE_LIMIT_WINDOW_SECONDS:
             requests.popleft()
         # Hard cap to prevent adversarial unbounded growth (well above normal rate limit)
-        if len(requests) > RATE_LIMIT_REQUESTS * 3:
-            requests.clear()
+        rate_limit_hard_cap = RATE_LIMIT_REQUESTS * 10
+        while len(requests) > rate_limit_hard_cap:
+            requests.popleft()
 
         if len(requests) >= RATE_LIMIT_REQUESTS:
             # Calculate retry-after
@@ -163,6 +156,15 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
             retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - oldest)) + 1)
             return False, retry_after
         requests.append(now)
+
+        # Size-based cleanup after adding the new client to enforce max limit
+        if len(_request_counts) > _RATE_LIMIT_MAX_CLIENTS:
+            client_ages = [
+                (cid, max(reqs) if reqs else float("-inf")) for cid, reqs in _request_counts.items()
+            ]
+            client_ages.sort(key=lambda x: x[1])  # Least recently active first
+            for cid, _ in client_ages[: len(client_ages) - _RATE_LIMIT_MAX_CLIENTS]:
+                del _request_counts[cid]
 
         return True, 0
 
@@ -330,13 +332,18 @@ def _build_replacement_queue_or_current(expected_queue):
         # Only catch database/file errors that indicate transient backend issues.
         except (SQLiteError, OSError):
             with _JOB_QUEUE_LOCK:
-                if getattr(expected_queue, "state", None) in {"backend_error", "external_owner"}:
-                    expected_queue.state = "backend_error"
+                state = getattr(expected_queue, "state", None)
+                if state == "backend_error":
+                    return expected_queue
+                if state == "external_owner":
                     return expected_queue
             raise
         if _replace_job_queue_if_current(expected_queue, replacement_queue):
             return replacement_queue
-        replacement_queue.close()
+        try:
+            replacement_queue.close()
+        except Exception as exc:
+            _logger.debug("Failed to close superseded replacement queue: %s", exc, exc_info=True)
         with _JOB_QUEUE_LOCK:
             return JOB_QUEUE
 
@@ -387,13 +394,15 @@ def _start_job_queue_repair_loop() -> None:
                 # Try building a replacement queue.
                 replacement_queue = _build_replacement_queue_or_current(queue)
                 if replacement_queue is not queue:
-                    _JOB_QUEUE_REPAIR_THREAD = None
-                    _JOB_QUEUE_REPAIR_STOP = None
+                    with _JOB_QUEUE_LOCK:
+                        _JOB_QUEUE_REPAIR_THREAD = None
+                        _JOB_QUEUE_REPAIR_STOP = None
                     return
                 # Backend error with no replacement possible — give up.
                 if state == "backend_error":
-                    _JOB_QUEUE_REPAIR_THREAD = None
-                    _JOB_QUEUE_REPAIR_STOP = None
+                    with _JOB_QUEUE_LOCK:
+                        _JOB_QUEUE_REPAIR_THREAD = None
+                        _JOB_QUEUE_REPAIR_STOP = None
                     return
             # Wait before retrying based on the current state.
             if state == "external_owner":
@@ -510,6 +519,8 @@ def _init_job_queue(previous_queue=None):
 # Lazy initialization to prevent server crash on startup if job queue fails
 JOB_QUEUE: PersistentJobQueue | None = None
 _job_queue_initialized = False
+_job_queue_init_failed_at: float | None = None
+_JOB_QUEUE_RETRY_BACKOFF_SECONDS = 10.0
 
 
 def _ensure_job_queue_initialized():
@@ -518,30 +529,35 @@ def _ensure_job_queue_initialized():
     If initialization fails, the error is deferred until first use,
     allowing the server to start and serve endpoints that don't require the job queue.
     """
-    global JOB_QUEUE, _job_queue_initialized
+    global JOB_QUEUE, _job_queue_initialized, _job_queue_init_failed_at
     if _job_queue_initialized:
         return
+    if _job_queue_init_failed_at is not None:
+        if time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS:
+            return
     with _JOB_QUEUE_INIT_LOCK:
         # Double-check after acquiring lock to prevent race condition
         if _job_queue_initialized:
             return
+        if _job_queue_init_failed_at is not None:
+            if time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS:
+                return
         if JOB_QUEUE is not None:
             _job_queue_initialized = True
+            _job_queue_init_failed_at = None
             _maybe_start_job_queue_repair()
             _start_job_queue_watchdog()
             return
         try:
             JOB_QUEUE = _init_job_queue(globals().get("JOB_QUEUE"))
             _job_queue_initialized = True
+            _job_queue_init_failed_at = None
             _maybe_start_job_queue_repair()
             _start_job_queue_watchdog()
-        except (OSError, ValueError, RuntimeError, ImportError) as e:
-            # BUG FIX: Catch specific exceptions instead of broad Exception
-            # OSError: file/database errors
-            # ValueError: configuration errors
-            # RuntimeError: initialization failures
-            # ImportError: missing dependencies
-            _job_queue_initialized = True  # Prevent repeated retries
+        except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error) as e:
+            # Catch specific exceptions. Do NOT set _job_queue_initialized = True
+            # on failure so that subsequent calls can retry after backoff.
+            _job_queue_init_failed_at = time.monotonic()
             _logger.error("Failed to initialize job queue: %s", e)
             # JOB_QUEUE remains None; endpoints will handle unavailable queue
 
@@ -565,7 +581,7 @@ def _get_job_queue():
         queue_to_repair = queue
     try:
         _close_queue_for_repair(queue_to_repair)
-    except RuntimeError:
+    except (RuntimeError, TypeError):
         # Re-check state under lock after repair failure
         with _JOB_QUEUE_LOCK:
             if getattr(queue_to_repair, "state", None) in _RECOVERABLE_QUEUE_STATES:
@@ -631,7 +647,7 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> dict[str, object]:
                     FROM jobs
                     WHERE ttl_seconds IS NULL
                     """).fetchall()
-        except Exception as exc:
+        except (sqlite3.Error, OSError, ValueError) as exc:
             _logger.warning("Error counting unknown TTL jobs: %s", exc, exc_info=True)
             return 0
         count = 0
@@ -735,6 +751,7 @@ async def retry_ingest_endpoint(request: RetryIngestRequest):
 )
 async def batch_ingest_endpoint(request: BatchIngestRequest):
     """Process a batch synchronously for simple clients."""
+    await validate_batch_request_ssrf_async(request)
     return await handle_sync_batch(request, ingest_many)
 
 
@@ -745,9 +762,10 @@ async def batch_ingest_endpoint(request: BatchIngestRequest):
 )
 async def batch_job_submit(request: BatchIngestRequest):
     """Queue a batch ingestion job and return a polling handle."""
+    await validate_batch_request_ssrf_async(request)
     try:
         job_queue = _get_job_queue()
-    except Exception as exc:
+    except (RuntimeError, OSError, ValueError) as exc:
         if _is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise

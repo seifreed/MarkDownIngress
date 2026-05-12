@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import queue
+import socket
 import sqlite3
 import threading
 import time
@@ -101,6 +102,7 @@ def _validate_job_db_path(db_path: str | Path) -> Path:
         "Set MDI_ALLOWED_DB_DIRS to customise."
     )
 
+
 # Blocked URL schemes and networks for SSRF protection
 _BLOCKED_SCHEMES = {
     "file",
@@ -142,11 +144,14 @@ def _is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address
     return is_blocked_ip_address(normalize_ip_for_ssrf(ip_obj))
 
 
-def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str | None:
+def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str:
     """Resolve hostname and validate the IP is not private/blocked.
 
-    Returns the resolved IP address if valid, None if blocked.
-    This should be called at webhook delivery time to prevent DNS rebinding attacks.
+    Returns the resolved IP address if valid.
+
+    Raises:
+        ValueError: All resolved IPs blocked by SSRF policy (permanent).
+        socket.gaierror: DNS resolution failed (transient, retryable).
     """
     import socket
 
@@ -155,7 +160,7 @@ def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str
         # Get all addresses for the hostname
         addr_info = socket.getaddrinfo(normalized_hostname, None)
         if not addr_info:
-            return None
+            raise ValueError(f"No IP addresses resolved for {hostname}")
         validated_ip: str | None = None
         for family, _, _, _, sockaddr in addr_info:
             ip_str = str(sockaddr[0])
@@ -166,15 +171,19 @@ def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str
             # Check blocked hosts
             if is_blocked_hostname(ip_str) or is_blocked_hostname(normalized_hostname):
                 if not allow_local:
-                    return None
+                    raise ValueError(f"Hostname {hostname} resolves to blocked IP {ip_str}")
             # Check private ranges
             if not allow_local and is_blocked_ip_address(ip_obj):
-                return None
+                raise ValueError(f"Hostname {hostname} resolves to private IP {ip_str}")
             if validated_ip is None:
                 validated_ip = ip_str
+        if validated_ip is None:
+            raise ValueError(f"No valid public IP found for {hostname}")
         return validated_ip
-    except (socket.gaierror, OSError):
-        return None
+    except socket.gaierror:
+        raise
+    except OSError as exc:
+        raise socket.gaierror(str(exc)) from exc
 
 
 def _validate_webhook_url(url: str | None, *, allow_local: bool = False) -> None:
@@ -314,21 +323,36 @@ class PersistentJobQueue:
     def _get_process_start_time(self) -> float | None:
         """Get the current process start time for PID recycling detection."""
         try:
-            # Try /proc filesystem (Linux)
-            proc_path = f"/proc/{os.getpid()}/stat"
-            if os.path.exists(proc_path):
-                with open(proc_path) as f:
-                    stat_line = f.read()
-                parts = stat_line.split()
-                if len(parts) > 21:
-                    start_ticks = int(parts[21])
-                    clk_tck = os.sysconf("SC_CLK_TCK")
-                    if clk_tck > 0:
-                        return start_ticks / clk_tck
+            start_ticks = self._parse_proc_stat_start_ticks(os.getpid())
+            if start_ticks is not None:
+                clk_tck = os.sysconf("SC_CLK_TCK")
+                if clk_tck > 0:
+                    return start_ticks / clk_tck
         except (OSError, ValueError, IndexError) as e:
             _logger.debug("Could not read process start time from /proc: %s", e)
         # No reliable start time available — return None so callers
         # fall back to PID-only existence checks.
+        return None
+
+    @staticmethod
+    def _parse_proc_stat_start_ticks(pid: int) -> int | None:
+        """Parse /proc/{pid}/stat safely, handling spaces in the process name."""
+        proc_path = f"/proc/{pid}/stat"
+        if not os.path.exists(proc_path):
+            return None
+        with open(proc_path) as f:
+            stat_line = f.read()
+        # Field 2 is the command name enclosed in parentheses and may contain
+        # spaces. Find the last ')' to split the fixed prefix from the rest.
+        closing = stat_line.rfind(")")
+        if closing == -1:
+            return None
+        suffix = stat_line[closing + 1 :].strip()
+        parts = suffix.split()
+        # starttime is the 22nd field overall, which is the 20th field in the
+        # suffix (after the two fixed fields pid and comm).
+        if len(parts) > 19:
+            return int(parts[19])
         return None
 
     @property
@@ -472,21 +496,15 @@ class PersistentJobQueue:
         if owner_start_time is not None:
             try:
                 # Try /proc filesystem (Linux/macOS)
-                proc_path = f"/proc/{owner_pid}/stat"
-                if os.path.exists(proc_path):
-                    with open(proc_path) as f:
-                        stat_line = f.read()
-                    # The 22nd field (0-indexed: 21) is starttime in clock ticks
-                    parts = stat_line.split()
-                    if len(parts) > 21:
-                        start_ticks = int(parts[21])
-                        # Convert clock ticks to seconds
-                        clk_tck = os.sysconf("SC_CLK_TCK")
-                        if clk_tck > 0:
-                            start_seconds = start_ticks / clk_tck
-                            # Check if start time matches expected (within 1 second tolerance)
-                            if abs(start_seconds - owner_start_time) > 1.0:
-                                return False
+                start_ticks = self._parse_proc_stat_start_ticks(owner_pid)
+                if start_ticks is not None:
+                    # Convert clock ticks to seconds
+                    clk_tck = os.sysconf("SC_CLK_TCK")
+                    if clk_tck > 0:
+                        start_seconds = start_ticks / clk_tck
+                        # Check if start time matches expected (within 1 second tolerance)
+                        if abs(start_seconds - owner_start_time) > 1.0:
+                            return False
             except (OSError, ValueError, IndexError) as e:
                 # If we can't read /proc, fall back to just PID existence check
                 _logger.debug("Could not verify owner process start time: %s", e)
@@ -630,7 +648,7 @@ class PersistentJobQueue:
                     # only OperationalError was retried, so a transient network
                     # glitch forced immediate shutdown.
                     consecutive_failures += 1
-                    if consecutive_failures > max_heartbeat_retries:
+                    if consecutive_failures >= max_heartbeat_retries:
                         # Max retries exceeded - initiate graceful shutdown
                         with self._lock:
                             self._lease_lost = True
@@ -653,9 +671,7 @@ class PersistentJobQueue:
                     skip_interval = True
                 except Exception:  # pragma: no cover
                     # Non-transient errors - immediate shutdown
-                    _logger.critical(
-                        "Heartbeat loop fatal error, shutting down", exc_info=True
-                    )
+                    _logger.critical("Heartbeat loop fatal error, shutting down", exc_info=True)
                     with self._lock:
                         self._lease_lost = True
                         self._closed = True
@@ -692,8 +708,7 @@ class PersistentJobQueue:
                     return
                 if getattr(self, "_close_in_progress", False):
                     while (
-                        getattr(self, "_close_in_progress", False)
-                        and not self._shutdown_complete
+                        getattr(self, "_close_in_progress", False) and not self._shutdown_complete
                     ):
                         self._state_changed.wait(timeout=0.1)
                     if self._shutdown_complete:
@@ -854,8 +869,8 @@ class PersistentJobQueue:
                     run_inline = True
                 else:
                     self._ensure_workers()
-                    self._queue.put((job_id, task))
                     self._assert_queue_usable(require_lease=True, allow_closing=True)
+                    self._queue.put((job_id, task))
             except Exception:
                 if job_inserted:
                     self._delete_queued_job(job_id)
@@ -1038,6 +1053,23 @@ class PersistentJobQueue:
                             mark_exc,
                             exc_info=True,
                         )
+                        # Fallback: force-update to prevent job staying stuck
+                        # in 'running' if the main _mark_failed path failed.
+                        try:
+                            with closing(self._connect()) as conn:
+                                conn.execute(
+                                    "UPDATE jobs SET status='failed', error=?, "
+                                    "completed_at=? WHERE job_id=? AND status='running'",
+                                    (str(exc)[:500], _utcnow(), job_id),
+                                )
+                                conn.commit()
+                        except Exception as fallback_exc:
+                            _logger.error(
+                                "Fallback mark-failed also failed for job %s: %s",
+                                job_id,
+                                fallback_exc,
+                                exc_info=True,
+                            )
             finally:
                 self._queue.task_done()
 
@@ -1119,15 +1151,17 @@ class PersistentJobQueue:
                     _logger.warning("Webhook URL has no hostname: %s", job.webhook_url[:100])
                     self._mark_webhook_failed(job_id, "Webhook URL has no hostname")
                     raise RuntimeError("Webhook URL has no hostname")
-                validated_ip = _resolve_and_validate_ip(hostname)
-                if validated_ip is None:
-                    # DNS rebinding detected or private IP resolution at request time
+                try:
+                    validated_ip = _resolve_and_validate_ip(hostname)
+                except socket.gaierror:
                     self._mark_webhook_failed(
-                        job_id, "Webhook URL resolved to blocked/private IP at delivery time"
+                        job_id, "Webhook URL DNS resolution failed (transient)"
                     )
-                    raise RuntimeError(
-                        "Webhook URL resolved to blocked/private IP at delivery time"
-                    )
+                    raise RuntimeError("Webhook URL DNS resolution failed (transient)")
+                except ValueError as exc:
+                    # Private/blocked IP detected at delivery time (policy rejection)
+                    self._mark_webhook_failed(job_id, f"Webhook URL blocked by SSRF policy: {exc}")
+                    raise RuntimeError(f"Webhook URL blocked by SSRF policy: {exc}") from exc
             try:
                 # BUG FIX: Pass validated_ip to notifier for DNS pinning
                 # This prevents TOCTOU race where DNS changes between validation and connection
@@ -1190,16 +1224,22 @@ class PersistentJobQueue:
     ) -> dict[str, Any]:
         """Execute a task in a daemon thread with a caller-visible timeout.
 
-        Python cannot hard-cancel worker threads, so timed-out work may continue
-        briefly in the background until the task returns.
+        Python cannot hard-cancel worker threads. When the timeout expires the
+        daemon thread continues executing in the background. Each timeout spawns
+        a new thread that persists until the hung task returns, which may be
+        never for infinite loops or blocking I/O. Under high-throughput workloads
+        this causes unbounded thread accumulation.
+
+        For production environments that require hard timeouts, consider using
+        an external process watchdog or multiprocessing.Process instead.
         """
         result_container: list[dict[str, Any] | None] = [None]
-        exception_container: list[Exception | None] = [None]
+        exception_container: list[BaseException | None] = [None]
 
         def run_task() -> None:
             try:
                 result_container[0] = task()
-            except Exception as e:
+            except BaseException as e:
                 exception_container[0] = e
 
         thread = threading.Thread(target=run_task, daemon=True)

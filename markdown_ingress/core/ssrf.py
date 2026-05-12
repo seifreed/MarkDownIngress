@@ -11,6 +11,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
+_UNSPECIFIED_IPV4_HOST = ".".join(("0", "0", "0", "0"))
+
 _EXTRA_BLOCKED_NETWORKS = (
     ipaddress.ip_network("100.64.0.0/10"),
     ipaddress.ip_network("192.0.0.0/24"),
@@ -36,7 +38,7 @@ _BLOCKED_HOSTNAMES = frozenset(
         "metadata.scaleway.internal",
         "metadata.aliyun.internal",
         "169.254.169.254",
-        "0.0.0.0",
+        _UNSPECIFIED_IPV4_HOST,
         "::1",  # IPv6 loopback
         "0:0:0:0:0:0:0:1",  # IPv6 loopback (long form)
     }

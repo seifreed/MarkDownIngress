@@ -3,6 +3,7 @@ Scoring module - Calculate final injection risk score
 """
 
 import logging
+import math
 
 from markdown_ingress.models import InjectionAnalysis
 
@@ -13,15 +14,6 @@ class Scorer:
     """Calculate and interpret injection risk scores"""
 
     DEFAULT_BLOCK_THRESHOLD: float = 0.7
-
-    # Risk level thresholds (upper bound is exclusive except for "critical")
-    RISK_LEVELS = {
-        "safe": (0.0, 0.2),
-        "low": (0.2, 0.4),
-        "medium": (0.4, 0.6),
-        "high": (0.6, 0.8),
-        "critical": (0.8, float("inf")),
-    }
 
     def __init__(self):
         pass
@@ -45,6 +37,9 @@ class Scorer:
         """
         # Validate and clamp score to valid range
         original_score = score
+        if math.isnan(score):
+            _logger.warning("Injection score is NaN, treating as critical (fail-safe)")
+            return "critical"
         if score < 0.0:
             score = 0.0
         elif score > 1.0:
@@ -65,7 +60,9 @@ class Scorer:
             return "low"
         return "safe"
 
-    def should_block(self, analysis: InjectionAnalysis, threshold: float = DEFAULT_BLOCK_THRESHOLD) -> bool:
+    def should_block(
+        self, analysis: InjectionAnalysis, threshold: float = DEFAULT_BLOCK_THRESHOLD
+    ) -> bool:
         """
         Determine if content should be blocked based on score.
 
@@ -81,6 +78,12 @@ class Scorer:
         """
         if not 0.0 <= threshold <= 1.0:
             raise ValueError(f"threshold must be between 0.0 and 1.0, got {threshold}")
+        # Invalid scores are treated as blocking (fail-safe)
+        if math.isnan(analysis.score) or not 0.0 <= analysis.score <= 1.0:
+            _logger.warning(
+                "Injection score %s is invalid, treating as blocking (fail-safe)", analysis.score
+            )
+            return True
         return analysis.score >= threshold
 
     def get_recommendation(self, analysis: InjectionAnalysis) -> str:
@@ -103,4 +106,4 @@ class Scorer:
             "critical": "Critical risk detected. Content likely contains prompt injection. Blocking recommended.",
         }
 
-        return recommendations.get(risk_level, "Unable to assess risk.")
+        return recommendations[risk_level]

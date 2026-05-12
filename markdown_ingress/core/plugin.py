@@ -33,12 +33,12 @@ class Plugin(ABC):
         )
 
     @abstractmethod
-    def get_patterns(self) -> list[str]:
+    def get_patterns(self) -> list[str] | list[tuple[str, float]]:
         """
         Return list of regex patterns for injection detection.
 
         Returns:
-            List of regex pattern strings
+            List of regex pattern strings, or (pattern, weight) tuples for weighted patterns.
         """
         pass  # pragma: no cover
 
@@ -152,17 +152,22 @@ class PluginLoader:
 
         return loaded_count
 
-    def get_all_patterns(self) -> list[str]:
+    def get_all_patterns(self) -> list[tuple[str, float]]:
         """
         Get combined patterns from all loaded plugins.
 
         Returns:
-            List of all regex patterns
+            List of (regex_pattern, weight) tuples
         """
-        patterns = []
+        pairs: list[tuple[str, float]] = []
         for plugin in self.plugins.values():
-            patterns.extend(plugin.get_patterns())
-        return patterns
+            raw = plugin.get_patterns()
+            for item in raw:
+                if isinstance(item, tuple):
+                    pairs.append(item)
+                else:
+                    pairs.append((item, 0.5))
+        return pairs
 
     def get_plugin(self, name: str) -> Plugin | None:
         """
