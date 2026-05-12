@@ -2,6 +2,7 @@
 Tests for retry_ingest functionality
 """
 
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -136,6 +137,52 @@ def test_retry_ingest_rejects_max_timeout_below_initial_timeout():
             initial_timeout=60.0,
             max_timeout=10.0,
         )
+
+
+@pytest.mark.parametrize("max_retries", [cast(Any, True), cast(Any, 1.5), cast(Any, "2")])
+def test_retry_ingest_rejects_non_integer_max_retries(max_retries: Any):
+    with pytest.raises(ValueError, match="max_retries must be an int"):
+        retry_ingest(url="https://example.com", max_retries=max_retries)
+
+
+@pytest.mark.parametrize("max_retries", [0, -1])
+def test_retry_ingest_rejects_max_retries_below_one(max_retries: int):
+    with pytest.raises(ValueError, match="max_retries must be >= 1"):
+        retry_ingest(url="https://example.com", max_retries=max_retries)
+
+
+@pytest.mark.parametrize(
+    ("initial_timeout", "match"),
+    [
+        (cast(Any, True), "initial_timeout must be a finite number"),
+        (cast(Any, "60"), "initial_timeout must be a finite number"),
+        (float("nan"), "initial_timeout must be a finite number"),
+        (float("inf"), "initial_timeout must be a finite number"),
+        (float("-inf"), "initial_timeout must be a finite number"),
+        (0.0, "initial_timeout must be > 0"),
+        (-1.0, "initial_timeout must be > 0"),
+    ],
+)
+def test_retry_ingest_rejects_invalid_initial_timeout(initial_timeout: Any, match: str):
+    with pytest.raises(ValueError, match=match):
+        retry_ingest(url="https://example.com", initial_timeout=initial_timeout)
+
+
+@pytest.mark.parametrize(
+    ("max_timeout", "match"),
+    [
+        (cast(Any, True), "max_timeout must be a finite number"),
+        (cast(Any, "60"), "max_timeout must be a finite number"),
+        (float("nan"), "max_timeout must be a finite number"),
+        (float("inf"), "max_timeout must be a finite number"),
+        (float("-inf"), "max_timeout must be a finite number"),
+        (0.0, "max_timeout must be > 0"),
+        (-1.0, "max_timeout must be > 0"),
+    ],
+)
+def test_retry_ingest_rejects_invalid_max_timeout(max_timeout: Any, match: str):
+    with pytest.raises(ValueError, match=match):
+        retry_ingest(url="https://example.com", initial_timeout=60.0, max_timeout=max_timeout)
 
 
 def test_retry_ingest_all_retries_fail():
