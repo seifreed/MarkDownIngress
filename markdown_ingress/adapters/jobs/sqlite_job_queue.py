@@ -1153,11 +1153,11 @@ class PersistentJobQueue:
                     raise RuntimeError("Webhook URL has no hostname")
                 try:
                     validated_ip = _resolve_and_validate_ip(hostname)
-                except socket.gaierror:
+                except socket.gaierror as exc:
                     self._mark_webhook_failed(
                         job_id, "Webhook URL DNS resolution failed (transient)"
                     )
-                    raise RuntimeError("Webhook URL DNS resolution failed (transient)")
+                    raise RuntimeError("Webhook URL DNS resolution failed (transient)") from exc
                 except ValueError as exc:
                     # Private/blocked IP detected at delivery time (policy rejection)
                     self._mark_webhook_failed(job_id, f"Webhook URL blocked by SSRF policy: {exc}")
@@ -1480,7 +1480,7 @@ def check_external_owner_still_owns(
             return True
         if on_backend_error is not None:
             on_backend_error("backend_error")
-        raise RuntimeError(f"Job queue backend read failed during repair: {exc}")
+        raise RuntimeError(f"Job queue backend read failed during repair: {exc}") from exc
     if row is None:
         return False
     heartbeat_at = row["heartbeat_at"]

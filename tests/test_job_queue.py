@@ -949,6 +949,37 @@ def test_resolve_and_validate_ip_propagates_dns_resolution_failure(monkeypatch):
         _resolve_and_validate_ip("unresolved.example.test")
 
 
+def test_execute_job_preserves_webhook_dns_failure_cause(tmp_path: Path, monkeypatch):
+    queue = PersistentJobQueue(
+        str(tmp_path / "jobs.sqlite3"),
+        worker_count=0,
+        ttl_seconds=3600,
+    )
+
+    def public_dns(*args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr("socket.getaddrinfo", public_dns)
+    job = queue.submit(
+        lambda: {"ok": True},
+        webhook_url="https://hooks.example.test/notify",
+        start_immediately=False,
+    )
+
+    def fail_dns(hostname):
+        raise socket.gaierror("temporary failure")
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.jobs.sqlite_job_queue._resolve_and_validate_ip",
+        fail_dns,
+    )
+
+    with pytest.raises(RuntimeError, match="Webhook URL DNS resolution failed") as exc_info:
+        queue._execute_job(job.job_id, lambda: {"ok": True})
+
+    assert isinstance(exc_info.value.__cause__, socket.gaierror)
+
+
 def test_api_batch_jobs_submit_uses_async_queue_path(monkeypatch):
     captured = {}
 

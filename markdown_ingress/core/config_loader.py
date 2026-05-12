@@ -106,8 +106,8 @@ class ConfigLoader:
             except json.JSONDecodeError:
                 try:
                     return Config.from_yaml(content)
-                except yaml.YAMLError:
-                    raise ValueError(f"Unable to parse config file: {filepath}")
+                except yaml.YAMLError as exc:
+                    raise ValueError(f"Unable to parse config file: {filepath}") from exc
 
     def _restore_field(
         self,

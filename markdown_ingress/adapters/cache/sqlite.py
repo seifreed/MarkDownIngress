@@ -97,7 +97,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                         f"Absolute db_path '{db_path}' not allowed. "
                         f"Resolved path: '{resolved_path}', Working directory: '{cwd}'. "
                         "Set allow_absolute_paths=True to permit absolute paths."
-                    )
+                    ) from None
                 _logger.warning(
                     "SQLiteCache using absolute path '%s' outside working directory '%s'. "
                     "Ensure this path is intentionally specified and secure.",

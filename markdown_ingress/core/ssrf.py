@@ -303,7 +303,7 @@ def validate_hostname_for_ssrf(
         if re.fullmatch(r"0x[0-9a-fA-F]+|0[0-7]+|\d+", normalized):
             raise ValueError(
                 f"URL hostname looks like a numeric IP literal and is blocked (SSRF protection): {normalized}"
-            )
+            ) from None
         # Catch compressed IPv4 like "127.1" or "10.0.1" that inet_aton accepts
         # but ipaddress.ip_address() rejects (2- or 3-part dotted decimal).
         if "." in normalized and not normalized.endswith("."):
@@ -322,7 +322,7 @@ def validate_hostname_for_ssrf(
                 pass
         if not resolve_dns:
             if normalized.lower() in _BLOCKED_HOSTNAMES:
-                raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
+                raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}") from None
             return normalized
         resolved_ips = validate_hostname_dns_ips_for_ssrf(normalized, allow_local=allow_local)
         # Return the first resolved IP to pin DNS and prevent rebinding

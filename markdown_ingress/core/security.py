@@ -510,7 +510,7 @@ class SecurityAnalyzer:
                 try:
                     compiled.append((re.compile(p.pattern, p.flags), p.weight, p.description))
                 except re.error as e:
-                    raise ValueError(f"Invalid regex pattern '{p.description}': {e}")
+                    raise ValueError(f"Invalid regex pattern '{p.description}': {e}") from e
         else:
             compiled = self._get_compiled_patterns()
 

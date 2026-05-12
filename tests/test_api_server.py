@@ -2977,10 +2977,11 @@ def test_prune_job_queue_history_drops_expired_sqlite_queues(tmp_path, monkeypat
 def test_external_owner_backend_read_failure_transitions_queue_to_backend_error(tmp_path):
     queue = api_server._ExternalOwnerJobQueue(tmp_path / "missing.sqlite3")
 
-    with pytest.raises(RuntimeError, match="backend read failed during repair"):
+    with pytest.raises(RuntimeError, match="backend read failed during repair") as exc_info:
         api_server._external_owner_backend_still_owned(queue)
 
     assert queue.state == "backend_error"
+    assert isinstance(exc_info.value.__cause__, sqlite3.Error)
 
 
 def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_without_pid_metadata(tmp_path):

@@ -25,7 +25,7 @@ def _validate_regex_pattern(pattern: str, description: str) -> None:
     try:
         re.compile(pattern)
     except re.error as e:
-        raise ValueError(f"Custom pattern {description!r} has invalid regex syntax: {e}")
+        raise ValueError(f"Custom pattern {description!r} has invalid regex syntax: {e}") from e
 
     if _detect_redos_pattern(pattern):
         raise ValueError(

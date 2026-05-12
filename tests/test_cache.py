@@ -774,6 +774,15 @@ def test_sqlite_cache_path_traversal_blocked():
         SQLiteCache(db_path="../../etc/malicious.db")
 
 
+def test_sqlite_cache_absolute_path_rejection_suppresses_internal_path_cause(tmp_path):
+    outside_cwd = tmp_path / "outside.sqlite3"
+
+    with pytest.raises(ValueError, match="Absolute db_path") as exc_info:
+        SQLiteCache(db_path=str(outside_cwd), allow_absolute_paths=False)
+
+    assert exc_info.value.__cause__ is None
+
+
 def test_sqlite_cache_corrupt_entry_deleted(tmp_path, caplog):
     """Test that corrupt entries are deleted from database on deserialization failure"""
     import logging

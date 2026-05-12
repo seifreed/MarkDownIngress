@@ -601,13 +601,13 @@ def _get_job_queue():
         queue_to_repair = queue
     try:
         _close_queue_for_repair(queue_to_repair)
-    except (RuntimeError, TypeError):
+    except (RuntimeError, TypeError) as exc:
         # Re-check state under lock after repair failure
         with _JOB_QUEUE_LOCK:
             if getattr(queue_to_repair, "state", None) in _RECOVERABLE_QUEUE_STATES:
                 current = JOB_QUEUE
                 if current is None:
-                    raise RuntimeError("Job queue is unavailable")
+                    raise RuntimeError("Job queue is unavailable") from exc
                 return current
         raise
     # Pass the queue we attempted to repair, rebuild will handle TOCTOU internally

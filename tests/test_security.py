@@ -1,5 +1,7 @@
 """Tests for security analysis"""
 
+import re
+
 import pytest
 
 from markdown_ingress.core.document_builder import (
@@ -150,6 +152,18 @@ def test_security_allows_safe_repeated_groups():
     result = analyzer.analyze("abcabc", hidden_content_detected=False)
 
     assert result.pattern_matches
+
+
+def test_security_invalid_custom_regex_preserves_regex_cause():
+    analyzer = SecurityAnalyzer(strict=True)
+    analyzer.INJECTION_PATTERNS = [
+        InjectionPattern(pattern="(", weight=0.5, description="broken"),
+    ]
+
+    with pytest.raises(ValueError, match="Invalid regex pattern") as exc_info:
+        analyzer.analyze("anything", hidden_content_detected=False)
+
+    assert isinstance(exc_info.value.__cause__, re.error)
 
 
 def test_security_flag_deduplication_preserves_first_seen_order():

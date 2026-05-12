@@ -1,5 +1,7 @@
 """Tests for policy engine"""
 
+import re
+
 import pytest
 
 from markdown_ingress.core.policy import Policy, PolicyEngine
@@ -100,6 +102,15 @@ def test_policy_allows_safe_repeated_custom_group():
     policy = Policy(custom_patterns=[custom_pattern])
 
     assert policy.custom_patterns[0].pattern == r"(abc)+"
+
+
+def test_policy_invalid_custom_pattern_preserves_regex_cause():
+    custom_pattern = InjectionPattern(pattern="(", weight=0.4, description="broken")
+
+    with pytest.raises(ValueError, match="invalid regex syntax") as exc_info:
+        Policy(custom_patterns=[custom_pattern])
+
+    assert isinstance(exc_info.value.__cause__, re.error)
 
 
 def test_policy_to_dict():
