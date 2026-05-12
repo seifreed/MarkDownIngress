@@ -643,6 +643,34 @@ batch_max_concurrent: 10
             for key in ["MDI_CACHE_TTL", "MDI_BATCH_TIMEOUT", "MDI_BATCH_MAX_CONCURRENT"]:
                 os.environ.pop(key, None)
 
+    @pytest.mark.parametrize(
+        ("env_var", "attr_name", "bad_value", "expected"),
+        [
+            ("MDI_TIMEOUT", "timeout", "nan", 44.0),
+            ("MDI_BATCH_TIMEOUT", "batch_timeout", "inf", 22.0),
+            ("MDI_DOMAIN_REQUEST_INTERVAL", "domain_request_interval", "nan", 0.75),
+            ("MDI_CIRCUIT_BREAKER_OPEN_SECONDS", "circuit_breaker_open_seconds", "inf", 9.0),
+        ],
+    )
+    def test_env_non_finite_float_values_keep_previous_value(
+        self, env_var, attr_name, bad_value, expected
+    ):
+        os.environ[env_var] = bad_value
+
+        try:
+            config = ConfigLoader()._apply_env_overrides(
+                Config(
+                    timeout=44.0,
+                    batch_timeout=22.0,
+                    domain_request_interval=0.75,
+                    circuit_breaker_open_seconds=9.0,
+                )
+            )
+
+            assert getattr(config, attr_name) == expected
+        finally:
+            os.environ.pop(env_var, None)
+
     def test_env_invalid_override_preserves_explicit_field_precedence(self):
         os.environ["MDI_CHUNK_SIZE"] = "999999"
 

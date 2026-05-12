@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from collections.abc import Callable
 from dataclasses import fields
@@ -355,6 +356,13 @@ class ConfigLoader:
                 config.timeout,
                 previous_values["timeout"],
             )
+        elif not math.isfinite(config.timeout):
+            restore(
+                "timeout",
+                "Invalid timeout '%s' from environment, must be finite. Keeping previous value %r.",
+                config.timeout,
+                previous_values["timeout"],
+            )
         if config.chunk_size < 100 or config.chunk_size > 50000:
             restore(
                 "chunk_size",
@@ -384,6 +392,13 @@ class ConfigLoader:
                 config.domain_request_interval,
                 previous_values["domain_request_interval"],
             )
+        elif not math.isfinite(config.domain_request_interval):
+            restore(
+                "domain_request_interval",
+                "Invalid domain_request_interval '%s' from environment, must be finite. Keeping previous value %r.",
+                config.domain_request_interval,
+                previous_values["domain_request_interval"],
+            )
         if config.circuit_breaker_threshold < 1:
             restore(
                 "circuit_breaker_threshold",
@@ -395,6 +410,13 @@ class ConfigLoader:
             restore(
                 "circuit_breaker_open_seconds",
                 "Invalid circuit_breaker_open_seconds '%s' from environment, must be > 0.0. Keeping previous value %r.",
+                config.circuit_breaker_open_seconds,
+                previous_values["circuit_breaker_open_seconds"],
+            )
+        elif not math.isfinite(config.circuit_breaker_open_seconds):
+            restore(
+                "circuit_breaker_open_seconds",
+                "Invalid circuit_breaker_open_seconds '%s' from environment, must be finite. Keeping previous value %r.",
                 config.circuit_breaker_open_seconds,
                 previous_values["circuit_breaker_open_seconds"],
             )
@@ -416,6 +438,13 @@ class ConfigLoader:
             restore(
                 "batch_timeout",
                 "Invalid batch_timeout '%s' from environment, must be > 0.0. Keeping previous value %r.",
+                config.batch_timeout,
+                previous_values["batch_timeout"],
+            )
+        elif not math.isfinite(config.batch_timeout):
+            restore(
+                "batch_timeout",
+                "Invalid batch_timeout '%s' from environment, must be finite. Keeping previous value %r.",
                 config.batch_timeout,
                 previous_values["batch_timeout"],
             )
