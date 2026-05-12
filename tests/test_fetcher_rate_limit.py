@@ -662,6 +662,50 @@ def test_fetch_sync_redirect_limit_is_enforced(monkeypatch):
         fetcher.fetch_sync("https://start.test/page")
 
 
+def test_fetch_sync_redirect_body_respects_max_response_size():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher, ResponseSizeLimitError
+
+    large_body = b"x" * 64
+
+    class Handler(BaseHTTPRequestHandler):
+        final_hits = 0
+
+        def do_GET(self):
+            if self.path == "/start":
+                self.send_response(302)
+                self.send_header("Location", "/final")
+                self.send_header("Content-Length", str(len(large_body)))
+                self.end_headers()
+                self.wfile.write(large_body)
+                return
+            Handler.final_hits += 1
+            body = b"<html><body><article><p>ok</p></article></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    server, url = _start_server(Handler)
+    try:
+        fetcher = Fetcher(
+            timeout=2.0,
+            domain_request_interval=0.0,
+            max_response_size=32,
+            allow_local_urls=True,
+        )
+        with pytest.raises(ResponseSizeLimitError, match="exceeds max_response_size"):
+            fetcher.fetch_sync(f"{url}/start")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert Handler.final_hits == 0
+
+
 def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
@@ -732,6 +776,50 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
     assert calls[1][0] == "https://203.0.113.10:9443/final"
     assert calls[1][1]["headers"]["Host"] == "target.test:9443"
     assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+
+
+@pytest.mark.asyncio
+async def test_fetch_async_retryable_body_respects_max_response_size():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher, ResponseSizeLimitError
+
+    large_body = b"x" * 64
+
+    class Handler(BaseHTTPRequestHandler):
+        calls = 0
+
+        def do_GET(self):
+            Handler.calls += 1
+            if Handler.calls == 1:
+                self.send_response(429)
+                self.send_header("Retry-After", "0")
+                self.end_headers()
+                self.wfile.write(large_body)
+                return
+            body = b"<html><body><article><p>ok</p></article></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    server, url = _start_server(Handler)
+    try:
+        async with Fetcher(
+            timeout=2.0,
+            domain_request_interval=0.0,
+            max_response_size=32,
+            allow_local_urls=True,
+        ) as fetcher:
+            with pytest.raises(ResponseSizeLimitError, match="exceeds max_response_size"):
+                await fetcher.fetch(url)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert Handler.calls == 1
 
 
 def test_fetch_async_invalid_redirect_location_is_not_retried_or_circuited():

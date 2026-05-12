@@ -716,6 +716,22 @@ class Fetcher(IFetcher):
             chunks.append(chunk)
         return b"".join(chunks)
 
+    async def _drain_async_response_for_reuse(
+        self, response: httpx.Response, log_message: str
+    ) -> None:
+        total_size = 0
+        try:
+            async for chunk in response.aiter_bytes():
+                total_size += len(chunk)
+                if self.max_response_size is not None and total_size > self.max_response_size:
+                    raise ResponseSizeLimitError(
+                        f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                    )
+        except ResponseSizeLimitError:
+            raise
+        except Exception:
+            logger.debug(log_message, exc_info=True)
+
     def _read_sync_response_content(self, response: httpx.Response) -> bytes:
         chunks: list[bytes] = []
         total_size = 0
@@ -727,6 +743,20 @@ class Fetcher(IFetcher):
                 )
             chunks.append(chunk)
         return b"".join(chunks)
+
+    def _drain_sync_response_for_reuse(self, response: httpx.Response, log_message: str) -> None:
+        total_size = 0
+        try:
+            for chunk in response.iter_bytes():
+                total_size += len(chunk)
+                if self.max_response_size is not None and total_size > self.max_response_size:
+                    raise ResponseSizeLimitError(
+                        f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                    )
+        except ResponseSizeLimitError:
+            raise
+        except Exception:
+            logger.debug(log_message, exc_info=True)
 
     def _make_fetch_result(
         self,
@@ -825,10 +855,9 @@ class Fetcher(IFetcher):
                         )
                         if redirect_target is None:
                             raise RuntimeError("Redirect response missing Location header")
-                        try:
-                            await response.aread()
-                        except Exception:
-                            logger.debug("Failed to read redirect response body", exc_info=True)
+                        await self._drain_async_response_for_reuse(
+                            response, "Failed to read redirect response body"
+                        )
                         url, logical_url, host_header, sni_hostname, host = redirect_target
                         redirect_count += 1
                         continue
@@ -862,10 +891,9 @@ class Fetcher(IFetcher):
                         else:
                             self._defer_host(response_host, retry_delay)
                             self._record_failure(response_host)
-                        try:
-                            await response.aread()
-                        except Exception:
-                            logger.debug("Failed to read response body during retry", exc_info=True)
+                        await self._drain_async_response_for_reuse(
+                            response, "Failed to read response body during retry"
+                        )
                         await asyncio.sleep(retry_delay)
                         attempt += 1
                         continue
@@ -984,12 +1012,9 @@ class Fetcher(IFetcher):
                                         raise RuntimeError(
                                             "Redirect response missing Location header"
                                         )
-                                    try:
-                                        await response.aread()
-                                    except Exception:
-                                        logger.debug(
-                                            "Failed to read redirect response body", exc_info=True
-                                        )
+                                    await self._drain_async_response_for_reuse(
+                                        response, "Failed to read redirect response body"
+                                    )
                                     url, logical_url, host_header, sni_hostname, host = (
                                         redirect_target
                                     )
@@ -1156,10 +1181,9 @@ class Fetcher(IFetcher):
                         )
                         if redirect_target is None:
                             raise RuntimeError("Redirect response missing Location header")
-                        try:
-                            response.read()
-                        except Exception:
-                            logger.debug("Failed to read redirect response body", exc_info=True)
+                        self._drain_sync_response_for_reuse(
+                            response, "Failed to read redirect response body"
+                        )
                         url, logical_url, host_header, sni_hostname, host = redirect_target
                         redirect_count += 1
                         continue
@@ -1193,10 +1217,9 @@ class Fetcher(IFetcher):
                         else:
                             self._defer_host(response_host, retry_delay)
                             self._record_failure(response_host)
-                        try:
-                            response.read()
-                        except Exception:
-                            logger.debug("Failed to read response body during retry", exc_info=True)
+                        self._drain_sync_response_for_reuse(
+                            response, "Failed to read response body during retry"
+                        )
                         time.sleep(retry_delay)
                         attempt += 1
                         continue
@@ -1315,12 +1338,9 @@ class Fetcher(IFetcher):
                                         raise RuntimeError(
                                             "Redirect response missing Location header"
                                         )
-                                    try:
-                                        response.read()
-                                    except Exception:
-                                        logger.debug(
-                                            "Failed to read redirect response body", exc_info=True
-                                        )
+                                    self._drain_sync_response_for_reuse(
+                                        response, "Failed to read redirect response body"
+                                    )
                                     url, logical_url, host_header, sni_hostname, host = (
                                         redirect_target
                                     )
