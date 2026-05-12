@@ -898,6 +898,47 @@ def test_sqlite_cache_non_object_json_entry_deleted(tmp_path, caplog):
     cache.close()
 
 
+def test_sqlite_cache_get_deletes_entry_with_corrupt_expires_at(sample_document, tmp_path, caplog):
+    import logging
+
+    db_path = tmp_path / "test.db"
+    cache = SQLiteCache(db_path=str(db_path), default_ttl=3600)
+
+    with cache._db_lock:
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            ("bad_expiry", cache._serialize_document(sample_document), 0.0, "not-a-number"),
+        )
+        cache.conn.commit()
+
+    with caplog.at_level(logging.WARNING):
+        assert cache.get("bad_expiry") is None
+
+    assert "corrupt expires_at" in caplog.text
+    cursor = cache.conn.execute("SELECT COUNT(*) FROM cache WHERE key = 'bad_expiry'")
+    assert cursor.fetchone()[0] == 0
+
+    cache.close()
+
+
+def test_sqlite_cache_exists_deletes_entry_with_corrupt_expires_at(sample_document, tmp_path):
+    db_path = tmp_path / "test.db"
+    cache = SQLiteCache(db_path=str(db_path), default_ttl=3600)
+
+    with cache._db_lock:
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            ("bad_expiry", cache._serialize_document(sample_document), 0.0, "not-a-number"),
+        )
+        cache.conn.commit()
+
+    assert cache.exists("bad_expiry") is False
+    cursor = cache.conn.execute("SELECT COUNT(*) FROM cache WHERE key = 'bad_expiry'")
+    assert cursor.fetchone()[0] == 0
+
+    cache.close()
+
+
 def test_sqlite_cache_accepts_integer_injection_score_from_legacy_json(tmp_path):
     """Legacy JSON may contain 0 instead of 0.0 for numeric score fields."""
     db_path = tmp_path / "test.db"

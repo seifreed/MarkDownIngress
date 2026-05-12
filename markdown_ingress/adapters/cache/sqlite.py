@@ -4,6 +4,7 @@ SQLite-backed persistent cache implementation.
 
 import json
 import logging
+import math
 import threading
 import time
 from pathlib import Path
@@ -187,6 +188,15 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_expires ON cache(expires_at)")
         self.conn.commit()
 
+    @staticmethod
+    def _coerce_expires_at(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        expires_at = float(value)
+        if not math.isfinite(expires_at):
+            return None
+        return expires_at
+
     def get(self, key: str) -> SafeDocument | None:
         """Get document from cache.
 
@@ -207,9 +217,18 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                 return None
 
             document_json, expires_at = row
+            expires_at_value = self._coerce_expires_at(expires_at)
+            if expires_at_value is None:
+                _logger.warning(
+                    "Cache entry for key '%s' has corrupt expires_at value - deleting entry.",
+                    key[:16] if len(key) > 16 else key,
+                )
+                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                self.conn.commit()
+                return None
 
             # Check expiration — delete within the same lock to avoid TOCTOU
-            if expires_at > 0 and time.time() >= expires_at:
+            if expires_at_value > 0 and time.time() >= expires_at_value:
                 self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
                 self.conn.commit()
                 return None
@@ -318,7 +337,11 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             row = cursor.fetchone()
             if row is None:
                 return False
-            expires_at = row[0]
+            expires_at = self._coerce_expires_at(row[0])
+            if expires_at is None:
+                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                self.conn.commit()
+                return False
             if expires_at > 0 and now >= expires_at:
                 self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
                 self.conn.commit()
