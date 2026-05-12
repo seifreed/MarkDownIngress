@@ -71,3 +71,13 @@ def test_case_insensitive_headers_reject_non_string_items():
 
     with pytest.raises(TypeError, match="header value must be a string"):
         headers["X-Test"] = 1  # type: ignore[assignment]
+
+
+def test_case_insensitive_headers_setdefault_rejects_non_string_items():
+    headers = CaseInsensitiveHeaders()
+
+    with pytest.raises(TypeError, match="header key must be a string"):
+        headers.setdefault(None, "value")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="header value must be a string"):
+        headers.setdefault("X-Test", 1)  # type: ignore[arg-type]

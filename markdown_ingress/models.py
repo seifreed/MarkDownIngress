@@ -163,10 +163,9 @@ class CaseInsensitiveHeaders(dict[str, str]):
         return super().pop(normalized, default)
 
     def setdefault(self, key: str, default: str = "") -> str:
-        normalized = self._normalize_key(key)
-        if normalized in self:
-            return super().__getitem__(normalized)
-        super().__setitem__(normalized, default)
+        if key in self:
+            return self[key]
+        self[key] = default
         return default
 
     def copy(self) -> "CaseInsensitiveHeaders":
