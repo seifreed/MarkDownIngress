@@ -99,6 +99,27 @@ def test_html_structure_extractor_preserves_code_indentation_in_text():
     assert "    x = 1" in blocks[0].markdown
 
 
+def test_html_structure_extractor_detects_common_code_language_prefixes():
+    html = """
+    <html><body><article>
+      <pre class="language-rust"><code>fn main() {}</code></pre>
+      <pre><code class="lang-python">print("hi")</code></pre>
+      <pre><code class="highlight-javascript">const x = 1;</code></pre>
+    </article></body></html>
+    """
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert [block.metadata["language"] for block in blocks] == [
+        "rust",
+        "python",
+        "javascript",
+    ]
+    assert blocks[0].markdown.startswith("```rust")
+    assert blocks[1].markdown.startswith("```python")
+    assert blocks[2].markdown.startswith("```javascript")
+
+
 def test_html_structure_extractor_preserves_nested_unordered_list_hierarchy():
     html = """
     <html><body><article>

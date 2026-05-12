@@ -98,6 +98,7 @@ class HTMLStructureExtractor:
         }
     )
     CONTAINER_TAGS = frozenset({"pre", "table", "ul", "ol", "blockquote", "li", "td", "th"})
+    CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
 
     def __init__(self, hasher: Hasher | None = None):
         self.hasher = hasher or Hasher()
@@ -215,19 +216,20 @@ class HTMLStructureExtractor:
         return " ".join(parts), nested_lists
 
     def _detect_code_language(self, element: Tag) -> str | None:
-        code = element.find("code")
-        if code is None:
-            return None
-        raw_classes = code.get("class")
-        if raw_classes is None:
-            return None
-        if isinstance(raw_classes, str):
-            classes: list[str] = [raw_classes]
-        else:
-            classes = list(raw_classes)
-        for value in classes:
-            if value.startswith("language-"):
-                return value.removeprefix("language-")
+        raw_classes: list[str] = []
+        for candidate in (element, element.find("code")):
+            if candidate is None:
+                continue
+            classes = candidate.get("class")
+            if isinstance(classes, str):
+                raw_classes.append(classes)
+            else:
+                raw_classes.extend(list(classes or []))
+
+        for value in raw_classes:
+            for prefix in self.CODE_LANGUAGE_CLASS_PREFIXES:
+                if value.startswith(prefix):
+                    return value.removeprefix(prefix)
         return None
 
     def _build_metadata(self, element: Tag, block_type: str) -> dict:
