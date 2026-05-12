@@ -393,12 +393,12 @@ def _load_availability_pool() -> tuple[dict[str, str], Counter[str]]:
     if not path.exists():
         return statuses, Counter()
     with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
+        for raw_line in fh:
+            stripped_line = raw_line.strip()
+            if not stripped_line:
                 continue
             try:
-                payload = json.loads(line)
+                payload = json.loads(stripped_line)
             except json.JSONDecodeError:
                 continue
             url = payload.get("url")
@@ -661,12 +661,12 @@ def run_campaign(
         if not path.exists():
             return indexes
         with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
+            for raw_line in fh:
+                stripped_line = raw_line.strip()
+                if not stripped_line:
                     continue
                 try:
-                    payload = json.loads(line)
+                    payload = json.loads(stripped_line)
                 except json.JSONDecodeError:
                     continue
                 index = payload.get("index")
