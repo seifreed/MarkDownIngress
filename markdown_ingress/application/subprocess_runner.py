@@ -100,17 +100,30 @@ async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
         except queue_module.Empty:
             return None
 
-    def handle_payload(payload: tuple[str, Any]) -> SafeDocument:
+    def handle_payload(payload: object) -> SafeDocument:
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            raise RuntimeError(f"Batch worker returned a malformed payload for {url}")
         kind, value = payload
         process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
         if kind == "result":
-            return cast(SafeDocument, value)
+            if not isinstance(value, SafeDocument):
+                raise RuntimeError(
+                    f"Batch worker returned a non-document result for {url}: "
+                    f"{type(value).__name__}"
+                )
+            return value
         if kind == "exception":
             if isinstance(value, BaseException):
                 raise value
             raise RuntimeError(str(value))
         if kind == "exception_payload":
-            raise RuntimeError(f"{value['type']}: {value['message']}")
+            if not isinstance(value, dict):
+                raise RuntimeError(f"Batch worker returned a malformed exception payload for {url}")
+            error_type = value.get("type")
+            message = value.get("message")
+            if not isinstance(error_type, str) or not isinstance(message, str):
+                raise RuntimeError(f"Batch worker returned a malformed exception payload for {url}")
+            raise RuntimeError(f"{error_type}: {message}")
         raise RuntimeError(f"Batch worker returned an unknown payload for {url}")
 
     while True:

@@ -804,6 +804,55 @@ async def test_poll_subprocess_queue_reads_payload_after_process_exit_even_if_em
 
 
 @pytest.mark.asyncio
+async def test_poll_subprocess_queue_rejects_non_document_result():
+    class FinishedProcess:
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            return None
+
+    class PayloadQueue:
+        def get_nowait(self):
+            return ("result", {"not": "a document"})
+
+        def get(self, timeout=None):
+            return self.get_nowait()
+
+    with pytest.raises(RuntimeError, match="non-document result.*dict"):
+        await _poll_subprocess_queue(FinishedProcess(), PayloadQueue(), "https://example.com")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-a-tuple",
+        ("exception_payload", "not-a-dict"),
+        ("exception_payload", {"type": "RuntimeError"}),
+        ("exception_payload", {"message": "boom"}),
+    ],
+)
+async def test_poll_subprocess_queue_rejects_malformed_payloads(payload):
+    class FinishedProcess:
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            return None
+
+    class PayloadQueue:
+        def get_nowait(self):
+            return payload
+
+        def get(self, timeout=None):
+            return self.get_nowait()
+
+    with pytest.raises(RuntimeError, match="malformed"):
+        await _poll_subprocess_queue(FinishedProcess(), PayloadQueue(), "https://example.com")
+
+
+@pytest.mark.asyncio
 async def test_batch_preserves_duplicate_url_errors_by_index(monkeypatch):
     urls = ["https://same.test", "https://same.test"]
     processor = BatchProcessor(mode="fast", timeout=5.0)
