@@ -31,6 +31,73 @@ def test_persistent_job_queue_executes_immediately_and_persists_result(tmp_path:
     assert stored.result == {"ok": True, "count": 1}
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("worker_count", cast(Any, True), "worker_count must be an int"),
+        ("worker_count", cast(Any, 1.5), "worker_count must be an int"),
+        ("worker_count", cast(Any, "1"), "worker_count must be an int"),
+        ("ttl_seconds", cast(Any, True), "ttl_seconds must be an int"),
+        ("ttl_seconds", cast(Any, 60.5), "ttl_seconds must be an int"),
+        ("ttl_seconds", cast(Any, "60"), "ttl_seconds must be an int"),
+        ("max_queued_jobs", cast(Any, True), "max_queued_jobs must be an int"),
+        ("max_queued_jobs", cast(Any, 1.5), "max_queued_jobs must be an int"),
+        ("max_queued_jobs", cast(Any, "1"), "max_queued_jobs must be an int"),
+    ],
+)
+def test_persistent_job_queue_rejects_non_integer_limits(
+    tmp_path: Path, field: str, value: Any, match: str
+):
+    kwargs: dict[str, Any] = {
+        "worker_count": 1,
+        "ttl_seconds": 3600,
+        "max_queued_jobs": 100,
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=match):
+        PersistentJobQueue(str(tmp_path / f"{field}.sqlite3"), **kwargs)
+
+
+def test_persistent_job_queue_preserves_minimum_limit_clamps(tmp_path: Path):
+    queue = PersistentJobQueue(
+        str(tmp_path / "jobs.sqlite3"),
+        worker_count=0,
+        ttl_seconds=1,
+        max_queued_jobs=0,
+    )
+    try:
+        assert queue.worker_count == 1
+        assert queue.ttl_seconds == 60
+        assert queue.max_queued_jobs == 1
+    finally:
+        queue.close()
+
+
+@pytest.mark.parametrize(
+    ("job_timeout_seconds", "match"),
+    [
+        (cast(Any, True), "job_timeout_seconds must be a finite number"),
+        (cast(Any, "1"), "job_timeout_seconds must be a finite number"),
+        (float("nan"), "job_timeout_seconds must be a finite number"),
+        (float("inf"), "job_timeout_seconds must be a finite number"),
+        (float("-inf"), "job_timeout_seconds must be a finite number"),
+        (0.0, "job_timeout_seconds must be > 0"),
+        (-1.0, "job_timeout_seconds must be > 0"),
+    ],
+)
+def test_persistent_job_queue_rejects_invalid_job_timeout(
+    tmp_path: Path, job_timeout_seconds: Any, match: str
+):
+    with pytest.raises(ValueError, match=match):
+        PersistentJobQueue(
+            str(tmp_path / "jobs.sqlite3"),
+            worker_count=1,
+            ttl_seconds=3600,
+            job_timeout_seconds=job_timeout_seconds,
+        )
+
+
 def test_persistent_job_queue_legacy_non_dict_result_returns_none(tmp_path: Path, caplog):
     queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
     try:
@@ -831,6 +898,29 @@ def test_execute_with_timeout_returns_near_deadline(tmp_path: Path):
     after = len(threading.enumerate())
 
     assert after <= before
+
+
+@pytest.mark.parametrize(
+    ("timeout_seconds", "match"),
+    [
+        (cast(Any, True), "timeout_seconds must be a finite number"),
+        (cast(Any, "1"), "timeout_seconds must be a finite number"),
+        (float("nan"), "timeout_seconds must be a finite number"),
+        (float("inf"), "timeout_seconds must be a finite number"),
+        (float("-inf"), "timeout_seconds must be a finite number"),
+        (0.0, "timeout_seconds must be > 0"),
+        (-1.0, "timeout_seconds must be > 0"),
+    ],
+)
+def test_execute_with_timeout_rejects_invalid_timeout(
+    tmp_path: Path, timeout_seconds: Any, match: str
+):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+    try:
+        with pytest.raises(ValueError, match=match):
+            queue._execute_with_timeout(lambda: {"ok": True}, timeout_seconds)
+    finally:
+        queue.close()
 
 
 def test_validate_webhook_url_resolves_dns_on_submit(tmp_path: Path, monkeypatch):

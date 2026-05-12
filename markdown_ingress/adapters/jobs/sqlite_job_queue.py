@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import math
 import os
 import queue
 import socket
@@ -37,6 +38,29 @@ SQLiteError = sqlite3.Error
 
 _STOP_WORKER = object()
 LEGACY_UNKNOWN_TTL_SECONDS = 3600
+
+
+def _validate_int_config(field_name: str, value: object, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
+    return max(minimum, value)
+
+
+def _validate_positive_finite_float(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    if numeric <= 0:
+        raise ValueError(f"{field_name} must be > 0")
+    return numeric
+
+
+def _validate_optional_positive_finite_float(field_name: str, value: object | None) -> float | None:
+    if value is None:
+        return None
+    return _validate_positive_finite_float(field_name, value)
 
 
 def _allowed_db_roots() -> list[Path]:
@@ -279,9 +303,9 @@ class PersistentJobQueue:
     ):
         self.db_path = _validate_job_db_path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.worker_count = max(1, worker_count)
-        self.ttl_seconds = max(60, ttl_seconds)
-        self.max_queued_jobs = max(1, max_queued_jobs)
+        self.worker_count = _validate_int_config("worker_count", worker_count, minimum=1)
+        self.ttl_seconds = _validate_int_config("ttl_seconds", ttl_seconds, minimum=60)
+        self.max_queued_jobs = _validate_int_config("max_queued_jobs", max_queued_jobs, minimum=1)
         self.instance_id = str(uuid.uuid4())
         self.owner_pid = os.getpid()
         self.owner_start_time = self._get_process_start_time()
@@ -300,7 +324,9 @@ class PersistentJobQueue:
         # defense-in-depth SSRF check respects the queue's policy.
         if hasattr(self.notifier, "allow_local_webhooks"):
             self.notifier.allow_local_webhooks = allow_local_webhooks
-        self.job_timeout_seconds = job_timeout_seconds
+        self.job_timeout_seconds = _validate_optional_positive_finite_float(
+            "job_timeout_seconds", job_timeout_seconds
+        )
         self._queue: queue.Queue[tuple[str, Callable[[], dict[str, Any]]] | object] = queue.Queue()
         self._lock = threading.RLock()
         self._state_changed = threading.Condition(self._lock)
@@ -1202,8 +1228,7 @@ class PersistentJobQueue:
             RuntimeError: If task times out or returns None
             Exception: Any exception raised by the task
         """
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be > 0")
+        timeout_seconds = _validate_positive_finite_float("timeout_seconds", timeout_seconds)
         if os.name != "posix":
             return self._execute_with_timeout_thread_fallback(task, timeout_seconds)
         return self._execute_with_timeout_process(task, timeout_seconds)
