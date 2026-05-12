@@ -178,6 +178,41 @@ class TestSecurityReport:
         with pytest.raises(ValueError, match=message):
             SecurityReport(**cast(Any, payload))
 
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"risk_level": cast(Any, 1)}, "risk_level must be a string"),
+            ({"pattern_matches": cast(Any, "match")}, "pattern_matches must be a list of dicts"),
+            ({"pattern_matches": cast(Any, [1])}, "pattern_matches\\[0\\] must be a dict"),
+            ({"flags": cast(Any, "flag")}, "flags must be a list of strings"),
+            ({"flags": cast(Any, [1])}, "flags\\[0\\] must be a string"),
+            (
+                {"hidden_content_detected": cast(Any, "yes")},
+                "hidden_content_detected must be a bool",
+            ),
+            ({"url": cast(Any, 1)}, "url must be a string"),
+            ({"title": cast(Any, 1)}, "title must be a string"),
+            ({"timestamp": cast(Any, 1)}, "timestamp must be a string"),
+            ({"version": cast(Any, 1)}, "version must be a string"),
+            ({"content_hash": cast(Any, 1)}, "content_hash must be a string"),
+            ({"structural_hash": cast(Any, 1)}, "structural_hash must be a string"),
+            ({"removed_elements": cast(Any, [])}, "removed_elements must be a dict"),
+            ({"language": cast(Any, 1)}, "language must be a string"),
+            ({"explanation": cast(Any, [])}, "explanation must be a dict"),
+            ({"observability": cast(Any, [])}, "observability must be a dict"),
+        ],
+    )
+    def test_security_report_rejects_invalid_structure(
+        self,
+        kwargs: dict[str, Any],
+        message: str,
+    ):
+        payload = {"injection_score": 0.0, "risk_level": "LOW"}
+        payload.update(kwargs)
+
+        with pytest.raises(ValueError, match=message):
+            SecurityReport(**cast(Any, payload))
+
     def test_security_report_save_and_load(self):
         """Save and load SecurityReport to/from file"""
         with tempfile.TemporaryDirectory() as tmpdir:

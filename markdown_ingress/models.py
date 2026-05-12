@@ -25,6 +25,60 @@ def _ensure_non_negative_int_metric(field_name: str, value: object) -> int:
     return metric
 
 
+def _ensure_bool(field_name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+    return value
+
+
+def _ensure_str(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _ensure_optional_str(field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _ensure_str(field_name, value)
+
+
+def _ensure_dict(field_name: str, value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a dict, got {type(value).__name__}")
+    return value
+
+
+def _ensure_optional_dict(field_name: str, value: object | None) -> dict | None:
+    if value is None:
+        return None
+    return _ensure_dict(field_name, value)
+
+
+def _ensure_str_list(field_name: str, value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
+    return value
+
+
+def _ensure_dict_list(field_name: str, value: object) -> list[dict]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of dicts, got {type(value).__name__}")
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValueError(f"{field_name}[{index}] must be a dict, got {type(item).__name__}")
+    return value
+
+
+def _ensure_optional_dict_list(field_name: str, value: object | None) -> list[dict] | None:
+    if value is None:
+        return None
+    return _ensure_dict_list(field_name, value)
+
+
 def _ensure_finite_float_metric(field_name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
@@ -136,8 +190,28 @@ class SafeDocument:
 
     def __post_init__(self):
         """Validate field constraints."""
+        self.markdown = _ensure_str("markdown", self.markdown)
+        self.metadata = _ensure_dict("metadata", self.metadata)
+        self.content_hash = _ensure_str("content_hash", self.content_hash)
         self.injection_score = _ensure_score("injection_score", self.injection_score)
         self.token_estimate = _ensure_non_negative_int_metric("token_estimate", self.token_estimate)
+        self.flags = _ensure_str_list("flags", self.flags)
+        self.removed_elements = _ensure_dict("removed_elements", self.removed_elements)
+        self.screenshot_path = _ensure_optional_str("screenshot_path", self.screenshot_path)
+        self.enriched_metadata = _ensure_optional_dict("enriched_metadata", self.enriched_metadata)
+        self.links = _ensure_optional_dict("links", self.links)
+        self.nova_score = (
+            None if self.nova_score is None else _ensure_score("nova_score", self.nova_score)
+        )
+        self.nova_details = _ensure_optional_dict("nova_details", self.nova_details)
+        self.structured_blocks = _ensure_optional_dict_list(
+            "structured_blocks", self.structured_blocks
+        )
+        self.chunks = _ensure_optional_dict_list("chunks", self.chunks)
+        self.security_explanation = _ensure_optional_dict(
+            "security_explanation", self.security_explanation
+        )
+        self.observability = _ensure_optional_dict("observability", self.observability)
 
 
 @dataclass
@@ -260,6 +334,22 @@ class SecurityReport:
 
     def __post_init__(self) -> None:
         """Validate report metrics after construction or JSON loading."""
+        self.risk_level = _ensure_str("risk_level", self.risk_level)
+        self.pattern_matches = _ensure_dict_list("pattern_matches", self.pattern_matches)
+        self.flags = _ensure_str_list("flags", self.flags)
+        self.hidden_content_detected = _ensure_bool(
+            "hidden_content_detected", self.hidden_content_detected
+        )
+        self.url = _ensure_str("url", self.url)
+        self.title = _ensure_str("title", self.title)
+        self.timestamp = _ensure_str("timestamp", self.timestamp)
+        self.version = _ensure_str("version", self.version)
+        self.content_hash = _ensure_str("content_hash", self.content_hash)
+        self.structural_hash = _ensure_str("structural_hash", self.structural_hash)
+        self.removed_elements = _ensure_dict("removed_elements", self.removed_elements)
+        self.language = _ensure_optional_str("language", self.language)
+        self.explanation = _ensure_dict("explanation", self.explanation)
+        self.observability = _ensure_dict("observability", self.observability)
         self.injection_score = _ensure_score("injection_score", self.injection_score)
         self.hidden_elements_count = _ensure_non_negative_int_metric(
             "hidden_elements_count", self.hidden_elements_count

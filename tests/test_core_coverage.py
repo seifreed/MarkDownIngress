@@ -73,6 +73,45 @@ def test_safe_document_rejects_invalid_metric_types(kwargs: dict[str, Any], mess
         SafeDocument(**cast(Any, payload))
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"markdown": cast(Any, 1)}, "markdown must be a string"),
+        ({"metadata": cast(Any, [])}, "metadata must be a dict"),
+        ({"content_hash": cast(Any, 1)}, "content_hash must be a string"),
+        ({"flags": cast(Any, "flag")}, "flags must be a list of strings"),
+        ({"flags": cast(Any, [1])}, "flags\\[0\\] must be a string"),
+        ({"removed_elements": cast(Any, [])}, "removed_elements must be a dict"),
+        ({"screenshot_path": cast(Any, 1)}, "screenshot_path must be a string"),
+        ({"enriched_metadata": cast(Any, [])}, "enriched_metadata must be a dict"),
+        ({"links": cast(Any, [])}, "links must be a dict"),
+        ({"nova_score": float("nan")}, "nova_score must be a finite number"),
+        ({"nova_score": 1.5}, "nova_score must be between 0.0 and 1.0"),
+        ({"nova_details": cast(Any, [])}, "nova_details must be a dict"),
+        ({"structured_blocks": cast(Any, ["bad"])}, "structured_blocks\\[0\\] must be a dict"),
+        ({"chunks": cast(Any, ["bad"])}, "chunks\\[0\\] must be a dict"),
+        ({"security_explanation": cast(Any, [])}, "security_explanation must be a dict"),
+        ({"observability": cast(Any, [])}, "observability must be a dict"),
+    ],
+)
+def test_safe_document_rejects_invalid_structure(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import SafeDocument
+
+    payload = dict(
+        markdown="",
+        metadata={},
+        token_estimate=0,
+        content_hash="",
+        injection_score=0.0,
+        flags=[],
+        removed_elements={},
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        SafeDocument(**cast(Any, payload))
+
+
 # ---------------------------------------------------------------------------
 # scoring.py
 # ---------------------------------------------------------------------------
