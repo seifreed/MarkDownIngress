@@ -342,6 +342,22 @@ cache_enabled: true
                 "auto_render_threshold must be an int",
             ),
             (
+                lambda: IngestConfig(custom_patterns=cast(Any, "abc")),
+                "custom_patterns must be a list of strings",
+            ),
+            (
+                lambda: IngestConfig(plugin_dirs=cast(Any, "plugins")),
+                "plugin_dirs must be a list of strings",
+            ),
+            (
+                lambda: IngestConfig(domain_policies=cast(Any, {"domain": "example.com"})),
+                "domain_policies must be a list",
+            ),
+            (
+                lambda: IngestConfig(custom_patterns=cast(Any, ["("])),
+                "Invalid regex pattern",
+            ),
+            (
                 lambda: DomainPolicy(domain="example.com", timeout=cast(Any, "abc")),
                 "DomainPolicy.timeout must be a finite number",
             ),
@@ -374,6 +390,13 @@ cache_enabled: true
     ):
         with pytest.raises(ValueError, match=message):
             factory()
+
+    def test_ingest_config_normalizes_domain_policy_mappings(self):
+        config = IngestConfig(domain_policies=[cast(Any, {"domain": "example.com"})])
+
+        assert len(config.domain_policies) == 1
+        assert isinstance(config.domain_policies[0], DomainPolicy)
+        assert config.domain_policies[0].matches("https://example.com/page") is True
 
 
 class TestConfigLoader:

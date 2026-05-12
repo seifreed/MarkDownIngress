@@ -9,6 +9,8 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import re
+from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Any, Literal
@@ -149,6 +151,27 @@ def _validate_optional_string_list(field_name: str, value: list[str] | None) -> 
             raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
         normalized.append(item)
     return normalized
+
+
+def _validate_string_list(field_name: str, value: object) -> list[str]:
+    """Validate required list[str] fields used by runtime configuration."""
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
+        normalized.append(item)
+    return normalized
+
+
+def _validate_regex_patterns(patterns: list[str]) -> None:
+    """Validate user-provided regex patterns before runtime scanning."""
+    for pattern in patterns:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex pattern '{pattern}': {exc}") from exc
 
 
 def _collect_init_values(
@@ -421,6 +444,30 @@ class DomainPolicy:
         return host == domain_normalized
 
 
+def _normalize_domain_policies(value: object) -> list[DomainPolicy]:
+    """Validate and normalize runtime domain policy overrides."""
+    if not isinstance(value, list):
+        raise ValueError(
+            "domain_policies must be a list of DomainPolicy objects or mappings, "
+            f"got {type(value).__name__}"
+        )
+    normalized: list[DomainPolicy] = []
+    for index, item in enumerate(value):
+        if isinstance(item, DomainPolicy):
+            normalized.append(copy.deepcopy(item))
+            continue
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"domain_policies[{index}] must be a mapping or DomainPolicy, "
+                f"got {type(item).__name__}"
+            )
+        try:
+            normalized.append(DomainPolicy(**dict(item)))
+        except Exception as exc:
+            raise ValueError(f"domain_policies[{index}] is invalid: {exc}") from exc
+    return normalized
+
+
 @dataclass(init=False)
 class IngestConfig:
     """
@@ -597,6 +644,10 @@ class IngestConfig:
         self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
         self.cache_ttl = _ensure_optional_int("cache_ttl", self.cache_ttl)
         self.policy_name = _ensure_str("policy_name", self.policy_name)
+        self.custom_patterns = _validate_string_list("custom_patterns", self.custom_patterns)
+        _validate_regex_patterns(self.custom_patterns)
+        self.plugin_dirs = _validate_string_list("plugin_dirs", self.plugin_dirs)
+        self.domain_policies = _normalize_domain_policies(self.domain_policies)
         self.output_profile = _ensure_str("output_profile", self.output_profile)
         if not isinstance(self.output_format, str):
             raise ValueError(
