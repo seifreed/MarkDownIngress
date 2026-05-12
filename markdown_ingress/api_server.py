@@ -383,7 +383,7 @@ def _start_job_queue_repair_loop() -> None:
     global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
 
     def repair_loop() -> None:
-        global JOB_QUEUE, _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
+        global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
         if stop_event is None:
             return
         while not stop_event.wait(0.0):
@@ -585,7 +585,6 @@ def _ensure_job_queue_initialized():
 
 
 def _get_job_queue():
-    global JOB_QUEUE
     # Ensure job queue is initialized before use (lazy initialization)
     _ensure_job_queue_initialized()
     _maybe_start_job_queue_repair()
