@@ -117,7 +117,7 @@ def test_url_dataset_baseline(pytestconfig):
                         "removed_elements": doc.removed_elements,
                     },
                 )
-        except Exception as exc:  # noqa: BLE001 - baseline should record all failures
+        except Exception as exc:
             async with count_lock:
                 counters["processed"] += 1
                 counters["errors"] += 1

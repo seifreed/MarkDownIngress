@@ -455,7 +455,7 @@ async def collect_available_urls(
             try:
                 await asyncio.to_thread(fetcher.fetch_sync, url)
                 return url, None
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 return url, classify_error(exc)
 
     for start in range(0, len(unchecked), max(32, concurrency * 2)):
@@ -747,7 +747,7 @@ def run_campaign(
                                 "removed_elements": doc.removed_elements,
                             }
                         )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     error_class = classify_error(exc)
                     async with count_lock:
                         scenario_counts["processed"] += 1

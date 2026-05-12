@@ -216,19 +216,19 @@ def test_retry_ingest_retryable_errors(mock_document):
 
     # Test custom exception types that are retryable
     # These must match the exact retryable names used in _is_retryable_error
-    class ConnectTimeout(Exception):  # noqa: N818
-        pass
+    retryable_exception_types = [
+        type("ConnectTimeout", (Exception,), {}),
+        type("ConnectionError", (Exception,), {}),
+    ]
 
-    class ConnectionError(Exception):  # noqa: N818
-        pass
+    for retryable_exception_type in retryable_exception_types:
+        with patch("markdown_ingress.api.ingest") as mock_ingest:
+            mock_ingest.side_effect = [retryable_exception_type("timeout"), mock_document]
 
-    with patch("markdown_ingress.api.ingest") as mock_ingest:
-        mock_ingest.side_effect = [ConnectTimeout("timeout"), mock_document]
+            retry_ingest(url="https://example.com", max_retries=2)
 
-        result = retry_ingest(url="https://example.com", max_retries=2)
-
-        # Should retry
-        assert mock_ingest.call_count == 2
+            # Should retry
+            assert mock_ingest.call_count == 2
 
 
 def test_retry_ingest_stealth_only_on_retry(mock_document):

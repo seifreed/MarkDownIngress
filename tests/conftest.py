@@ -1,11 +1,12 @@
 """Test configuration and fixtures"""
 
+import importlib
 import os
 from pathlib import Path
 
 import pytest
 
-import markdown_ingress.application.use_cases  # noqa: F401 — registers all core factories
+importlib.import_module("markdown_ingress.application.use_cases")
 
 
 def pytest_addoption(parser):
