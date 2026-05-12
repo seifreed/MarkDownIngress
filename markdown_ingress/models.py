@@ -37,6 +37,16 @@ def _ensure_str(field_name: str, value: object) -> str:
     return value
 
 
+def _ensure_iso_datetime_str(field_name: str, value: object) -> str:
+    timestamp = _ensure_str(field_name, value)
+    normalized = f"{timestamp[:-1]}+00:00" if timestamp.endswith("Z") else timestamp
+    try:
+        datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO datetime, got {timestamp!r}") from exc
+    return timestamp
+
+
 def _ensure_optional_str(field_name: str, value: object | None) -> str | None:
     if value is None:
         return None
@@ -399,7 +409,7 @@ class SecurityReport:
         )
         self.url = _ensure_str("url", self.url)
         self.title = _ensure_str("title", self.title)
-        self.timestamp = _ensure_str("timestamp", self.timestamp)
+        self.timestamp = _ensure_iso_datetime_str("timestamp", self.timestamp)
         self.version = _ensure_str("version", self.version)
         self.content_hash = _ensure_str("content_hash", self.content_hash)
         self.structural_hash = _ensure_str("structural_hash", self.structural_hash)

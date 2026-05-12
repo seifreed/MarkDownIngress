@@ -193,6 +193,7 @@ class TestSecurityReport:
             ({"url": cast(Any, 1)}, "url must be a string"),
             ({"title": cast(Any, 1)}, "title must be a string"),
             ({"timestamp": cast(Any, 1)}, "timestamp must be a string"),
+            ({"timestamp": "not-a-date"}, "timestamp must be an ISO datetime"),
             ({"version": cast(Any, 1)}, "version must be a string"),
             ({"content_hash": cast(Any, 1)}, "content_hash must be a string"),
             ({"structural_hash": cast(Any, 1)}, "structural_hash must be a string"),
