@@ -2712,6 +2712,44 @@ def test_get_job_record_hides_completed_job_with_missing_completed_at_and_ttl_se
     assert job is None
 
 
+def test_get_job_record_hides_completed_job_with_corrupt_ttl_seconds(monkeypatch):
+    class LegacyQueue:
+        db_path = "legacy.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return type(
+                "Job",
+                (),
+                {
+                    "job_id": job_id,
+                    "status": "completed",
+                    "created_at": "2026-03-30T00:00:00+00:00",
+                    "started_at": None,
+                    "completed_at": (datetime.now(UTC) - timedelta(seconds=30)).isoformat(),
+                    "result": {"ok": True},
+                    "error": None,
+                    "ttl_seconds": "not-an-int",
+                    "legacy_expires_at": None,
+                },
+            )()
+
+    class CurrentQueue:
+        state = "open"
+        db_path = "current.sqlite3"
+
+        def get(self, job_id, cleanup_expired=True):
+            assert cleanup_expired is False
+            return None
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", CurrentQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [LegacyQueue()])
+
+    job = _get_job_record("legacy-job")
+
+    assert job is None
+
+
 def test_snapshot_job_subsystem_counts_unknown_ttl_jobs(monkeypatch):
     class QueueWithUnknownTTL:
         state = "open"
@@ -3712,6 +3750,48 @@ def test_prune_job_queue_history_drops_legacy_queue_with_invalid_legacy_expires_
                 "2026-03-30T00:01:00+00:00",
                 None,
                 "not-a-date",
+            ),
+        )
+        conn.commit()
+
+    queue = api_server._ExternalOwnerJobQueue(db_path)
+    queue.state = "closed"
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [queue])
+
+    api_server._prune_job_queue_history()
+
+    assert api_server._JOB_QUEUE_HISTORY == []
+
+
+def test_prune_job_queue_history_drops_legacy_queue_with_corrupt_ttl_seconds(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy-corrupt-ttl.sqlite3"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result_json TEXT,
+                error TEXT,
+                webhook_url TEXT,
+                ttl_seconds INTEGER,
+                legacy_expires_at TEXT
+            )
+            """)
+        conn.execute(
+            """
+            INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-job",
+                "completed",
+                "2026-03-30T00:00:00+00:00",
+                (datetime.now(UTC) - timedelta(seconds=30)).isoformat(),
+                "not-an-int",
+                None,
             ),
         )
         conn.commit()

@@ -71,6 +71,20 @@ def _legacy_unknown_ttl_expires_at(
     return completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)
 
 
+def _coerce_positive_ttl_seconds(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        ttl_value = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        ttl_value = int(value)
+    else:
+        return None
+    if ttl_value <= 0:
+        return None
+    return ttl_value
+
+
 # ---------------------------------------------------------------------------
 # _ExternalOwnerJobQueue
 # ---------------------------------------------------------------------------
@@ -140,15 +154,8 @@ class _ExternalOwnerJobQueue:
         legacy_expires_at = _parse(row["legacy_expires_at"])
 
         if ttl_seconds is not None:
-            if isinstance(ttl_seconds, bool):
-                return True
-            if isinstance(ttl_seconds, int):
-                ttl_value = ttl_seconds
-            elif isinstance(ttl_seconds, str) and ttl_seconds.strip().isdigit():
-                ttl_value = int(ttl_seconds)
-            else:
-                return True
-            if ttl_value <= 0:
+            ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+            if ttl_value is None:
                 return True
             if completed_at is None:
                 return True
@@ -244,7 +251,7 @@ def _job_record_within_api_ttl(job) -> bool:
     completed_at = getattr(job, "completed_at", None)
     if status in {"queued", "running"}:
         return True
-    ttl_seconds = cast(int | None, getattr(job, "ttl_seconds", None))
+    ttl_seconds = cast(object | None, getattr(job, "ttl_seconds", None))
     if ttl_seconds is None:
         expires_dt = _legacy_unknown_ttl_expires_at(
             completed_at,
@@ -259,7 +266,10 @@ def _job_record_within_api_ttl(job) -> bool:
     if completed_dt is None:
         return False
     age_seconds = (datetime.now(UTC) - completed_dt).total_seconds()
-    return age_seconds <= ttl_seconds
+    ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+    if ttl_value is None:
+        return False
+    return age_seconds <= ttl_value
 
 
 def _queue_still_has_visible_jobs(queue) -> bool:
@@ -296,6 +306,9 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         completed_dt = _parse_iso_datetime_utc(completed_at)
         if completed_dt is None:
             continue  # skip corrupt row, don't abort entire queue
-        if (now - completed_dt).total_seconds() <= int(ttl_seconds):
+        ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+        if ttl_value is None:
+            continue
+        if (now - completed_dt).total_seconds() <= ttl_value:
             return True
     return False
