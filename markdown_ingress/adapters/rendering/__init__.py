@@ -12,8 +12,8 @@ from markdown_ingress.adapters.rendering.playwright_renderer import (
 
 __all__ = [
     "PLAYWRIGHT_AVAILABLE",
-    "PlaywrightRenderer",
     "AdvancedStealthRenderer",
+    "PlaywrightRenderer",
     "render_with_advanced_stealth",
     "render_with_advanced_stealth_sync",
 ]

@@ -82,31 +82,24 @@ def get_context_options(config: StealthConfig | None = None) -> dict:
 
 
 __all__ = [
-    # Legacy compatibility
-    "StealthConfig",
-    "STEALTH_BROWSER_ARGS",
-    "get_stealth_config",
-    "get_context_options",
-    # Config dataclass
-    "AdvancedStealthConfig",
-    "StealthConfigGenerator",
-    # Constants - Browser config
-    "ULTRA_STEALTH_ARGS",
     "ADVANCED_USER_AGENTS",
     "ADVANCED_VIEWPORT_SIZES",
-    "TIMEZONES",
+    "CANVAS_FINGERPRINT_JS",
     "REALISTIC_HEADERS",
-    # Constants - JavaScript injection
+    "STEALTH_BROWSER_ARGS",
     "STEALTH_JS_INJECTION",
     "STEALTH_JS_POST_LOAD",
-    # Constants - Fingerprinting
+    "TIMEZONES",
+    "ULTRA_STEALTH_ARGS",
     "WEBGL_FINGERPRINT_JS",
-    "CANVAS_FINGERPRINT_JS",
-    # Functions - Browser config
-    "get_advanced_stealth_config",
+    "AdvancedStealthConfig",
+    "StealthConfig",
+    "StealthConfigGenerator",
     "get_advanced_context_options",
-    # Functions - JavaScript injection
+    "get_advanced_stealth_config",
+    "get_context_options",
+    "get_stealth_config",
     "inject_stealth",
-    "inject_stealth_pre_nav",
     "inject_stealth_post_nav",
+    "inject_stealth_pre_nav",
 ]

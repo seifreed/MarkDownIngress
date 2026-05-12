@@ -26,41 +26,32 @@ from markdown_ingress.shared_results import BatchResult
 
 __version__ = "0.8.0"
 __all__ = [
-    # Core API
+    "BatchProcessor",
+    "BatchResult",
+    "Benchmark",
+    "BenchmarkResult",
+    "Cache",
+    "Config",
+    "ConfigLoader",
+    "DomainPolicy",
+    "IngestConfig",
+    "MemoryCache",
+    "Plugin",
+    "PluginLoader",
+    "Policy",
+    "PolicyEngine",
+    "RenderConfig",
+    "SQLiteCache",
+    "SafeDocument",
+    "SecurityReport",
+    "compare_extractors",
+    "generate_security_report",
+    "get_ingest_stats",
     "ingest",
     "ingest_async",
     "ingest_many",
     "ingest_many_async",
-    "retry_ingest",
-    "generate_security_report",
-    # Models
-    "SafeDocument",
-    "SecurityReport",
-    # Configuration dataclasses (v0.8.0)
-    "IngestConfig",
-    "RenderConfig",
-    "DomainPolicy",
-    # Batch processing
-    "BatchProcessor",
-    "BatchResult",
-    # Caching
-    "Cache",
-    "MemoryCache",
-    "SQLiteCache",
-    "get_ingest_stats",
-    "reset_ingest_stats",
-    # Policy engine
-    "Policy",
-    "PolicyEngine",
-    # Configuration (v0.4)
-    "Config",
-    "ConfigLoader",
     "load_config",
-    # Plugins (v0.4)
-    "Plugin",
-    "PluginLoader",
-    # Benchmarking (v0.4)
-    "Benchmark",
-    "BenchmarkResult",
-    "compare_extractors",
+    "reset_ingest_stats",
+    "retry_ingest",
 ]

@@ -9,8 +9,8 @@ from markdown_ingress.application.use_cases import (
 )
 
 __all__ = [
-    "BatchProcessor",
     "BatchIngestUseCase",
+    "BatchProcessor",
     "CompareExtractorsUseCase",
     "GenerateSecurityReportUseCase",
     "IngestUseCase",

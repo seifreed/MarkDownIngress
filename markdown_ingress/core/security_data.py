@@ -232,7 +232,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     "\u10e1": "s",  # Georgian san (looks like s)
     "\u10e2": "t",  # Georgian tarin (looks like t)
     "\u10e3": "u",  # Georgian un (looks like u)
-    # BUG FIX: Add Mathematical Alphanumeric Symbols (U+1D400–U+1D7FF)
+    # BUG FIX: Add Mathematical Alphanumeric Symbols (U+1D400-U+1D7FF)
     # These are bold/italic/script variants that look like regular Latin characters
     # Full block would be large; include most common variants
     "\U0001d400": "A",  # Mathematical Bold Capital A

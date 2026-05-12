@@ -300,9 +300,9 @@ class StealthConfigGenerator:
 
 
 __all__ = [
+    "StealthConfigGenerator",
     "StealthSignature",
     "_signature_for_config",
-    "StealthConfigGenerator",
 ]
 
 

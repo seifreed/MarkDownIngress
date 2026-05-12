@@ -77,9 +77,9 @@ def _normalize_to_ascii(text: str) -> str:
     making pattern matching resistant to homoglyph attacks.
 
     Examples:
-        - Cyrillic 'о' (U+043E) → 'o'
-        - Cyrillic 'а' (U+0430) → 'a'
-        - Greek 'ο' (U+03BF) → 'o'
+        - Cyrillic U+043E maps to 'o'
+        - Cyrillic U+0430 maps to 'a'
+        - Greek U+03BF maps to 'o'
     """
     mapped = "".join(_HOMOGLYPH_MAP.get(c, c) for c in text)
     compatible = unicodedata.normalize("NFKC", mapped)
@@ -161,7 +161,7 @@ def _detect_redos_pattern(pattern: str) -> bool:
 
 def _safe_chr(codepoint: int) -> str:
     """Convert codepoint to character, returning replacement char for invalid values."""
-    # Reject surrogate halves (0xD800–0xDFFF): chr() accepts them but they produce
+    # Reject surrogate halves (0xD800-0xDFFF): chr() accepts them but they produce
     # unpaired surrogates that cause UnicodeEncodeError in utf-8 downstream paths.
     if 0xD800 <= codepoint <= 0xDFFF:
         return "\ufffd"
@@ -480,7 +480,7 @@ class SecurityAnalyzer:
         # Normalize text for security analysis:
         # 1. Decode HTML entities and URL encoding (prevent bypass via &lt;instruction&gt;)
         # 2. Convert Unicode whitespace to regular spaces
-        # 3. Normalize to ASCII (handles homoglyphs like Cyrillic 'а' → 'a')
+        # 3. Normalize to ASCII (handles homoglyphs like Cyrillic U+0430 as 'a')
         decoded_text, decode_warnings = _decode_html_entities(text)
         normalized_variants = [_normalize_security_text(decoded_text)]
         if "decoding_iteration_limit_reached" in decode_warnings:
@@ -552,7 +552,7 @@ class SecurityAnalyzer:
 
         Returns ratio of imperative verbs to total words.
         """
-        # Normalize to handle homoglyphs (e.g., Cyrillic 'і' → 'i')
+        # Normalize to handle homoglyphs (for example, Cyrillic U+0456 as 'i')
         normalized_text = _normalize_security_text(text.lower())
 
         words = re.findall(r"\b\w+\b", normalized_text)

@@ -347,7 +347,7 @@ def _run_and_merge_custom_analysis(
     )
     if len(security_result["pattern_matches"]) > 3:
         security_result["flags"] = _dedupe_preserving_order(
-            list(security_result["flags"]) + ["multiple_injection_attempts"]
+            [*list(security_result["flags"]), "multiple_injection_attempts"]
         )
     # Do NOT override imperative_density — it duplicates base computation on same text.
     block_threshold, warn_threshold = security_engine.effective_thresholds(
@@ -418,7 +418,7 @@ def _determine_output_formats(
     if security_explanation_payload is not None:
         available_formats.add("security")
     emitted_output_formats: list[str] = []
-    for fmt in output_formats + ["markdown", "blocks", "chunks", "metadata", "security"]:
+    for fmt in [*output_formats, "markdown", "blocks", "chunks", "metadata", "security"]:
         if fmt in available_formats and fmt not in emitted_output_formats:
             emitted_output_formats.append(fmt)
     return output_formats, security_explanation_payload, emitted_output_formats
@@ -593,7 +593,7 @@ def _apply_policy_decision(
     metadata["policy_action"] = policy_action
     if policy_action == "block":
         security_result["flags"] = _dedupe_preserving_order(
-            list(security_result["flags"]) + ["policy_block"]
+            [*list(security_result["flags"]), "policy_block"]
         )
     return policy_action
 
