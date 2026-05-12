@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import socket
 import ssl
 import time
@@ -24,6 +25,25 @@ from markdown_ingress.core.ssrf import (
 # Note: URLError is intentionally NOT included - it includes transient network errors
 # like DNS failures, connection refused, and timeouts which SHOULD be retried.
 _NON_RETRYABLE = (ValueError, TypeError)
+
+
+def _validate_non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
+    if value < 0:
+        raise ValueError(f"{field_name} must be >= 0")
+    return value
+
+
+def _validate_finite_float(field_name: str, value: object, *, minimum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    if numeric < minimum:
+        raise ValueError(f"{field_name} must be >= {minimum:g}")
+    return numeric
 
 
 def _format_host_header(hostname: str, port: int, scheme: str) -> str:
@@ -59,9 +79,13 @@ class HTTPWebhookNotifier:
         timeout_seconds: float = 5.0,
         allow_local_webhooks: bool = False,
     ) -> None:
-        self.max_retries = max(0, max_retries)
-        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
-        self.timeout_seconds = max(1.0, timeout_seconds)
+        self.max_retries = _validate_non_negative_int("max_retries", max_retries)
+        self.retry_delay_seconds = _validate_finite_float(
+            "retry_delay_seconds", retry_delay_seconds, minimum=0.0
+        )
+        self.timeout_seconds = _validate_finite_float(
+            "timeout_seconds", timeout_seconds, minimum=1.0
+        )
         # Security fix (S2): when the caller did not pre-validate the IP, the
         # notifier applies its own SSRF check. This flag preserves the queue's
         # `allow_local_webhooks` behaviour so legitimate localhost webhooks

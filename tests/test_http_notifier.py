@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -183,3 +184,47 @@ def test_notify_allows_zero_retries_for_single_attempt(monkeypatch):
         notifier.notify("https://example.com/hook", {"ok": True})
 
     assert calls["count"] == 1
+
+
+@pytest.mark.parametrize("max_retries", [cast(Any, True), cast(Any, 1.5), cast(Any, "2")])
+def test_notifier_rejects_non_integer_max_retries(max_retries: Any):
+    with pytest.raises(ValueError, match="max_retries must be an int"):
+        HTTPWebhookNotifier(max_retries=max_retries)
+
+
+def test_notifier_rejects_negative_max_retries():
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        HTTPWebhookNotifier(max_retries=-1)
+
+
+@pytest.mark.parametrize(
+    ("retry_delay_seconds", "match"),
+    [
+        (cast(Any, True), "retry_delay_seconds must be a finite number"),
+        (cast(Any, "0.1"), "retry_delay_seconds must be a finite number"),
+        (float("nan"), "retry_delay_seconds must be a finite number"),
+        (float("inf"), "retry_delay_seconds must be a finite number"),
+        (float("-inf"), "retry_delay_seconds must be a finite number"),
+        (-0.1, "retry_delay_seconds must be >= 0"),
+    ],
+)
+def test_notifier_rejects_invalid_retry_delay(retry_delay_seconds: Any, match: str):
+    with pytest.raises(ValueError, match=match):
+        HTTPWebhookNotifier(retry_delay_seconds=retry_delay_seconds)
+
+
+@pytest.mark.parametrize(
+    ("timeout_seconds", "match"),
+    [
+        (cast(Any, True), "timeout_seconds must be a finite number"),
+        (cast(Any, "1"), "timeout_seconds must be a finite number"),
+        (float("nan"), "timeout_seconds must be a finite number"),
+        (float("inf"), "timeout_seconds must be a finite number"),
+        (float("-inf"), "timeout_seconds must be a finite number"),
+        (0.0, "timeout_seconds must be >= 1"),
+        (-1.0, "timeout_seconds must be >= 1"),
+    ],
+)
+def test_notifier_rejects_invalid_timeout(timeout_seconds: Any, match: str):
+    with pytest.raises(ValueError, match=match):
+        HTTPWebhookNotifier(timeout_seconds=timeout_seconds)
