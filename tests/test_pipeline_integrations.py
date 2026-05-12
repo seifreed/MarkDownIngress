@@ -36,7 +36,7 @@ from markdown_ingress.application.use_cases import (
 )
 from markdown_ingress.config_models import DomainPolicy
 from markdown_ingress.core.document_builder import process_fetched_content
-from markdown_ingress.core.inflight import InFlightRegistry
+from markdown_ingress.core.inflight import InFlightEntry, InFlightRegistry
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import FetchResult, SafeDocument
@@ -767,6 +767,23 @@ def test_inflight_registry_replaces_dead_entry_after_leader_timeout():
     assert replacement_entry is not stale_entry
     assert replacement_entry.leader_active is True
     assert replacement_entry.done is False
+
+
+def test_inflight_double_release_notifies_orphaned_entries_first():
+    registry = InFlightRegistry()
+    assert registry.acquire("orphan-request") is None
+    orphan_entry = registry._requests["orphan-request"]
+    orphan_entry.followers = 1
+    orphan_entry.created_at = time.monotonic() - 10_000
+
+    registry._requests["done-request"] = InFlightEntry(
+        done=True,
+        request_key="done-request",
+    )
+
+    assert registry.release("done-request") == 0
+    assert "orphan-request" not in registry._requests
+    assert orphan_entry.leader_active is False
 
 
 def test_ingest_many_async_cancellation_terminates_workers(tmp_path: Path):

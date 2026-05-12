@@ -308,6 +308,7 @@ class InFlightRegistry:
     ) -> int:
         to_notify: list[InFlightEntry] = []
         entry: InFlightEntry | None = None
+        double_release_followers: int | None = None
         with self._lock:
             to_notify.extend(self._cleanup_orphaned_entries_locked())
             entry = self._requests.get(request_key)
@@ -316,7 +317,7 @@ class InFlightRegistry:
                     entry, request_key, to_notify
                 )
                 if should_bail:
-                    return followers
+                    double_release_followers = followers
             # Note: shared_count will be read inside entry.condition to avoid race.
 
         for e in to_notify:
@@ -324,6 +325,8 @@ class InFlightRegistry:
                 e.leader_active = False
                 e.condition.notify_all()
 
+        if double_release_followers is not None:
+            return double_release_followers
         if entry is None:
             return 0
 
