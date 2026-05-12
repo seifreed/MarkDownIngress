@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 _NOVA_DISABLED_SCORE: float = 0.0
 
 
+def _ensure_bool(field_name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+    return value
+
+
+def _ensure_numeric_score_input(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number, got {type(value).__name__}")
+    return float(value)
+
+
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
     """Return unique values while preserving first-seen order."""
     return list(dict.fromkeys(values))
@@ -47,36 +59,47 @@ class SecurityEngine:
         use_llm: bool = False,
         exception_fallback_score: float | None = None,
     ):
-        self.strict = strict
-        self.advanced_security = advanced_security
-        self.use_llm = use_llm
+        self.strict = _ensure_bool("strict", strict)
+        self.advanced_security = _ensure_bool("advanced_security", advanced_security)
+        self.use_llm = _ensure_bool("use_llm", use_llm)
         # Score to use when Nova scan throws an exception (malicious payloads shouldn't bypass)
         # Validate score is within valid range [0.0, 1.0]
         # BUG FIX: Enforce minimum of 0.5 to prevent complete security bypass
         min_fallback_score = 0.5
         if exception_fallback_score is not None:
-            if not (0.0 <= exception_fallback_score <= 1.0):
+            try:
+                fallback_score = _ensure_numeric_score_input(
+                    "exception_fallback_score", exception_fallback_score
+                )
+            except ValueError:
                 logger.warning(
                     "Invalid exception_fallback_score '%s', must be 0.0-1.0. Using default 0.75.",
                     exception_fallback_score,
                 )
                 self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
-            elif exception_fallback_score < min_fallback_score:
-                logger.warning(
-                    "exception_fallback_score '%s' is below safe minimum %.1f. "
-                    "Setting to %.1f to prevent security bypass.",
-                    exception_fallback_score,
-                    min_fallback_score,
-                    min_fallback_score,
-                )
-                self.exception_fallback_score = min_fallback_score
             else:
-                self.exception_fallback_score = exception_fallback_score
+                if math.isnan(fallback_score) or not (0.0 <= fallback_score <= 1.0):
+                    logger.warning(
+                        "Invalid exception_fallback_score '%s', must be 0.0-1.0. Using default 0.75.",
+                        exception_fallback_score,
+                    )
+                    self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
+                elif fallback_score < min_fallback_score:
+                    logger.warning(
+                        "exception_fallback_score '%s' is below safe minimum %.1f. "
+                        "Setting to %.1f to prevent security bypass.",
+                        fallback_score,
+                        min_fallback_score,
+                        min_fallback_score,
+                    )
+                    self.exception_fallback_score = min_fallback_score
+                else:
+                    self.exception_fallback_score = fallback_score
         else:
             self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
 
         # Initialize basic security analyzer
-        self.basic_analyzer = SecurityAnalyzer(strict=strict)
+        self.basic_analyzer = SecurityAnalyzer(strict=self.strict)
 
         # Initialize Nova if available and requested
         self.nova = None
@@ -139,17 +162,8 @@ class SecurityEngine:
                 logger.debug("Nova returned None score, falling back to basic analysis")
                 return _NOVA_DISABLED_SCORE, nova_result, "basic"
 
-            if isinstance(nova_score_raw, float) and math.isnan(nova_score_raw):
-                logger.warning(
-                    "Nova returned NaN score, using fallback: %s", self.exception_fallback_score
-                )
-                return (
-                    self.exception_fallback_score,
-                    nova_result,
-                    "nova_llm" if self.use_llm else "nova_semantic",
-                )
             try:
-                nova_score_raw = float(nova_score_raw)
+                nova_score_raw = _ensure_numeric_score_input("Nova score", nova_score_raw)
             except (TypeError, ValueError):
                 logger.warning(
                     "Nova returned non-numeric score %r, using fallback: %s",
@@ -161,9 +175,10 @@ class SecurityEngine:
                     nova_result,
                     "nova_llm" if self.use_llm else "nova_semantic",
                 )
-            if math.isnan(nova_score_raw):
+            if math.isnan(nova_score_raw) or math.isinf(nova_score_raw):
                 logger.warning(
-                    "Nova returned NaN score, using fallback: %s", self.exception_fallback_score
+                    "Nova returned non-finite score, using fallback: %s",
+                    self.exception_fallback_score,
                 )
                 return (
                     self.exception_fallback_score,
@@ -194,6 +209,9 @@ class SecurityEngine:
         strict: bool = False,
     ) -> tuple[float, float]:
         """Return policy thresholds after applying strict-mode tightening."""
+        strict = _ensure_bool("strict", strict)
+        block_threshold = _ensure_numeric_score_input("block_threshold", block_threshold)
+        warn_threshold = _ensure_numeric_score_input("warn_threshold", warn_threshold)
         if math.isnan(block_threshold) or not 0.0 <= block_threshold <= 1.0:
             if math.isnan(block_threshold):
                 logger.warning(
