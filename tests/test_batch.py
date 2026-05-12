@@ -332,6 +332,27 @@ async def test_batch_processor_custom_process_url_rejects_zero_concurrency():
         await processor.process_batch_async(["https://example.com"])
 
 
+@pytest.mark.parametrize("bad_max_concurrent", [True, 1.5, "2"])
+@pytest.mark.asyncio
+async def test_batch_processor_custom_process_url_rejects_non_integer_concurrency(
+    bad_max_concurrent,
+):
+    class ValidBatchProcessor(BatchProcessor):
+        async def process_url(self, url: str):
+            return SafeDocument(
+                markdown="ok",
+                metadata={"url": url},
+                token_estimate=1,
+                injection_score=0.0,
+                content_hash="sha256:x",
+            )
+
+    processor = ValidBatchProcessor(max_concurrent=bad_max_concurrent)
+
+    with pytest.raises(ValueError, match="max_concurrent must be an int"):
+        await processor.process_batch_async(["https://example.com"])
+
+
 def test_ingest_continues_when_cache_backend_fails():
     class BoomCache:
         def get(self, key):
@@ -1284,6 +1305,21 @@ def test_resolve_batch_api_options_uses_batch_settings_from_converted_runtime_co
 
     assert resolved_timeout == 12.0
     assert resolved_max_concurrent == 9
+
+
+@pytest.mark.parametrize("bad_max_concurrent", [True, 1.5, "2"])
+def test_resolve_batch_api_options_rejects_non_integer_max_concurrent(bad_max_concurrent):
+    with pytest.raises(ValueError, match="max_concurrent must be an int"):
+        resolve_batch_api_options(
+            None,
+            timeout=UNSET,
+            max_concurrent=bad_max_concurrent,
+        )
+
+
+def test_resolve_batch_api_options_rejects_zero_max_concurrent():
+    with pytest.raises(ValueError, match="max_concurrent must be >= 1"):
+        resolve_batch_api_options(None, timeout=UNSET, max_concurrent=0)
 
 
 # --- Bug fix tests ---

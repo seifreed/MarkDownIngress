@@ -925,6 +925,8 @@ class BatchIngestUseCase:
         max_concurrent: int = 5,
         on_progress: Callable[[int, int, str], None] | None = None,
     ) -> BatchResult:
+        if isinstance(max_concurrent, bool) or not isinstance(max_concurrent, int):
+            raise ValueError(f"max_concurrent must be an int, got {type(max_concurrent).__name__}")
         if max_concurrent < 1:
             raise ValueError("max_concurrent must be >= 1")
 

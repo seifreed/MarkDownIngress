@@ -53,6 +53,14 @@ def normalize_runtime_config(config: IngestConfig | FileConfig | None) -> Ingest
     return config
 
 
+def _validate_batch_max_concurrent(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"max_concurrent must be an int, got {type(value).__name__}")
+    if value < 1:
+        raise ValueError("max_concurrent must be >= 1")
+    return value
+
+
 def resolve_batch_api_options(
     config: IngestConfig | FileConfig | None,
     *,
@@ -74,7 +82,7 @@ def resolve_batch_api_options(
         if max_concurrent is UNSET:
             resolved_max_concurrent = getattr(config, "batch_max_concurrent", 5)
 
-    return resolved_timeout, resolved_max_concurrent
+    return resolved_timeout, _validate_batch_max_concurrent(resolved_max_concurrent)
 
 
 def clone_ingest_config(config: IngestConfig) -> IngestConfig:

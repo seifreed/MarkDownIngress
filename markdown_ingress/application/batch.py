@@ -22,6 +22,14 @@ except ImportError:
     RENDERER_AVAILABLE = False
 
 
+def _validate_max_concurrent(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"max_concurrent must be an int, got {type(value).__name__}")
+    if value < 1:
+        raise ValueError("max_concurrent must be >= 1")
+    return value
+
+
 class BatchProcessor:
     """Process multiple URLs in batch via the application use case layer."""
 
@@ -90,13 +98,12 @@ class BatchProcessor:
 
     async def process_batch_async(self, urls: list[str]) -> BatchResult:
         """Process multiple URLs concurrently while preserving input order."""
-        if self.max_concurrent < 1:
-            raise ValueError("max_concurrent must be >= 1")
+        max_concurrent = _validate_max_concurrent(self.max_concurrent)
         if self._uses_default_process_url():
             return await self._batch_use_case.execute(
                 urls,
                 self._build_config,
-                max_concurrent=self.max_concurrent,
+                max_concurrent=max_concurrent,
                 on_progress=self.on_progress,
             )
 
@@ -104,7 +111,7 @@ class BatchProcessor:
         documents: list[SafeDocument | None] = [None] * total
         errors: list[BatchErrorItem] = []
         errors_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(self.max_concurrent)
+        semaphore = asyncio.Semaphore(max_concurrent)
         progress_lock = asyncio.Lock()
         completed = 0
 

@@ -11,7 +11,7 @@ from typing import Literal
 from markdown_ingress.adapters.rendering.playwright_renderer import (
     PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
 )
-from markdown_ingress.api_runtime import UNSET, build_runtime_config
+from markdown_ingress.api_runtime import UNSET, _validate_batch_max_concurrent, build_runtime_config
 from markdown_ingress.application.use_cases import (
     BatchIngestUseCase,
     GenerateSecurityReportUseCase,
@@ -109,8 +109,7 @@ async def ingest_many_async_impl(
     **runtime_kwargs,
 ) -> BatchResult:
     """Concurrent batch ingestion using the same runtime contract as ingest()."""
-    if max_concurrent < 1:
-        raise ValueError("max_concurrent must be >= 1")
+    max_concurrent = _validate_batch_max_concurrent(max_concurrent)
 
     url_list = list(urls)
     runtime_config = build_runtime_config(**runtime_kwargs)
