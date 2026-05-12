@@ -110,6 +110,49 @@ def test_scorer_should_not_block_below_threshold():
     assert scorer.should_block(analysis) is False
 
 
+@pytest.mark.parametrize("score", [cast(Any, "0.5"), cast(Any, True)])
+def test_scorer_treats_invalid_score_types_as_critical(score: Any):
+    from markdown_ingress.core.scoring import Scorer
+
+    scorer = Scorer()
+
+    assert scorer.get_risk_level(score) == "critical"
+
+
+@pytest.mark.parametrize("threshold", [cast(Any, "0.7"), cast(Any, True)])
+def test_scorer_rejects_invalid_threshold_types(threshold: Any):
+    from markdown_ingress.core.scoring import Scorer
+    from markdown_ingress.models import InjectionAnalysis
+
+    scorer = Scorer()
+    analysis = InjectionAnalysis(
+        score=0.5,
+        flags=[],
+        pattern_matches=[],
+        hidden_content_detected=False,
+        imperative_density=0.0,
+    )
+
+    with pytest.raises(ValueError, match="threshold must be a finite number"):
+        scorer.should_block(analysis, threshold=threshold)
+
+
+def test_scorer_blocks_invalid_analysis_score_type():
+    from markdown_ingress.core.scoring import Scorer
+    from markdown_ingress.models import InjectionAnalysis
+
+    scorer = Scorer()
+    analysis = InjectionAnalysis(
+        score=cast(Any, "0.5"),
+        flags=[],
+        pattern_matches=[],
+        hidden_content_detected=False,
+        imperative_density=0.0,
+    )
+
+    assert scorer.should_block(analysis) is True
+
+
 def test_scorer_get_recommendation_all_levels():
     """scoring.py lines 66-76"""
     from markdown_ingress.core.scoring import Scorer

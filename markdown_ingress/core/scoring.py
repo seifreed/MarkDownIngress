@@ -10,6 +10,21 @@ from markdown_ingress.models import InjectionAnalysis
 _logger = logging.getLogger(__name__)
 
 
+def _coerce_score(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _ensure_threshold(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"threshold must be a finite number, got {type(value).__name__}")
+    threshold = float(value)
+    if math.isnan(threshold) or math.isinf(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold must be between 0.0 and 1.0, got {value}")
+    return threshold
+
+
 class Scorer:
     """Calculate and interpret injection risk scores"""
 
@@ -36,7 +51,14 @@ class Scorer:
             - critical: [0.8, 1.0]
         """
         # Validate and clamp score to valid range
-        original_score = score
+        coerced_score = _coerce_score(score)
+        if coerced_score is None:
+            _logger.warning(
+                "Injection score %r is not numeric, treating as critical (fail-safe)", score
+            )
+            return "critical"
+        original_score = coerced_score
+        score = coerced_score
         if math.isnan(score):
             _logger.warning("Injection score is NaN, treating as critical (fail-safe)")
             return "critical"
@@ -76,15 +98,15 @@ class Scorer:
         Raises:
             ValueError: If threshold is not between 0.0 and 1.0
         """
-        if not 0.0 <= threshold <= 1.0:
-            raise ValueError(f"threshold must be between 0.0 and 1.0, got {threshold}")
+        threshold = _ensure_threshold(threshold)
+        score = _coerce_score(analysis.score)
         # Invalid scores are treated as blocking (fail-safe)
-        if math.isnan(analysis.score) or not 0.0 <= analysis.score <= 1.0:
+        if score is None or math.isnan(score) or not 0.0 <= score <= 1.0:
             _logger.warning(
                 "Injection score %s is invalid, treating as blocking (fail-safe)", analysis.score
             )
             return True
-        return analysis.score >= threshold
+        return score >= threshold
 
     def get_recommendation(self, analysis: InjectionAnalysis) -> str:
         """
