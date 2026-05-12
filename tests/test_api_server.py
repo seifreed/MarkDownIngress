@@ -3386,6 +3386,48 @@ def test_external_owner_get_handles_corrupt_result_json(tmp_path):
     assert job.result is None
 
 
+def test_external_owner_get_hides_completed_job_with_corrupt_ttl_seconds(tmp_path):
+    db_path = tmp_path / "jobs.sqlite3"
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result_json TEXT,
+                error TEXT,
+                webhook_url TEXT,
+                ttl_seconds INTEGER,
+                legacy_expires_at TEXT
+            )
+            """)
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "corrupt-ttl-job",
+                "completed",
+                "2026-03-31T00:00:00+00:00",
+                "2026-03-31T00:01:00+00:00",
+                "{}",
+                None,
+                None,
+                "not-an-int",
+                None,
+            ),
+        )
+        conn.commit()
+
+    queue = api_server._ExternalOwnerJobQueue(db_path)
+
+    assert queue.get("corrupt-ttl-job") is None
+
+
 def test_batch_job_status_returns_503_when_external_owner_backend_read_fails(monkeypatch):
     class ExternalOwnerQueue:
         state = "external_owner"

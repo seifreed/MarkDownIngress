@@ -140,9 +140,19 @@ class _ExternalOwnerJobQueue:
         legacy_expires_at = _parse(row["legacy_expires_at"])
 
         if ttl_seconds is not None:
+            if isinstance(ttl_seconds, bool):
+                return True
+            if isinstance(ttl_seconds, int):
+                ttl_value = ttl_seconds
+            elif isinstance(ttl_seconds, str) and ttl_seconds.strip().isdigit():
+                ttl_value = int(ttl_seconds)
+            else:
+                return True
+            if ttl_value <= 0:
+                return True
             if completed_at is None:
                 return True
-            return completed_at + timedelta(seconds=int(ttl_seconds)) <= now_dt
+            return completed_at + timedelta(seconds=ttl_value) <= now_dt
         if legacy_expires_at is not None:
             return legacy_expires_at <= now_dt
         if completed_at is None:
