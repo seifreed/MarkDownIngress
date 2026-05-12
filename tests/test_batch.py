@@ -3,6 +3,7 @@
 import asyncio
 import gc
 import importlib
+import pickle
 import queue as queue_module
 import threading
 import time
@@ -28,6 +29,10 @@ from markdown_ingress.core.inflight import InFlightRegistry
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.models import FetchResult, SafeDocument
 from markdown_ingress.shared_results import BatchResult
+
+
+class _CopyBatchExceptionError(Exception):
+    pass
 
 
 @pytest.fixture(scope="module")
@@ -1407,6 +1412,32 @@ def test_make_picklable_preserves_list_items_with_unpicklable_values():
     assert result[1] == "ok"
 
 
+def test_copy_batch_exception_preserves_original_as_cause_after_deepcopy():
+    from markdown_ingress.application.exceptions import _copy_batch_exception
+
+    original = ValueError("leader failed")
+
+    copied = _copy_batch_exception(original)
+
+    assert copied is not original
+    assert type(copied) is ValueError
+    assert copied.__cause__ is original
+
+
+def test_copy_batch_exception_sanitizes_args_and_attrs_for_pickle():
+    from markdown_ingress.application.exceptions import _copy_batch_exception
+
+    original = _CopyBatchExceptionError(lambda: None)
+    original.payload = lambda: None
+
+    copied = _copy_batch_exception(original)
+
+    assert type(copied) is _CopyBatchExceptionError
+    assert isinstance(copied.args[0], str)
+    assert isinstance(copied.payload, str)
+    pickle.dumps(copied)
+
+
 def test_inflight_followers_decremented_after_await():
     """await_result must decrement followers on successful completion."""
     import threading
@@ -1447,6 +1478,25 @@ def test_inflight_followers_decremented_after_await():
     t.join(timeout=2)
 
     assert follower_entry.followers == 0
+
+
+def test_inflight_error_preserves_original_as_cause_after_deepcopy():
+    from markdown_ingress.core.inflight import InFlightRegistry
+
+    registry = InFlightRegistry()
+    request_key = "test-error-cause"
+    assert registry.acquire(request_key) is None
+    follower_entry = registry.acquire(request_key)
+    assert follower_entry is not None
+
+    original = ValueError("leader failed")
+    assert registry.release(request_key, error=original) == 1
+
+    with pytest.raises(ValueError) as exc_info:
+        registry.await_result(follower_entry, request_key)
+
+    assert exc_info.value is not original
+    assert exc_info.value.__cause__ is original
 
 
 def test_inflight_late_done_entry_counts_follower_before_await():

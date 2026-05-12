@@ -14,6 +14,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.core.exception_copy import copy_exception_for_transfer
 from markdown_ingress.core.plugin import fingerprint_plugin_directories
 from markdown_ingress.core.ssrf import (
     normalize_domain_pattern,
@@ -337,15 +338,7 @@ class InFlightRegistry:
                 if entry.document is not None:
                     entry.document.metadata["inflight_shared_count"] = shared_count
                 if error is not None:
-                    try:
-                        entry.error = copy.deepcopy(error)
-                    except Exception:
-                        try:
-                            entry.error = type(error)(str(error))
-                        except Exception:
-                            wrapped = RuntimeError(f"{type(error).__name__}: {error}")
-                            wrapped.__cause__ = error
-                            entry.error = wrapped
+                    entry.error = copy_exception_for_transfer(error)
             except Exception as exc:
                 entry.error = exc
             finally:
