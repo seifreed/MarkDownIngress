@@ -79,20 +79,20 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Skip large live baselines unless explicitly requested."""
-    if config.getoption("--run-url-baseline") or config.getoption("--run-url-campaign"):
-        return
-
-    skip_baseline = pytest.mark.skip(
-        reason="requires --run-url-baseline/--run-url-campaign or MDI_RUN_URL_BASELINE=1"
+    run_baseline = (
+        config.getoption("--run-url-baseline") or os.environ.get("MDI_RUN_URL_BASELINE") == "1"
     )
-    if (
-        os.environ.get("MDI_RUN_URL_BASELINE") == "1"
-        or os.environ.get("MDI_RUN_URL_CAMPAIGN") == "1"
-    ):
-        return
+    run_campaign = (
+        config.getoption("--run-url-campaign") or os.environ.get("MDI_RUN_URL_CAMPAIGN") == "1"
+    )
+    skip_baseline = pytest.mark.skip(reason="requires --run-url-baseline or MDI_RUN_URL_BASELINE=1")
+    skip_campaign = pytest.mark.skip(reason="requires --run-url-campaign or MDI_RUN_URL_CAMPAIGN=1")
 
     for item in items:
-        if "baseline" in item.keywords or "campaign" in item.keywords:
+        if "campaign" in item.keywords:
+            if not run_campaign:
+                item.add_marker(skip_campaign)
+        elif "baseline" in item.keywords and not run_baseline:
             item.add_marker(skip_baseline)
 
 
