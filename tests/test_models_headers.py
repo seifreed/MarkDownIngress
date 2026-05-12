@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from markdown_ingress.models import CaseInsensitiveHeaders, FetchResult
 
@@ -60,3 +61,13 @@ def test_case_insensitive_headers_copy_preserves_case_insensitive_lookup():
     assert copied["CONTENT-TYPE"] == "text/html"
     copied["X-Test"] = "1"
     assert copied["x-test"] == "1"
+
+
+def test_case_insensitive_headers_reject_non_string_items():
+    headers = CaseInsensitiveHeaders()
+
+    with pytest.raises(TypeError, match="header key must be a string"):
+        headers[None] = "value"  # type: ignore[index]
+
+    with pytest.raises(TypeError, match="header value must be a string"):
+        headers["X-Test"] = 1  # type: ignore[assignment]

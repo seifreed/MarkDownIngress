@@ -64,6 +64,16 @@ def _ensure_str_list(field_name: str, value: object) -> list[str]:
     return value
 
 
+def _ensure_non_negative_int_list(field_name: str, value: object) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError(
+            f"{field_name} must be a list of non-negative ints, got {type(value).__name__}"
+        )
+    for index, item in enumerate(value):
+        _ensure_non_negative_int_metric(f"{field_name}[{index}]", item)
+    return value
+
+
 def _ensure_dict_list(field_name: str, value: object) -> list[dict]:
     if not isinstance(value, list):
         raise ValueError(f"{field_name} must be a list of dicts, got {type(value).__name__}")
@@ -118,6 +128,10 @@ class CaseInsensitiveHeaders(dict[str, str]):
         return super().__getitem__(self._normalize_key(key))
 
     def __setitem__(self, key: str, value: str) -> None:
+        if not isinstance(key, str):
+            raise TypeError(f"header key must be a string, got {type(key).__name__}")
+        if not isinstance(value, str):
+            raise TypeError(f"header value must be a string, got {type(value).__name__}")
         super().__setitem__(self._normalize_key(key), value)
 
     def __delitem__(self, key: str) -> None:
@@ -227,6 +241,16 @@ class FetchResult:
     metadata: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.html = _ensure_str("html", self.html)
+        self.url = _ensure_str("url", self.url)
+        self.status_code = _ensure_non_negative_int_metric("status_code", self.status_code)
+        if not 100 <= self.status_code <= 599:
+            raise ValueError(f"status_code must be between 100 and 599, got {self.status_code}")
+        self.final_url = _ensure_str("final_url", self.final_url)
+        self.timing_ms = _ensure_finite_float_metric("timing_ms", self.timing_ms)
+        if self.timing_ms < 0.0:
+            raise ValueError(f"timing_ms must be non-negative, got {self.timing_ms}")
+        self.metadata = _ensure_dict("metadata", self.metadata)
         if not isinstance(self.headers, CaseInsensitiveHeaders):
             self.headers = CaseInsensitiveHeaders(dict(self.headers))
 
@@ -241,6 +265,14 @@ class ExtractionResult:
     removed_tags: dict
     removed_hidden: int
     text_content: str
+
+    def __post_init__(self) -> None:
+        self.html = _ensure_str("html", self.html)
+        self.title = _ensure_optional_str("title", self.title)
+        self.author = _ensure_optional_str("author", self.author)
+        self.removed_tags = _ensure_dict("removed_tags", self.removed_tags)
+        self.removed_hidden = _ensure_non_negative_int_metric("removed_hidden", self.removed_hidden)
+        self.text_content = _ensure_str("text_content", self.text_content)
 
 
 @dataclass
@@ -270,6 +302,16 @@ class StructuredBlock:
         """Serialize for JSON-compatible APIs."""
         return asdict(self)
 
+    def __post_init__(self) -> None:
+        self.block_type = _ensure_str("block_type", self.block_type)
+        self.text = _ensure_str("text", self.text)
+        self.markdown = _ensure_str("markdown", self.markdown)
+        self.ordinal = _ensure_non_negative_int_metric("ordinal", self.ordinal)
+        if self.level is not None:
+            self.level = _ensure_non_negative_int_metric("level", self.level)
+        self.structural_hash = _ensure_str("structural_hash", self.structural_hash)
+        self.metadata = _ensure_dict("metadata", self.metadata)
+
 
 @dataclass
 class DocumentChunk:
@@ -288,6 +330,21 @@ class DocumentChunk:
     def to_dict(self) -> dict:
         """Serialize for JSON-compatible APIs."""
         return asdict(self)
+
+    def __post_init__(self) -> None:
+        self.chunk_id = _ensure_str("chunk_id", self.chunk_id)
+        self.text = _ensure_str("text", self.text)
+        self.markdown = _ensure_str("markdown", self.markdown)
+        self.block_ordinals = _ensure_non_negative_int_list("block_ordinals", self.block_ordinals)
+        self.structural_hash = _ensure_str("structural_hash", self.structural_hash)
+        self.token_estimate = _ensure_non_negative_int_metric("token_estimate", self.token_estimate)
+        self.char_start = _ensure_non_negative_int_metric("char_start", self.char_start)
+        self.char_end = _ensure_non_negative_int_metric("char_end", self.char_end)
+        if self.char_end < self.char_start:
+            raise ValueError(
+                f"char_end must be greater than or equal to char_start, got {self.char_end}"
+            )
+        self.metadata = _ensure_dict("metadata", self.metadata)
 
 
 @dataclass

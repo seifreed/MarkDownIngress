@@ -112,6 +112,135 @@ def test_safe_document_rejects_invalid_structure(kwargs: dict[str, Any], message
         SafeDocument(**cast(Any, payload))
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"html": cast(Any, 1)}, "html must be a string"),
+        ({"url": cast(Any, 1)}, "url must be a string"),
+        ({"status_code": cast(Any, True)}, "status_code must be an int"),
+        ({"status_code": 99}, "status_code must be between 100 and 599"),
+        ({"final_url": cast(Any, 1)}, "final_url must be a string"),
+        ({"timing_ms": float("nan")}, "timing_ms must be a finite number"),
+        ({"timing_ms": -1.0}, "timing_ms must be non-negative"),
+        ({"metadata": cast(Any, [])}, "metadata must be a dict"),
+    ],
+)
+def test_fetch_result_rejects_invalid_structure(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import FetchResult
+
+    payload = dict(
+        html="<html></html>",
+        url="https://example.com",
+        status_code=200,
+        final_url="https://example.com",
+        headers={"content-type": "text/html"},
+        timing_ms=1.0,
+        metadata={},
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        FetchResult(**cast(Any, payload))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"html": cast(Any, 1)}, "html must be a string"),
+        ({"title": cast(Any, 1)}, "title must be a string"),
+        ({"author": cast(Any, 1)}, "author must be a string"),
+        ({"removed_tags": cast(Any, [])}, "removed_tags must be a dict"),
+        ({"removed_hidden": cast(Any, True)}, "removed_hidden must be an int"),
+        ({"removed_hidden": -1}, "removed_hidden must be non-negative"),
+        ({"text_content": cast(Any, 1)}, "text_content must be a string"),
+    ],
+)
+def test_extraction_result_rejects_invalid_structure(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import ExtractionResult
+
+    payload: dict[str, Any] = dict(
+        html="<article></article>",
+        title=None,
+        author=None,
+        removed_tags={},
+        removed_hidden=0,
+        text_content="",
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        ExtractionResult(**cast(Any, payload))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"block_type": cast(Any, 1)}, "block_type must be a string"),
+        ({"text": cast(Any, 1)}, "text must be a string"),
+        ({"markdown": cast(Any, 1)}, "markdown must be a string"),
+        ({"ordinal": cast(Any, True)}, "ordinal must be an int"),
+        ({"ordinal": -1}, "ordinal must be non-negative"),
+        ({"level": cast(Any, True)}, "level must be an int"),
+        ({"level": -1}, "level must be non-negative"),
+        ({"structural_hash": cast(Any, 1)}, "structural_hash must be a string"),
+        ({"metadata": cast(Any, [])}, "metadata must be a dict"),
+    ],
+)
+def test_structured_block_rejects_invalid_structure(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import StructuredBlock
+
+    payload = dict(
+        block_type="paragraph",
+        text="text",
+        markdown="text",
+        ordinal=0,
+        structural_hash="hash",
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        StructuredBlock(**cast(Any, payload))
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"chunk_id": cast(Any, 1)}, "chunk_id must be a string"),
+        ({"text": cast(Any, 1)}, "text must be a string"),
+        ({"markdown": cast(Any, 1)}, "markdown must be a string"),
+        ({"block_ordinals": cast(Any, "0")}, "block_ordinals must be a list"),
+        ({"block_ordinals": cast(Any, [True])}, "block_ordinals\\[0\\] must be an int"),
+        ({"block_ordinals": [-1]}, "block_ordinals\\[0\\] must be non-negative"),
+        ({"structural_hash": cast(Any, 1)}, "structural_hash must be a string"),
+        ({"token_estimate": cast(Any, True)}, "token_estimate must be an int"),
+        ({"token_estimate": -1}, "token_estimate must be non-negative"),
+        ({"char_start": cast(Any, True)}, "char_start must be an int"),
+        ({"char_start": -1}, "char_start must be non-negative"),
+        ({"char_end": cast(Any, True)}, "char_end must be an int"),
+        ({"char_end": -1}, "char_end must be non-negative"),
+        ({"char_start": 2, "char_end": 1}, "char_end must be greater than or equal"),
+        ({"metadata": cast(Any, [])}, "metadata must be a dict"),
+    ],
+)
+def test_document_chunk_rejects_invalid_structure(kwargs: dict[str, Any], message: str):
+    from markdown_ingress.models import DocumentChunk
+
+    payload = dict(
+        chunk_id="chunk-1",
+        text="text",
+        markdown="text",
+        block_ordinals=[0],
+        structural_hash="hash",
+        token_estimate=1,
+        char_start=0,
+        char_end=4,
+    )
+    payload.update(kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        DocumentChunk(**cast(Any, payload))
+
+
 # ---------------------------------------------------------------------------
 # scoring.py
 # ---------------------------------------------------------------------------
