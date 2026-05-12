@@ -128,7 +128,3 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual typing
-
-[[tool.mypy.overrides]]
-module = ["tests.*"]
-ignore_errors = true

@@ -6,6 +6,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -132,6 +133,8 @@ def test_persistent_job_queue_marks_orphaned_jobs_failed_on_startup(tmp_path: Pa
     assert running is not None
     assert queued.status == "failed"
     assert running.status == "failed"
+    assert queued.error is not None
+    assert running.error is not None
     assert "process restart" in queued.error
     assert "process restart" in running.error
     assert recovered_queue.pending_count() == 0
@@ -254,7 +257,7 @@ def test_persistent_job_queue_submit_detects_atomic_lease_loss_before_insert(tmp
             )
             conn.commit()
 
-    queue.cleanup_expired = steal_lease_in_cleanup
+    setattr(queue, "cleanup_expired", steal_lease_in_cleanup)
 
     with pytest.raises(RuntimeError, match="lease was lost"):
         queue.submit(lambda: {"ok": True}, start_immediately=False)
@@ -274,7 +277,7 @@ def test_persistent_job_queue_submit_cleans_up_job_if_lease_lost_after_insert(tm
             )
             conn.commit()
 
-    queue._ensure_workers = steal_lease_during_worker_start
+    setattr(queue, "_ensure_workers", steal_lease_during_worker_start)
 
     with pytest.raises(RuntimeError, match="lease was lost"):
         queue.submit(lambda: {"ok": True}, start_immediately=False)
@@ -293,7 +296,7 @@ def test_persistent_job_queue_close_waits_until_submit_enqueues_job(tmp_path: Pa
         def is_alive(self):
             return False
 
-    queue._workers = [StoppedWorker()]
+    queue._workers = cast(Any, [StoppedWorker()])
     queue._workers_started = True
 
     entered_ensure = threading.Event()
@@ -307,8 +310,8 @@ def test_persistent_job_queue_close_waits_until_submit_enqueues_job(tmp_path: Pa
     def record_put(item):
         recorded_puts.append(item)
 
-    queue._ensure_workers = blocking_ensure_workers
-    queue._queue.put = record_put
+    setattr(queue, "_ensure_workers", blocking_ensure_workers)
+    setattr(queue._queue, "put", record_put)
 
     submit_thread = threading.Thread(
         target=lambda: queue.submit(lambda: {"ok": True}, start_immediately=False)
@@ -500,7 +503,7 @@ def test_persistent_job_queue_close_raises_if_worker_does_not_stop(tmp_path: Pat
         def is_alive(self):
             return True
 
-    queue._workers = [StuckWorker()]
+    queue._workers = cast(Any, [StuckWorker()])
     queue._workers_started = True
 
     with pytest.raises(RuntimeError, match="did not stop before lease release"):
@@ -521,7 +524,7 @@ def test_persistent_job_queue_close_can_be_retried_after_workers_finish(tmp_path
         def is_alive(self):
             return self.calls < 2
 
-    queue._workers = [FlakyWorker()]
+    queue._workers = cast(Any, [FlakyWorker()])
     queue._workers_started = True
 
     with pytest.raises(RuntimeError, match="did not stop before lease release"):
@@ -545,7 +548,7 @@ def test_persistent_job_queue_exposes_public_state_transitions(tmp_path: Path):
         def is_alive(self):
             return True
 
-    queue._workers = [StuckWorker()]
+    queue._workers = cast(Any, [StuckWorker()])
     queue._workers_started = True
 
     with pytest.raises(RuntimeError):
@@ -629,7 +632,7 @@ def test_persistent_job_queue_rejects_non_dict_task_result(tmp_path: Path):
     queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
 
     with pytest.raises(RuntimeError, match="non-dict result"):
-        queue.submit(lambda: ["not", "a", "dict"], start_immediately=True)
+        queue.submit(cast(Any, lambda: ["not", "a", "dict"]), start_immediately=True)
 
     with closing(queue._connect()) as conn:
         row = conn.execute("SELECT status, error, result_json FROM jobs").fetchone()
@@ -734,6 +737,7 @@ def test_persistent_job_queue_preserves_result_when_webhook_fails(tmp_path: Path
     assert stored.status == "failed"
     # Result is now preserved even though webhook failed
     assert stored.result == {"ok": True, "count": 1}
+    assert stored.error is not None
     assert "Webhook delivery failed" in stored.error
 
 
@@ -744,7 +748,11 @@ def test_persistent_job_queue_submit_limit_is_atomic(tmp_path: Path):
         ttl_seconds=3600,
         max_queued_jobs=1,
     )
-    queue._ensure_workers = lambda: None  # keep queued jobs pending for deterministic counting
+    setattr(
+        queue,
+        "_ensure_workers",
+        lambda: None,  # keep queued jobs pending for deterministic counting
+    )
 
     barrier = threading.Barrier(2)
     errors: list[str] = []
@@ -809,8 +817,12 @@ def test_execute_with_timeout_returns_near_deadline(tmp_path: Path):
     before = len(threading.enumerate())
     started_at = time.perf_counter()
 
+    def slow_task() -> dict[str, bool]:
+        time.sleep(0.5)
+        return {"ok": True}
+
     with pytest.raises(RuntimeError, match="timed out"):
-        queue._execute_with_timeout(lambda: (time.sleep(0.5), {"ok": True})[1], 0.05)
+        queue._execute_with_timeout(slow_task, 0.05)
 
     elapsed = time.perf_counter() - started_at
     assert elapsed < 0.3
@@ -1101,7 +1113,7 @@ def test_persistent_job_queue_repair_probe_does_not_flip_state_with_live_workers
         def join(self, timeout=None):
             return None
 
-    queue._workers = [LiveWorker()]
+    queue._workers = cast(Any, [LiveWorker()])
     queue._workers_started = True
 
     with pytest.raises(RuntimeError, match="workers did not stop"):

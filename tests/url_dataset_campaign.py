@@ -6,12 +6,11 @@ import asyncio
 import json
 import urllib.request
 from collections import Counter, defaultdict, deque
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from markdown_ingress import ingest_async
@@ -43,6 +42,17 @@ REPLACEABLE_ERROR_CLASSES = {
     "timeout",
     "unauthorized",
 }
+
+
+class AvailabilityProgressCallback(Protocol):
+    def __call__(
+        self,
+        *,
+        availability_checked: int,
+        availability_error_types: Counter[str],
+        dropped_url_types: Counter[str],
+        selected_count: int,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -304,7 +314,7 @@ def allocate_urls(urls: list[str], scenarios: list[CampaignScenario]) -> dict[st
     weighted_names: list[str] = []
     for scenario in scenarios:
         weighted_names.extend([scenario.name] * max(1, scenario.weight))
-    allocation = {scenario.name: [] for scenario in scenarios}
+    allocation: dict[str, list[str]] = {scenario.name: [] for scenario in scenarios}
     for index, url in enumerate(urls):
         scenario_name = weighted_names[index % len(weighted_names)]
         allocation[scenario_name].append(url)
@@ -414,7 +424,7 @@ async def collect_available_urls(
     total_limit: int,
     concurrency: int,
     timeout: float = 5.0,
-    progress_callback: Callable[[int, Counter[str], Counter[str], int], None] | None = None,
+    progress_callback: AvailabilityProgressCallback | None = None,
 ) -> tuple[list[str], Counter[str], Counter[str], int]:
     """Build a pool of URLs that are actually reachable and HTML-like before running scenarios."""
     source_urls = load_unique_urls(0)

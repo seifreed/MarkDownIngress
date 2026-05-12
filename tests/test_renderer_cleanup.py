@@ -123,10 +123,10 @@ def _install_fake_playwright(
     )
 
     fake_pkg = ModuleType("playwright")
-    fake_pkg.__path__ = []  # type: ignore[attr-defined]
+    setattr(fake_pkg, "__path__", [])
     fake_async_api = ModuleType("playwright.async_api")
-    fake_async_api.async_playwright = lambda: _FakeAsyncPlaywrightCM(playwright)
-    fake_pkg.async_api = fake_async_api  # type: ignore[attr-defined]
+    setattr(fake_async_api, "async_playwright", lambda: _FakeAsyncPlaywrightCM(playwright))
+    setattr(fake_pkg, "async_api", fake_async_api)
 
     monkeypatch.setitem(sys.modules, "playwright", fake_pkg)
     monkeypatch.setitem(sys.modules, "playwright.async_api", fake_async_api)

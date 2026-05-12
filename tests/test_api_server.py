@@ -11,6 +11,7 @@ import threading
 import time
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -65,13 +66,13 @@ client = TestClient(app)
 def test_api_server_models_block_private_and_loopback_urls(monkeypatch, url: str):
     monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "false")
     with pytest.raises(ValueError, match="SSRF protection"):
-        IngestRequest(url=url)
+        IngestRequest(url=cast(Any, url))
 
     with pytest.raises(ValueError, match="SSRF protection"):
-        RetryIngestRequest(url=url)
+        RetryIngestRequest(url=cast(Any, url))
 
     with pytest.raises(ValueError, match="SSRF protection"):
-        BatchIngestRequest(urls=[url])
+        BatchIngestRequest(urls=[cast(Any, url)])
 
 
 def test_api_server_models_block_hostnames_resolving_private(monkeypatch):
@@ -202,8 +203,10 @@ def test_request_models_reject_client_screenshot_paths(factory, kwargs):
 
 @pytest.mark.parametrize("screenshot", [True, False, None])
 def test_request_models_accept_server_managed_screenshot_values(screenshot: bool | None):
-    ingest_request = IngestRequest(url="https://example.com", screenshot=screenshot)
-    batch_request = BatchIngestRequest(urls=["https://example.com"], screenshot=screenshot)
+    ingest_request = IngestRequest(url=cast(Any, "https://example.com"), screenshot=screenshot)
+    batch_request = BatchIngestRequest(
+        urls=[cast(Any, "https://example.com")], screenshot=screenshot
+    )
 
     assert ingest_request.screenshot is screenshot
     assert batch_request.screenshot is screenshot
@@ -212,9 +215,9 @@ def test_request_models_accept_server_managed_screenshot_values(screenshot: bool
 @pytest.mark.parametrize(
     ("factory", "kwargs"),
     [
-        (IngestRequest, {"url": "http://127.0.0.1:8000"}),
-        (BatchIngestRequest, {"urls": ["http://127.0.0.1:8000"]}),
-        (RetryIngestRequest, {"url": "http://127.0.0.1:8000"}),
+        (IngestRequest, {"url": cast(Any, "http://127.0.0.1:8000")}),
+        (BatchIngestRequest, {"urls": [cast(Any, "http://127.0.0.1:8000")]}),
+        (RetryIngestRequest, {"url": cast(Any, "http://127.0.0.1:8000")}),
     ],
 )
 def test_request_models_honor_env_allow_local_urls_fallback(monkeypatch, factory, kwargs):
@@ -238,10 +241,10 @@ def test_batch_request_rejects_empty_reports_dir_early():
 @pytest.mark.parametrize("reports_dir", ["/tmp/markdown-ingress", r"C:\tmp\markdown-ingress"])
 def test_requests_reject_absolute_reports_dir_early(reports_dir: str):
     with pytest.raises(ValueError, match="reports_dir must be relative"):
-        IngestRequest(url="https://example.com", reports_dir=reports_dir)
+        IngestRequest(url=cast(Any, "https://example.com"), reports_dir=reports_dir)
 
     with pytest.raises(ValueError, match="reports_dir must be relative"):
-        BatchIngestRequest(urls=["https://example.com"], reports_dir=reports_dir)
+        BatchIngestRequest(urls=[cast(Any, "https://example.com")], reports_dir=reports_dir)
 
 
 def test_ingest_request_rejects_unknown_extra_fields():

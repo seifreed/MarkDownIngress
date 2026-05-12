@@ -9,6 +9,7 @@ import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -1304,7 +1305,7 @@ def test_render_mode_validates_public_url_with_dns_check(monkeypatch):
                 + "</p></article></body></html>",
             )
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     doc = use_case.execute(
         "https://rebind.example/private",
@@ -1446,8 +1447,8 @@ def test_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path):
                 "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
             )
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
-    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
+    use_case.fetcher_factory = cast(Any, lambda config: FakeFetcher())
 
     doc = use_case.execute(
         "https://unit.test/explicit-screenshot",
@@ -1486,8 +1487,8 @@ def test_auto_mode_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path
                 "Page.content: Unable to retrieve content because the page is navigating and changing the content."
             )
 
-    use_case.fetcher_factory = lambda config: FakeFetcher()
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.fetcher_factory = cast(Any, lambda config: FakeFetcher())
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     doc = use_case.execute(
         "https://unit.test/auto-explicit-screenshot",
@@ -1593,8 +1594,8 @@ def test_auto_mode_discards_temp_screenshot_when_fast_wins(tmp_path: Path):
             result.metadata["screenshot_temp"] = True
             return result
 
-    use_case.fetcher_factory = lambda config: FakeFetcher()
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.fetcher_factory = cast(Any, lambda config: FakeFetcher())
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     doc = use_case.execute(
         "https://unit.test/auto-temp-screenshot",
@@ -1639,7 +1640,7 @@ def test_render_temp_screenshot_removed_when_capture_returns_no_path(monkeypatch
                 + "</p></article></body></html>",
             )
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     doc = use_case.execute(
         "https://unit.test/temp-screenshot-no-path",
@@ -1686,7 +1687,7 @@ def test_render_temp_screenshot_removes_preallocated_path_when_renderer_returns_
             result.metadata["screenshot_path"] = str(actual_path)
             return result
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     try:
         doc = use_case.execute(
@@ -1737,7 +1738,7 @@ def test_policy_blocked_render_preserves_temp_screenshot_file(monkeypatch):
             result.metadata["screenshot_path"] = path
             return result
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     try:
         with pytest.raises(PolicyBlockedError) as exc_info:
@@ -1786,7 +1787,7 @@ def test_render_temp_screenshot_results_are_not_cached():
             result.metadata["screenshot_path"] = screenshot_path
             return result
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
 
     try:
         config = IngestConfig(
@@ -1836,7 +1837,7 @@ def test_render_explicit_screenshot_results_are_not_cached(monkeypatch, tmp_path
             result.metadata["screenshot_path"] = str(screenshot_path)
             return result
 
-    use_case.renderer_factory = lambda config: FakeRenderer(config)
+    use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
     config = IngestConfig(
         mode="render",
         screenshot=str(screenshot_path),

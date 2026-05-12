@@ -1228,7 +1228,7 @@ def test_config_load_auto_detect_yaml(tmp_path):
 
 def test_config_load_undetectable_format(tmp_path):
     """config.py lines 150-151: unable to parse"""
-    import yaml
+    import importlib
 
     from markdown_ingress.core.config import ConfigLoader
 
@@ -1239,7 +1239,8 @@ def test_config_load_undetectable_format(tmp_path):
     with pytest.raises(ValueError, match="Unable to parse") as exc_info:
         loader.load()
 
-    assert isinstance(exc_info.value.__cause__, yaml.YAMLError)
+    yaml_module = importlib.import_module("yaml")
+    assert isinstance(exc_info.value.__cause__, getattr(yaml_module, "YAMLError"))
 
 
 def test_config_env_overrides(monkeypatch):
