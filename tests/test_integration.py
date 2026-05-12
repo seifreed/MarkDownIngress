@@ -73,7 +73,10 @@ def test_determinism_same_input(simple_html):
 
 def test_extractor_sanitizes_control_characters_before_readability():
     extractor = Extractor()
-    html = "<html><body><article><h1>Hello\x00</h1><p>Body\x01 text with control chars.</p></article></body></html>"
+    html = (
+        "<html><body><article><h1>Hello\x00</h1>"
+        "<p>Body\x01 text with control chars.</p></article></body></html>"
+    )
 
     extraction = extractor.extract(html, "https://test.com")
 

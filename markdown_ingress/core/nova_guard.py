@@ -42,7 +42,8 @@ def _ensure_threshold(field_name: str, value: object) -> float:
         )
     if not 0.0 <= threshold <= 1.0:
         raise ValueError(
-            f"Invalid severity thresholds: {field_name} must be between 0.0 and 1.0, got {threshold}"
+            f"Invalid severity thresholds: {field_name} must be between 0.0 and 1.0, "
+            f"got {threshold}"
         )
     return threshold
 
@@ -227,7 +228,8 @@ class NovaGuard:
                 file_size = os.fstat(f.fileno()).st_size
                 if file_size > max_rules_file_size:
                     raise ValueError(
-                        f"Rules file too large: {file_size} bytes (max {max_rules_file_size} bytes). "
+                        f"Rules file too large: {file_size} bytes "
+                        f"(max {max_rules_file_size} bytes). "
                         "Large files may indicate a DoS attempt."
                     )
                 file_content = f.read()

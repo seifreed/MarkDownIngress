@@ -28,7 +28,8 @@ def local_test_server():
                 b"<html><body>"
                 b"<h1>Test Page</h1>"
                 b"<p>Hello world content here is meaningful text for testing purposes.</p>"
-                b"<article><p>Article content with enough words to pass content checks.</p></article>"
+                b"<article><p>Article content with enough words to pass content checks.</p>"
+                b"</article>"
                 b"</body></html>"
             )
             self.send_response(200)
@@ -247,7 +248,8 @@ def test_extract_page_content_retries_navigation_errors():
             self.calls += 1
             if self.calls < 3:
                 raise RuntimeError(
-                    "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                    "Page.content: Unable to retrieve content because the page is "
+                    "navigating and changing the content."
                 )
             return "<html><body>ok</body></html>"
 
@@ -261,7 +263,8 @@ def test_extract_page_content_falls_back_to_outer_html():
     class FakePage:
         async def content(self):
             raise RuntimeError(
-                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                "Page.content: Unable to retrieve content because the page is "
+                "navigating and changing the content."
             )
 
         async def evaluate(self, script):

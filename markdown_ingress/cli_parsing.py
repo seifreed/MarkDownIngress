@@ -93,7 +93,8 @@ def prepare_ingest_params(args, runtime_config: Config | None = None):
     # Boolean flags: support both positive and negative flags for symmetry
     # --metadata / --no-metadata: explicit enable/disable, None = use config default
     # --links / --no-links: explicit enable/disable, None = use config default
-    # --advanced-security / --no-advanced-security: explicit enable/disable, None = use config default
+    # --advanced-security / --no-advanced-security: explicit enable/disable.
+    # None = use config default.
     # --use-llm / --no-llm: explicit enable/disable, None = use config default
     extract_metadata = None
     if getattr(args, "metadata", False):

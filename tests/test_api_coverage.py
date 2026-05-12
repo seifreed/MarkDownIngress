@@ -1048,7 +1048,10 @@ def test_ingest_auto_mode_fast_fails_playwright_fallback(error_server):
             self.config = config
 
         def render_sync(self, url):
-            html = "<html><body><article><h1>Fallback</h1><p>Rendered content.</p></article></body></html>"
+            html = (
+                "<html><body><article><h1>Fallback</h1>"
+                "<p>Rendered content.</p></article></body></html>"
+            )
             return FetchResult(
                 html=html,
                 url=url,
@@ -1133,7 +1136,10 @@ def test_orchestrator_auto_playwright_fallback(error_server):
             self.config = config
 
         def render_sync(self, url):
-            html = "<html><body><article><h1>Fallback</h1><p>Rendered content.</p></article></body></html>"
+            html = (
+                "<html><body><article><h1>Fallback</h1>"
+                "<p>Rendered content.</p></article></body></html>"
+            )
             return FetchResult(
                 html=html,
                 url=url,

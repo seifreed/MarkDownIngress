@@ -152,7 +152,7 @@ class InFlightRegistry:
         return orphaned
 
     def _evict_lru_entries_locked(self) -> list[InFlightEntry]:
-        """Evict done/inactive entries with no followers. Caller must notify them after releasing _lock."""
+        """Evict done/inactive entries with no followers."""
         evicted: list[InFlightEntry] = []
         while len(self._requests) >= _INFLIGHT_MAX_SIZE:
             evictable_key = None
@@ -166,7 +166,8 @@ class InFlightRegistry:
 
             if evictable_key is None or evictable_entry is None:
                 logger.warning(
-                    "In-flight registry at max size (%d) with no evictable entries (all have followers)",
+                    "In-flight registry at max size (%d) with no evictable entries "
+                    "(all have followers)",
                     _INFLIGHT_MAX_SIZE,
                 )
                 break
@@ -259,7 +260,8 @@ class InFlightRegistry:
                             break
                         entry.leader_active = False
                         logger.error(
-                            "Marked in-flight entry as inactive after timeout (key=%s, followers=%d)",
+                            "Marked in-flight entry as inactive after timeout "
+                            "(key=%s, followers=%d)",
                             request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
                             entry.followers,
                         )

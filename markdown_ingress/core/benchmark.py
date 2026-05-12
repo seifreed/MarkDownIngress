@@ -255,7 +255,8 @@ class Benchmark:
             report_lines.append(f"{i}. {result.url}")
             report_lines.append(f"   Mode: {result.mode}")
             report_lines.append(
-                f"   Timing: {result.avg_time_ms:.1f}ms avg (min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms)"
+                f"   Timing: {result.avg_time_ms:.1f}ms avg "
+                f"(min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms)"
             )
             token_pct = (
                 f"-{result.reduction_percent:.1f}%" if result.reduction_percent > 0 else "0.0%"
@@ -269,7 +270,8 @@ class Benchmark:
                 f"   Tokens: {result.original_tokens:,} → {result.cleaned_tokens:,} ({token_pct})"
             )
             report_lines.append(
-                f"   Size: {result.original_size_bytes:,} → {result.cleaned_size_bytes:,} bytes ({size_pct})"
+                f"   Size: {result.original_size_bytes:,} → "
+                f"{result.cleaned_size_bytes:,} bytes ({size_pct})"
             )
             report_lines.append(f"   Security: {result.injection_score:.3f} ({result.risk_level})")
             if result.extractor_comparison:

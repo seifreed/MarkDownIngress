@@ -2633,7 +2633,7 @@ def test_get_job_record_treats_naive_legacy_expiry_as_utc(monkeypatch):
     assert job.job_id == "legacy-job"
 
 
-def test_get_job_record_keeps_legacy_job_visible_when_completed_at_is_corrupt_but_legacy_expiry_is_valid(
+def test_get_job_record_keeps_legacy_job_visible_with_corrupt_completed_at(
     monkeypatch,
 ):
     class LegacyQueue:
@@ -2776,13 +2776,26 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs(monkeypatch):
                 )
                 """)
             conn.execute("""
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', '2026-03-30T00:01:00+00:00', NULL, '2999-01-01T00:00:00+00:00')
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy', 'completed', '2026-03-30T00:00:00+00:00',
+                    '2026-03-30T00:01:00+00:00', NULL,
+                    '2999-01-01T00:00:00+00:00'
+                )
                 """)
             conn.execute(
                 """
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy-missing-expiry', 'completed', '2026-03-30T00:00:00+00:00', ?, NULL, NULL)
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy-missing-expiry', 'completed',
+                    '2026-03-30T00:00:00+00:00', ?, NULL, NULL
+                )
                 """,
                 ((datetime.now(UTC) - timedelta(seconds=120)).isoformat(),),
             )
@@ -2826,8 +2839,14 @@ def test_snapshot_job_subsystem_counts_naive_unknown_ttl_jobs(monkeypatch):
                 )
                 """)
             conn.execute("""
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30 00:00:00', '2026-03-30 00:01:00', NULL, '2999-01-01 00:00:00')
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy', 'completed', '2026-03-30 00:00:00',
+                    '2026-03-30 00:01:00', NULL, '2999-01-01 00:00:00'
+                )
                 """)
             conn.commit()
             return conn
@@ -2868,7 +2887,10 @@ def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch)
                 """)
             conn.execute(
                 """
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
                 VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', ?, NULL, NULL)
                 """,
                 (
@@ -2889,7 +2911,7 @@ def test_snapshot_job_subsystem_excludes_invisible_unknown_ttl_jobs(monkeypatch)
     assert snapshot["current_unknown_ttl_jobs"] == 0
 
 
-def test_snapshot_job_subsystem_counts_unknown_ttl_jobs_when_completed_at_is_corrupt_but_legacy_expiry_is_valid(
+def test_snapshot_job_subsystem_counts_unknown_ttl_with_corrupt_completed_at(
     monkeypatch,
 ):
     class CurrentQueue:
@@ -2924,8 +2946,14 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs_when_completed_at_is_cor
                 )
                 """)
             conn.execute("""
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', 'not-a-date', NULL, '2999-01-01T00:00:00+00:00')
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy', 'completed', '2026-03-30T00:00:00+00:00',
+                    'not-a-date', NULL, '2999-01-01T00:00:00+00:00'
+                )
                 """)
             conn.commit()
             return conn
@@ -2942,7 +2970,7 @@ def test_snapshot_job_subsystem_counts_unknown_ttl_jobs_when_completed_at_is_cor
     assert snapshot["legacy_unknown_ttl_jobs"] == 1
 
 
-def test_snapshot_job_subsystem_keeps_legacy_queue_with_missing_completed_at_but_valid_legacy_expiry(
+def test_snapshot_job_subsystem_keeps_legacy_queue_with_missing_completed_at(
     monkeypatch,
 ):
     class LegacyQueue:
@@ -2970,8 +2998,14 @@ def test_snapshot_job_subsystem_keeps_legacy_queue_with_missing_completed_at_but
                 )
                 """)
             conn.execute("""
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', NULL, NULL, '2999-01-01T00:00:00+00:00')
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy', 'completed', '2026-03-30T00:00:00+00:00',
+                    NULL, NULL, '2999-01-01T00:00:00+00:00'
+                )
                 """)
             conn.commit()
             return conn
@@ -2987,7 +3021,7 @@ def test_snapshot_job_subsystem_keeps_legacy_queue_with_missing_completed_at_but
     assert snapshot["legacy_unknown_ttl_jobs"] == 1
 
 
-def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed_at_and_missing_legacy_expiry(
+def test_snapshot_job_subsystem_excludes_unknown_ttl_with_corrupt_completed_at(
     monkeypatch,
 ):
     class QueueWithCorruptCompletedAt:
@@ -3015,8 +3049,14 @@ def test_snapshot_job_subsystem_excludes_unknown_ttl_jobs_with_corrupt_completed
                 )
                 """)
             conn.execute("""
-                INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
-                VALUES ('legacy', 'completed', '2026-03-30T00:00:00+00:00', 'not-a-date', NULL, NULL)
+                INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
+                VALUES (
+                    'legacy', 'completed', '2026-03-30T00:00:00+00:00',
+                    'not-a-date', NULL, NULL
+                )
                 """)
             conn.commit()
             return conn
@@ -3085,7 +3125,8 @@ def test_prune_job_queue_history_drops_expired_sqlite_queues(tmp_path, monkeypat
     with closing(expired_queue._connect()) as conn:
         conn.execute(
             """
-            INSERT INTO jobs (job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds)
+            INSERT INTO jobs (job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3104,7 +3145,8 @@ def test_prune_job_queue_history_drops_expired_sqlite_queues(tmp_path, monkeypat
     with closing(visible_queue._connect()) as conn:
         conn.execute(
             """
-            INSERT INTO jobs (job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds)
+            INSERT INTO jobs (job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3154,7 +3196,9 @@ def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_without_pid_me
             )
             """)
         conn.execute(
-            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO queue_leases "
+            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
+            "VALUES (?, ?, ?, ?, ?)",
             ("default", "other-owner", datetime.now(UTC).isoformat(), 0, None),
         )
         conn.commit()
@@ -3177,7 +3221,9 @@ def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_with_dead_pid(
             )
             """)
         conn.execute(
-            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO queue_leases "
+            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
+            "VALUES (?, ?, ?, ?, ?)",
             ("default", "other-owner", datetime.now(UTC).isoformat(), 999999, None),
         )
         conn.commit()
@@ -3356,7 +3402,9 @@ def test_external_owner_get_preserves_legacy_expires_at(tmp_path):
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3400,7 +3448,9 @@ def test_external_owner_get_handles_corrupt_result_json(tmp_path):
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3444,7 +3494,9 @@ def test_external_owner_get_hides_completed_job_with_corrupt_ttl_seconds(tmp_pat
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3740,7 +3792,10 @@ def test_prune_job_queue_history_drops_legacy_queue_with_invalid_legacy_expires_
             """)
         conn.execute(
             """
-            INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+            INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3782,7 +3837,10 @@ def test_prune_job_queue_history_drops_legacy_queue_with_corrupt_ttl_seconds(tmp
             """)
         conn.execute(
             """
-            INSERT INTO jobs (job_id, status, created_at, completed_at, ttl_seconds, legacy_expires_at)
+            INSERT INTO jobs (
+                    job_id, status, created_at, completed_at,
+                    ttl_seconds, legacy_expires_at
+                )
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (

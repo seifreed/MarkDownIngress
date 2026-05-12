@@ -482,7 +482,8 @@ def _start_job_queue_watchdog() -> None:
 
 
 def _init_job_queue(previous_queue=None):
-    global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
+    global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
+    global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
 
     def _stop_control_thread(
         name: str,

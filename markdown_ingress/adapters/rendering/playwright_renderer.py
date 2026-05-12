@@ -344,7 +344,8 @@ class Renderer(IRenderer):
         for strategy_index, (wait_state, timeout_ms) in enumerate(self.LOAD_STRATEGIES):
             try:
                 logger.info(
-                    f"[Extreme Mode] Attempt {strategy_index + 1}/3: {wait_state} ({timeout_ms/1000}s)"
+                    f"[Extreme Mode] Attempt {strategy_index + 1}/3: "
+                    f"{wait_state} ({timeout_ms / 1000}s)"
                 )
 
                 temp_config = RenderConfig(
@@ -385,7 +386,8 @@ class Renderer(IRenderer):
         if last_exception is not None:
             raise last_exception
         raise RuntimeError(
-            "No render strategies configured or all strategies failed without capturing an exception"
+            "No render strategies configured or all strategies failed without "
+            "capturing an exception"
         )
 
     async def _render_with_smart_wait(self, url: str, timeout_ms: int) -> FetchResult:

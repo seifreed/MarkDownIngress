@@ -85,7 +85,11 @@ def test_extract_language_from_content_language_list_uses_primary_language():
     <head>
         <meta http-equiv="content-language" content="en,fr">
     </head>
-    <body>Content with enough words to trigger language detection fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback fallback.</body>
+    <body>
+        Content with enough words to trigger language detection fallback fallback
+        fallback fallback fallback fallback fallback fallback fallback fallback
+        fallback fallback fallback.
+    </body>
     </html>
     """
     extractor = MetadataExtractor()

@@ -398,7 +398,8 @@ class PersistentJobQueue:
         validated = _validate_job_db_path(self.db_path)
         if validated != self.db_path:
             raise ValueError(
-                f"Job DB path changed between validation and open: {self.db_path!r} -> {validated!r}"
+                "Job DB path changed between validation and open: "
+                f"{self.db_path!r} -> {validated!r}"
             )
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
@@ -572,13 +573,16 @@ class PersistentJobQueue:
                 with closing(self._connect()) as conn:
                     conn.execute("BEGIN IMMEDIATE")
                     row = conn.execute(
-                        "SELECT owner_id, heartbeat_at, owner_pid, owner_start_time FROM queue_leases WHERE lease_name = ?",
+                        "SELECT owner_id, heartbeat_at, owner_pid, owner_start_time "
+                        "FROM queue_leases WHERE lease_name = ?",
                         ("default",),
                     ).fetchone()
                     now_iso = _utcnow()
                     if row is None:
                         conn.execute(
-                            "INSERT INTO queue_leases (lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) VALUES (?, ?, ?, ?, ?)",
+                            "INSERT INTO queue_leases "
+                            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
+                            "VALUES (?, ?, ?, ?, ?)",
                             (
                                 "default",
                                 self.instance_id,
@@ -601,7 +605,9 @@ class PersistentJobQueue:
                             )
                         self._recovered_orphaned_jobs = owner_id == self.instance_id
                         conn.execute(
-                            "UPDATE queue_leases SET owner_id = ?, heartbeat_at = ?, owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
+                            "UPDATE queue_leases "
+                            "SET owner_id = ?, heartbeat_at = ?, owner_pid = ?, "
+                            "owner_start_time = ? WHERE lease_name = ?",
                             (
                                 self.instance_id,
                                 now_iso,
@@ -812,8 +818,10 @@ class PersistentJobQueue:
                     ttl_seconds = COALESCE(ttl_seconds, ?),
                     error = CASE
                         WHEN status = 'running'
-                            THEN 'Job interrupted by process restart; persisted task payload is not recoverable'
-                        ELSE 'Job abandoned after process restart; persisted task payload is not recoverable'
+                            THEN 'Job interrupted by process restart; persisted task '
+                                 || 'payload is not recoverable'
+                        ELSE 'Job abandoned after process restart; persisted task '
+                             || 'payload is not recoverable'
                     END
                 WHERE status IN ('queued', 'running')
                 """,
@@ -864,7 +872,8 @@ class PersistentJobQueue:
                     conn.rollback()
                     self._lease_lost = True
                     raise RuntimeError(
-                        "Job queue lease was lost; this instance can no longer accept or execute jobs"
+                        "Job queue lease was lost; this instance can no longer accept "
+                        "or execute jobs"
                     )
                 row = conn.execute(
                     "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
@@ -1347,7 +1356,8 @@ class PersistentJobQueue:
                         f"Job {job_id} is already running and cannot be executed twice"
                     )
                 raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'queued'"
+                    f"Invalid state transition: job {job_id} is '{row['status']}', "
+                    "expected 'queued'"
                 )
 
     def _mark_completed(self, job_id: str, result: dict[str, Any]) -> None:
@@ -1381,7 +1391,8 @@ class PersistentJobQueue:
                 if row["status"] == "completed":
                     return
                 raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'running'"
+                    f"Invalid state transition: job {job_id} is '{row['status']}', "
+                    "expected 'running'"
                 )
 
     def _mark_failed(self, job_id: str, error: str) -> None:
@@ -1423,7 +1434,8 @@ class PersistentJobQueue:
                     return  # Already failed - idempotent no-op
                 # Job is in an unexpected state
                 raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', cannot transition to 'failed'"
+                    f"Invalid state transition: job {job_id} is '{row['status']}', "
+                    "cannot transition to 'failed'"
                 )
 
     def _mark_webhook_failed(self, job_id: str, error: str) -> None:
@@ -1459,7 +1471,8 @@ class PersistentJobQueue:
                     return  # Already failed - idempotent no-op
                 # Job is in an unexpected state (e.g., still running)
                 raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', expected 'completed'"
+                    f"Invalid state transition: job {job_id} is '{row['status']}', "
+                    "expected 'completed'"
                 )
 
     def _mark_completed_preserve_result(
@@ -1476,7 +1489,7 @@ class PersistentJobQueue:
         result_json = json.dumps(result) if result is not None else None
         with closing(self._connect()) as conn:
             # Try to mark as failed while preserving result
-            # Only update if still in 'running' state (lease might have been taken by another process)
+            # Only update if still in 'running' state. Another process may have taken the lease.
             cursor = conn.execute(
                 """
                 UPDATE jobs

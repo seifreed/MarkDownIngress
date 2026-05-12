@@ -125,7 +125,10 @@ class Scorer:
             "low": "Low risk detected. Review recommended but likely safe.",
             "medium": "Medium risk detected. Manual review recommended before use.",
             "high": "High risk detected. Content may contain injection attempts. Use with caution.",
-            "critical": "Critical risk detected. Content likely contains prompt injection. Blocking recommended.",
+            "critical": (
+                "Critical risk detected. Content likely contains prompt injection. "
+                "Blocking recommended."
+            ),
         }
 
         return recommendations[risk_level]

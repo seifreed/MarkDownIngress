@@ -167,7 +167,8 @@ window.navigator.permissions.query = function(parameters) {
             onchange: null,
         });
     }
-    // BUG FIX: Use .call() with correct context (navigator.permissions, not window.navigator.permissions)
+    // Use .call() with correct context (navigator.permissions,
+    // not window.navigator.permissions).
     return originalQuery.call(this, parameters);
 };
 

@@ -513,7 +513,8 @@ class TestCreateBatchProcessor:
     def test_config_defaults_propagated(self, tmp_path):
         config_path = tmp_path / "batch.yaml"
         config_path.write_text(
-            "mode: render\nstrict: false\nmodel: claude\nbatch_timeout: 22\nbatch_max_concurrent: 7\n"
+            "mode: render\nstrict: false\nmodel: claude\nbatch_timeout: 22\n"
+            "batch_max_concurrent: 7\n"
         )
         args = Namespace(
             fast=False,

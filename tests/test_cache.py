@@ -847,7 +847,8 @@ def test_sqlite_cache_corrupt_entry_deleted(tmp_path, caplog):
     corrupt_json = '{"invalid": "data", "missing_required_fields": true}'
     with cache._db_lock:
         cache.conn.execute(
-            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cache "
+            "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
             ("corrupt_key", corrupt_json, 0.0, 0.0),
         )
         cache.conn.commit()
@@ -882,7 +883,8 @@ def test_sqlite_cache_non_object_json_entry_deleted(tmp_path, caplog):
 
     with cache._db_lock:
         cache.conn.execute(
-            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cache "
+            "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
             ("list_key", "[1, 2, 3]", 0.0, 0.0),
         )
         cache.conn.commit()
@@ -906,7 +908,8 @@ def test_sqlite_cache_get_deletes_entry_with_corrupt_expires_at(sample_document,
 
     with cache._db_lock:
         cache.conn.execute(
-            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cache "
+            "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
             ("bad_expiry", cache._serialize_document(sample_document), 0.0, "not-a-number"),
         )
         cache.conn.commit()
@@ -927,7 +930,8 @@ def test_sqlite_cache_exists_deletes_entry_with_corrupt_expires_at(sample_docume
 
     with cache._db_lock:
         cache.conn.execute(
-            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cache "
+            "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
             ("bad_expiry", cache._serialize_document(sample_document), 0.0, "not-a-number"),
         )
         cache.conn.commit()
@@ -955,7 +959,8 @@ def test_sqlite_cache_accepts_integer_injection_score_from_legacy_json(tmp_path)
     )
     with cache._db_lock:
         cache.conn.execute(
-            "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO cache "
+            "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
             ("legacy_key", legacy_json, 0.0, time.time() + 3600),
         )
         cache.conn.commit()
@@ -970,7 +975,7 @@ def test_sqlite_cache_accepts_integer_injection_score_from_legacy_json(tmp_path)
 
 
 def test_memory_cache_returns_deep_copy(sample_document):
-    """Test that MemoryCache.get() returns a deep copy to prevent TOCTOU issues with nested objects"""
+    """MemoryCache.get() returns a deep copy for nested objects."""
     cache = MemoryCache(default_ttl=3600)
     key = "test_key"
 

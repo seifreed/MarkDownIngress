@@ -302,7 +302,8 @@ def validate_hostname_for_ssrf(
         # (decimal IPv4 like 2130706433, hex like 0x7f000001, octal like 017700000001)
         if re.fullmatch(r"0x[0-9a-fA-F]+|0[0-7]+|\d+", normalized):
             raise ValueError(
-                f"URL hostname looks like a numeric IP literal and is blocked (SSRF protection): {normalized}"
+                "URL hostname looks like a numeric IP literal and is blocked "
+                f"(SSRF protection): {normalized}"
             ) from None
         # Catch compressed IPv4 like "127.1" or "10.0.1" that inet_aton accepts
         # but ipaddress.ip_address() rejects (2- or 3-part dotted decimal).

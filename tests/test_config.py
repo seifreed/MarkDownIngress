@@ -831,7 +831,10 @@ batch_max_concurrent: 10
         try:
             with pytest.raises(
                 ValueError,
-                match="Environment cannot define both MDI_POLICY and MDI_POLICY_NAME with different values",
+                match=(
+                    "Environment cannot define both MDI_POLICY and MDI_POLICY_NAME "
+                    "with different values"
+                ),
             ):
                 ConfigLoader().load()
         finally:

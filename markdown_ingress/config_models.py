@@ -193,7 +193,8 @@ def _collect_init_values(
         if index < len(args):
             if config_field.name in remaining_kwargs:
                 raise TypeError(
-                    f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'"
+                    f"{cls.__name__}.__init__() got multiple values for argument "
+                    f"{config_field.name!r}"
                 )
             values[config_field.name] = args[index]
             explicit.add(config_field.name)
@@ -302,7 +303,8 @@ class RenderConfig:
         self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
         if self.wait_until not in VALID_WAIT_UNTIL:
             raise ValueError(
-                f"Invalid wait_until '{self.wait_until}'. Must be one of: {', '.join(VALID_WAIT_UNTIL)}"
+                f"Invalid wait_until '{self.wait_until}'. Must be one of: "
+                f"{', '.join(VALID_WAIT_UNTIL)}"
             )
         if not isinstance(self.dns_pins, dict):
             raise ValueError(
@@ -402,11 +404,13 @@ class DomainPolicy:
             )
         if self.block_threshold is not None and not 0.0 <= self.block_threshold <= 1.0:
             raise ValueError(
-                f"DomainPolicy.block_threshold must be between 0.0 and 1.0, got {self.block_threshold}"
+                "DomainPolicy.block_threshold must be between 0.0 and 1.0, "
+                f"got {self.block_threshold}"
             )
         if self.warn_threshold is not None and not 0.0 <= self.warn_threshold <= 1.0:
             raise ValueError(
-                f"DomainPolicy.warn_threshold must be between 0.0 and 1.0, got {self.warn_threshold}"
+                "DomainPolicy.warn_threshold must be between 0.0 and 1.0, "
+                f"got {self.warn_threshold}"
             )
         if self.timeout is not None and self.timeout <= 0.0:
             raise ValueError(f"DomainPolicy.timeout must be > 0.0, got {self.timeout}")
@@ -540,7 +544,7 @@ class IngestConfig:
     """Plugin directories to load custom patterns from"""
 
     output_profile: str = "default"
-    """Preset output profile ('default', 'llm_safe', 'rag_chunkable', 'for_search', 'for_archive')"""
+    """Preset output profile for public output shaping."""
 
     output_format: Literal["text", "json", "markdown"] = "text"
     """Preferred public output format for config-driven interfaces such as the CLI"""
@@ -695,7 +699,8 @@ class IngestConfig:
 
         if self.policy_name not in VALID_POLICY_NAMES:
             raise ValueError(
-                f"Invalid policy_name '{self.policy_name}'. Must be one of: {', '.join(VALID_POLICY_NAMES)}"
+                f"Invalid policy_name '{self.policy_name}'. Must be one of: "
+                f"{', '.join(VALID_POLICY_NAMES)}"
             )
         # Normalize "moderate" → "normal" here too, not just in __init__,
         # because resolve_for_url applies overrides via setattr bypassing __init__.
@@ -705,12 +710,14 @@ class IngestConfig:
         valid_chunking = ("none", "heading", "size")
         if self.chunking_strategy not in valid_chunking:
             raise ValueError(
-                f"Invalid chunking_strategy '{self.chunking_strategy}'. Must be one of: {', '.join(valid_chunking)}"
+                f"Invalid chunking_strategy '{self.chunking_strategy}'. "
+                f"Must be one of: {', '.join(valid_chunking)}"
             )
 
         if self.output_format not in VALID_OUTPUT_FORMATS:
             raise ValueError(
-                f"Invalid output_format '{self.output_format}'. Must be one of: {', '.join(VALID_OUTPUT_FORMATS)}"
+                f"Invalid output_format '{self.output_format}'. Must be one of: "
+                f"{', '.join(VALID_OUTPUT_FORMATS)}"
             )
         _validate_output_profile_name(self.output_profile)
         self.output_formats = _validate_output_representations(self.output_formats)
@@ -746,7 +753,8 @@ class IngestConfig:
         # chunk_overlap must be strictly less than chunk_size to ensure forward progress
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError(
-                f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
+                f"chunk_overlap ({self.chunk_overlap}) must be less than "
+                f"chunk_size ({self.chunk_size})"
             )
 
         if self.domain_request_interval < 0.0:

@@ -80,7 +80,8 @@ class SecurityEngine:
             else:
                 if math.isnan(fallback_score) or not (0.0 <= fallback_score <= 1.0):
                     logger.warning(
-                        "Invalid exception_fallback_score '%s', must be 0.0-1.0. Using default 0.75.",
+                        "Invalid exception_fallback_score '%s', must be 0.0-1.0. "
+                        "Using default 0.75.",
                         exception_fallback_score,
                     )
                     self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE

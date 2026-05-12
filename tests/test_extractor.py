@@ -67,12 +67,16 @@ def test_extraction_preserves_structure():
 
 def test_sanitize_dangerous_svg_data_urls_and_srcset():
     extractor = Extractor()
-    html = """
+    svg_data_url = (
+        "data:image/svg+xml,"
+        "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+    )
+    html = f"""
     <html>
     <body>
         <img
-            src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
-            srcset="https://example.com/a.png 1x, data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg> 2x"
+            src="{svg_data_url}"
+            srcset="https://example.com/a.png 1x, {svg_data_url} 2x"
         >
         <div style="background-image:url(javascript:alert(1))">X</div>
     </body>

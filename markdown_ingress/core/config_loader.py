@@ -263,7 +263,8 @@ class ConfigLoader:
         if config.cache_type not in VALID_CACHE_TYPES:
             restore(
                 "cache_type",
-                "Invalid cache_type '%s' from environment, valid values: %s. Keeping previous value %r.",
+                "Invalid cache_type '%s' from environment, valid values: %s. "
+                "Keeping previous value %r.",
                 config.cache_type,
                 VALID_CACHE_TYPES,
                 previous_values["cache_type"],
@@ -271,7 +272,8 @@ class ConfigLoader:
         if config.output_format not in VALID_OUTPUT_FORMATS:
             restore(
                 "output_format",
-                "Invalid output_format '%s' from environment, valid values: %s. Keeping previous value %r.",
+                "Invalid output_format '%s' from environment, valid values: %s. "
+                "Keeping previous value %r.",
                 config.output_format,
                 VALID_OUTPUT_FORMATS,
                 previous_values["output_format"],
@@ -291,21 +293,24 @@ class ConfigLoader:
         if config.auto_render_threshold < 1:
             restore(
                 "auto_render_threshold",
-                "Invalid auto_render_threshold %r from environment, must be >= 1. Keeping previous value %r.",
+                "Invalid auto_render_threshold %r from environment, must be >= 1. "
+                "Keeping previous value %r.",
                 config.auto_render_threshold,
                 previous_values["auto_render_threshold"],
             )
         if config.render_cost_budget is not None and config.render_cost_budget < 1:
             restore(
                 "render_cost_budget",
-                "Invalid render_cost_budget %r from environment, must be >= 1. Keeping previous value %r.",
+                "Invalid render_cost_budget %r from environment, must be >= 1. "
+                "Keeping previous value %r.",
                 config.render_cost_budget,
                 previous_values["render_cost_budget"],
             )
         if not config.output_formats:
             restore(
                 "output_formats",
-                "Invalid output_formats from environment, list cannot be empty. Keeping previous value %r.",
+                "Invalid output_formats from environment, list cannot be empty. "
+                "Keeping previous value %r.",
                 previous_values["output_formats"],
             )
         else:
@@ -321,7 +326,8 @@ class ConfigLoader:
         if config.chunking_strategy not in VALID_CHUNKING_STRATEGIES:
             restore(
                 "chunking_strategy",
-                "Invalid chunking_strategy '%s' from environment, valid values: %s. Keeping previous value %r.",
+                "Invalid chunking_strategy '%s' from environment, valid values: %s. "
+                "Keeping previous value %r.",
                 config.chunking_strategy,
                 VALID_CHUNKING_STRATEGIES,
                 previous_values["chunking_strategy"],
@@ -329,7 +335,8 @@ class ConfigLoader:
         if config.policy not in VALID_POLICIES:
             restore(
                 "policy",
-                "Invalid policy '%s' from environment, valid values: %s. Keeping previous value %r.",
+                "Invalid policy '%s' from environment, valid values: %s. "
+                "Keeping previous value %r.",
                 config.policy,
                 VALID_POLICIES,
                 previous_values["policy"],
@@ -352,7 +359,8 @@ class ConfigLoader:
         if config.timeout <= 0 or config.timeout > 3600:
             restore(
                 "timeout",
-                "Invalid timeout '%s' from environment, must be > 0 and <= 3600. Keeping previous value %r.",
+                "Invalid timeout '%s' from environment, must be > 0 and <= 3600. "
+                "Keeping previous value %r.",
                 config.timeout,
                 previous_values["timeout"],
             )
@@ -366,21 +374,24 @@ class ConfigLoader:
         if config.chunk_size < 100 or config.chunk_size > 50000:
             restore(
                 "chunk_size",
-                "Invalid chunk_size '%s' from environment, must be 100-50000. Keeping previous value %r.",
+                "Invalid chunk_size '%s' from environment, must be 100-50000. "
+                "Keeping previous value %r.",
                 config.chunk_size,
                 previous_values["chunk_size"],
             )
         if config.chunk_overlap < 0 or config.chunk_overlap > 10000:
             restore(
                 "chunk_overlap",
-                "Invalid chunk_overlap '%s' from environment, must be 0-10000. Keeping previous value %r.",
+                "Invalid chunk_overlap '%s' from environment, must be 0-10000. "
+                "Keeping previous value %r.",
                 config.chunk_overlap,
                 previous_values["chunk_overlap"],
             )
         if config.chunk_overlap >= config.chunk_size:
             restore(
                 "chunk_overlap",
-                "chunk_overlap (%s) must be less than chunk_size (%s) after env overrides. Keeping previous value %r.",
+                "chunk_overlap (%s) must be less than chunk_size (%s) after "
+                "env overrides. Keeping previous value %r.",
                 config.chunk_overlap,
                 config.chunk_size,
                 previous_values["chunk_overlap"],
@@ -388,35 +399,40 @@ class ConfigLoader:
         if config.domain_request_interval < 0.0:
             restore(
                 "domain_request_interval",
-                "Invalid domain_request_interval '%s' from environment, must be >= 0.0. Keeping previous value %r.",
+                "Invalid domain_request_interval '%s' from environment, must be "
+                ">= 0.0. Keeping previous value %r.",
                 config.domain_request_interval,
                 previous_values["domain_request_interval"],
             )
         elif not math.isfinite(config.domain_request_interval):
             restore(
                 "domain_request_interval",
-                "Invalid domain_request_interval '%s' from environment, must be finite. Keeping previous value %r.",
+                "Invalid domain_request_interval '%s' from environment, must be "
+                "finite. Keeping previous value %r.",
                 config.domain_request_interval,
                 previous_values["domain_request_interval"],
             )
         if config.circuit_breaker_threshold < 1:
             restore(
                 "circuit_breaker_threshold",
-                "Invalid circuit_breaker_threshold '%s' from environment, must be >= 1. Keeping previous value %r.",
+                "Invalid circuit_breaker_threshold '%s' from environment, must be "
+                ">= 1. Keeping previous value %r.",
                 config.circuit_breaker_threshold,
                 previous_values["circuit_breaker_threshold"],
             )
         if config.circuit_breaker_open_seconds <= 0.0:
             restore(
                 "circuit_breaker_open_seconds",
-                "Invalid circuit_breaker_open_seconds '%s' from environment, must be > 0.0. Keeping previous value %r.",
+                "Invalid circuit_breaker_open_seconds '%s' from environment, must "
+                "be > 0.0. Keeping previous value %r.",
                 config.circuit_breaker_open_seconds,
                 previous_values["circuit_breaker_open_seconds"],
             )
         elif not math.isfinite(config.circuit_breaker_open_seconds):
             restore(
                 "circuit_breaker_open_seconds",
-                "Invalid circuit_breaker_open_seconds '%s' from environment, must be finite. Keeping previous value %r.",
+                "Invalid circuit_breaker_open_seconds '%s' from environment, must "
+                "be finite. Keeping previous value %r.",
                 config.circuit_breaker_open_seconds,
                 previous_values["circuit_breaker_open_seconds"],
             )
@@ -430,21 +446,24 @@ class ConfigLoader:
         if config.batch_max_concurrent < 1:
             restore(
                 "batch_max_concurrent",
-                "Invalid batch_max_concurrent '%s' from environment, must be >= 1. Keeping previous value %r.",
+                "Invalid batch_max_concurrent '%s' from environment, must be >= 1. "
+                "Keeping previous value %r.",
                 config.batch_max_concurrent,
                 previous_values["batch_max_concurrent"],
             )
         if config.batch_timeout <= 0.0:
             restore(
                 "batch_timeout",
-                "Invalid batch_timeout '%s' from environment, must be > 0.0. Keeping previous value %r.",
+                "Invalid batch_timeout '%s' from environment, must be > 0.0. "
+                "Keeping previous value %r.",
                 config.batch_timeout,
                 previous_values["batch_timeout"],
             )
         elif not math.isfinite(config.batch_timeout):
             restore(
                 "batch_timeout",
-                "Invalid batch_timeout '%s' from environment, must be finite. Keeping previous value %r.",
+                "Invalid batch_timeout '%s' from environment, must be finite. "
+                "Keeping previous value %r.",
                 config.batch_timeout,
                 previous_values["batch_timeout"],
             )
@@ -488,7 +507,8 @@ class ConfigLoader:
         if lower in ("false", "0", "no", "off", "disabled"):
             return False
         raise ValueError(
-            f"invalid boolean {value!r}; expected one of true/false/1/0/yes/no/on/off/enabled/disabled"
+            f"invalid boolean {value!r}; expected one of "
+            "true/false/1/0/yes/no/on/off/enabled/disabled"
         )
 
     @classmethod

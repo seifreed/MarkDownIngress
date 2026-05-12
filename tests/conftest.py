@@ -39,7 +39,10 @@ def pytest_addoption(parser):
         "--url-campaign-scenarios",
         action="store",
         default=os.environ.get("MDI_URL_CAMPAIGN_SCENARIOS", ""),
-        help="Comma-separated scenario names for the URL campaign (default = all enabled scenarios).",
+        help=(
+            "Comma-separated scenario names for the URL campaign "
+            "(default = all enabled scenarios)."
+        ),
     )
     parser.addoption(
         "--url-campaign-concurrency",

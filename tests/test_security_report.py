@@ -26,7 +26,10 @@ from markdown_ingress.reporting import (
 def local_server():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            html = b"<html><body><article><h1>Example Domain</h1><p>Local report content.</p></article></body></html>"
+            html = (
+                b"<html><body><article><h1>Example Domain</h1>"
+                b"<p>Local report content.</p></article></body></html>"
+            )
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html)))

@@ -346,7 +346,7 @@ class IngestUseCase:
                 _logger.debug("Could not remove screenshot %s: %s", screenshot, exc)
 
     def execute(self, url: str, config: IngestConfig) -> SafeDocument:
-        """Execute one ingestion request including cache/inflight handling and auto-mode fallback."""
+        """Execute one ingestion request with cache, inflight handling, and auto fallback."""
         bump_ingest_stat("requests_total")
         started_at = time.perf_counter()
         requested_mode = config.mode

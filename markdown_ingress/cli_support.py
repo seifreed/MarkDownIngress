@@ -96,7 +96,8 @@ def display_security_info(doc) -> None:
         "green" if doc.injection_score < 0.4 else "yellow" if doc.injection_score < 0.7 else "red"
     )
     console.print(
-        f"[bold]Injection Score:[/bold] [{score_color}]{doc.injection_score:.3f}[/{score_color}] ({risk_level})"
+        f"[bold]Injection Score:[/bold] [{score_color}]{doc.injection_score:.3f}"
+        f"[/{score_color}] ({risk_level})"
     )
     if doc.flags:
         console.print(f"[bold]Flags:[/bold] {', '.join(doc.flags)}")
@@ -138,7 +139,8 @@ def display_content(doc, args) -> None:
         console.print("=" * 60)
         for chunk in doc.chunks:
             console.print(
-                f"{chunk['chunk_id']}: blocks={chunk['block_ordinals']} tokens={chunk['token_estimate']}"
+                f"{chunk['chunk_id']}: blocks={chunk['block_ordinals']} "
+                f"tokens={chunk['token_estimate']}"
             )
     if getattr(args, "show_observability", False) and doc.observability:
         console.print()

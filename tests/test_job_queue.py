@@ -224,7 +224,8 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale(tmp_path: 
 
     with closing(first_queue._connect()) as conn:
         conn.execute(
-            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
+            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, "
+            "owner_start_time = ? WHERE lease_name = ?",
             ("2000-01-01T00:00:00+00:00", 0, None, "default"),
         )
         conn.commit()
@@ -240,7 +241,8 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale_and_naive(
 
     with closing(first_queue._connect()) as conn:
         conn.execute(
-            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
+            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, "
+            "owner_start_time = ? WHERE lease_name = ?",
             ("2000-01-01 00:00:00", 0, None, "default"),
         )
         conn.commit()
@@ -250,7 +252,7 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale_and_naive(
     takeover_queue.close()
 
 
-def test_persistent_job_queue_rejects_second_owner_when_pid_metadata_is_missing_but_heartbeat_is_fresh(
+def test_persistent_job_queue_rejects_second_owner_without_pid_metadata(
     tmp_path: Path,
 ):
     db_path = tmp_path / "jobs.sqlite3"
@@ -1271,7 +1273,8 @@ def test_persistent_job_queue_expires_legacy_rows_with_unknown_ttl_via_compatibi
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1317,7 +1320,9 @@ def test_cleanup_expired_drops_legacy_rows_with_invalid_legacy_expires_at(tmp_pa
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1349,7 +1354,9 @@ def test_cleanup_expired_sets_missing_legacy_expiry_from_completed_at_for_recent
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1389,7 +1396,9 @@ def test_cleanup_expired_drops_legacy_rows_missing_legacy_expires_at_when_alread
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1420,7 +1429,9 @@ def test_cleanup_expired_drops_legacy_rows_missing_legacy_expires_at_with_invali
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1450,7 +1461,9 @@ def test_cleanup_expired_sets_missing_legacy_expiry_from_completed_at(tmp_path: 
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1487,7 +1500,9 @@ def test_migration_keeps_legacy_expiry_null_when_completed_at_is_invalid(tmp_pat
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1522,7 +1537,9 @@ def test_migration_normalizes_naive_completed_at_to_utc_for_legacy_expiry(tmp_pa
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1555,7 +1572,9 @@ def test_cleanup_expired_drops_rows_with_invalid_completed_at_and_persisted_ttl(
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1586,7 +1605,9 @@ def test_cleanup_expired_drops_rows_with_missing_completed_at_and_persisted_ttl(
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1615,7 +1636,9 @@ def test_cleanup_expired_drops_rows_with_corrupt_persisted_ttl(tmp_path: Path):
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1646,7 +1669,9 @@ def test_cleanup_expired_drops_legacy_rows_with_missing_completed_at_and_expired
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1677,7 +1702,9 @@ def test_cleanup_expired_preserves_legacy_rows_with_missing_completed_at_and_fut
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1712,7 +1739,9 @@ def test_cleanup_expired_preserves_space_separated_completed_at_until_ttl_expire
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1748,7 +1777,9 @@ def test_cleanup_expired_preserves_space_separated_legacy_expiry_until_expiry(tm
         conn.execute(
             """
             INSERT INTO jobs (
-                job_id, status, created_at, completed_at, result_json, error, webhook_url, ttl_seconds, legacy_expires_at
+                job_id, status, created_at, completed_at,
+                result_json, error, webhook_url, ttl_seconds,
+                legacy_expires_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (

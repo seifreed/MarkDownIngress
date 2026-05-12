@@ -97,7 +97,8 @@ def _normalize_domain_policies(value: Any) -> list[DomainPolicy]:
             continue
         if not isinstance(item, Mapping):
             raise ValueError(
-                f"domain_policies[{index}] must be a mapping or DomainPolicy, got {type(item).__name__}"
+                f"domain_policies[{index}] must be a mapping or DomainPolicy, "
+                f"got {type(item).__name__}"
             )
         try:
             normalized.append(DomainPolicy(**dict(item)))
@@ -125,7 +126,8 @@ def _collect_config_init_values(
         if index < len(args):
             if config_field.name in remaining_kwargs:
                 raise TypeError(
-                    f"{cls.__name__}.__init__() got multiple values for argument '{config_field.name}'"
+                    f"{cls.__name__}.__init__() got multiple values for argument "
+                    f"{config_field.name!r}"
                 )
             values[config_field.name] = args[index]
             explicit.add(config_field.name)
@@ -305,15 +307,18 @@ class Config:
             )
         if self.cache_type not in VALID_CACHE_TYPES:
             raise ValueError(
-                f"Invalid cache_type '{self.cache_type}'. Must be one of: {', '.join(VALID_CACHE_TYPES)}"
+                f"Invalid cache_type '{self.cache_type}'. Must be one of: "
+                f"{', '.join(VALID_CACHE_TYPES)}"
             )
         if self.output_format not in VALID_OUTPUT_FORMATS:
             raise ValueError(
-                f"Invalid output_format '{self.output_format}'. Must be one of: {', '.join(VALID_OUTPUT_FORMATS)}"
+                f"Invalid output_format '{self.output_format}'. Must be one of: "
+                f"{', '.join(VALID_OUTPUT_FORMATS)}"
             )
         if self.chunking_strategy not in VALID_CHUNKING_STRATEGIES:
             raise ValueError(
-                f"Invalid chunking_strategy '{self.chunking_strategy}'. Must be one of: {', '.join(VALID_CHUNKING_STRATEGIES)}"
+                f"Invalid chunking_strategy '{self.chunking_strategy}'. Must be one of: "
+                f"{', '.join(VALID_CHUNKING_STRATEGIES)}"
             )
 
         # Validate policy
@@ -333,7 +338,8 @@ class Config:
             )
         if self.batch_max_concurrent < _MIN_BATCH_CONCURRENCY:
             raise ValueError(
-                f"batch_max_concurrent must be >= {_MIN_BATCH_CONCURRENCY}, got {self.batch_max_concurrent}"
+                f"batch_max_concurrent must be >= {_MIN_BATCH_CONCURRENCY}, "
+                f"got {self.batch_max_concurrent}"
             )
         if self.batch_timeout <= 0:
             raise ValueError(f"batch_timeout must be positive, got {self.batch_timeout}")
@@ -341,15 +347,18 @@ class Config:
             raise ValueError(f"cache_ttl must be positive, got {self.cache_ttl}")
         if self.chunk_size < _MIN_CHUNK_SIZE or self.chunk_size > _MAX_CHUNK_SIZE:
             raise ValueError(
-                f"chunk_size must be between {_MIN_CHUNK_SIZE} and {_MAX_CHUNK_SIZE}, got {self.chunk_size}"
+                f"chunk_size must be between {_MIN_CHUNK_SIZE} and {_MAX_CHUNK_SIZE}, "
+                f"got {self.chunk_size}"
             )
         if self.chunk_overlap < _MIN_CHUNK_OVERLAP or self.chunk_overlap > _MAX_CHUNK_OVERLAP:
             raise ValueError(
-                f"chunk_overlap must be between {_MIN_CHUNK_OVERLAP} and {_MAX_CHUNK_OVERLAP}, got {self.chunk_overlap}"
+                f"chunk_overlap must be between {_MIN_CHUNK_OVERLAP} and "
+                f"{_MAX_CHUNK_OVERLAP}, got {self.chunk_overlap}"
             )
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError(
-                f"chunk_overlap ({self.chunk_overlap}) must be less than chunk_size ({self.chunk_size})"
+                f"chunk_overlap ({self.chunk_overlap}) must be less than "
+                f"chunk_size ({self.chunk_size})"
             )
 
         self.custom_patterns = _validate_string_list("custom_patterns", self.custom_patterns)
@@ -425,7 +434,8 @@ class Config:
 
         if _cache_backend_factory is None:
             raise RuntimeError(
-                "No cache factory registered — call register_cache_factory() before using Config.create_cache()."
+                "No cache factory registered; call register_cache_factory() before "
+                "using Config.create_cache()."
             )
         self._cache_backend = _cache_backend_factory(self.cache_type, sqlite_path, self.cache_ttl)
         self._cache_backend_settings = cache_settings

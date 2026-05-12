@@ -274,7 +274,8 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             if self._closed:
                 raise RuntimeError("Cannot use closed SQLiteCache instance")
             self.conn.execute(
-                "INSERT OR REPLACE INTO cache (key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO cache "
+                "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
                 (key, document_json, time.time(), expires_at),
             )
             self.conn.commit()

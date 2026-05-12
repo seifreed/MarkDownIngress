@@ -104,10 +104,12 @@ def _validate_ttl_value(ttl: int, *, field_name: str) -> int:
         raise ValueError(f"{field_name} must be an int, got {type(ttl).__name__}")
     if ttl <= 0:
         raise ValueError(
-            f"{field_name} must be positive, got {ttl}. Permanent entries (TTL=0) are not supported to prevent unbounded growth."
+            f"{field_name} must be positive, got {ttl}. Permanent entries "
+            "(TTL=0) are not supported to prevent unbounded growth."
         )
     if ttl > _MAX_CACHE_TTL_SECONDS:
         raise ValueError(
-            f"{field_name} exceeds the maximum supported TTL of {_MAX_CACHE_TTL_SECONDS} seconds, got {ttl}."
+            f"{field_name} exceeds the maximum supported TTL of "
+            f"{_MAX_CACHE_TTL_SECONDS} seconds, got {ttl}."
         )
     return ttl

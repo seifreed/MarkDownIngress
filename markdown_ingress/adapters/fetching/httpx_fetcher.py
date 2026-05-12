@@ -195,7 +195,8 @@ class Fetcher(IFetcher):
         if failure_decay_seconds is not None and failure_decay_seconds <= 0:
             raise ValueError("failure_decay_seconds must be > 0 or None")
         self.failure_decay_seconds = failure_decay_seconds
-        # CRITICAL: Lock ordering to prevent deadlocks - ALWAYS acquire _domain_lock BEFORE _failure_lock
+        # CRITICAL: Lock ordering to prevent deadlocks.
+        # Always acquire _domain_lock before _failure_lock.
         self._domain_lock = Lock()
         self._next_allowed_by_host: dict[str, float] = {}
         self._domain_state_timestamp: dict[str, float] = {}
@@ -711,7 +712,8 @@ class Fetcher(IFetcher):
             total_size += len(chunk)
             if self.max_response_size is not None and total_size > self.max_response_size:
                 raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                    f"Response content size {total_size} exceeds "
+                    f"max_response_size {self.max_response_size}"
                 )
             chunks.append(chunk)
         return b"".join(chunks)
@@ -725,7 +727,8 @@ class Fetcher(IFetcher):
                 total_size += len(chunk)
                 if self.max_response_size is not None and total_size > self.max_response_size:
                     raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                        f"Response content size {total_size} exceeds "
+                        f"max_response_size {self.max_response_size}"
                     )
         except ResponseSizeLimitError:
             raise
@@ -739,7 +742,8 @@ class Fetcher(IFetcher):
             total_size += len(chunk)
             if self.max_response_size is not None and total_size > self.max_response_size:
                 raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                    f"Response content size {total_size} exceeds "
+                    f"max_response_size {self.max_response_size}"
                 )
             chunks.append(chunk)
         return b"".join(chunks)
@@ -751,7 +755,8 @@ class Fetcher(IFetcher):
                 total_size += len(chunk)
                 if self.max_response_size is not None and total_size > self.max_response_size:
                     raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds max_response_size {self.max_response_size}"
+                        f"Response content size {total_size} exceeds "
+                        f"max_response_size {self.max_response_size}"
                     )
         except ResponseSizeLimitError:
             raise
@@ -867,7 +872,8 @@ class Fetcher(IFetcher):
                         parsed_length = _parse_content_length(content_length)
                         if parsed_length is not None and parsed_length > self.max_response_size:
                             raise ResponseSizeLimitError(
-                                f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
+                                f"Response size {parsed_length} exceeds "
+                                f"max_response_size {self.max_response_size}"
                             )
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
@@ -951,7 +957,8 @@ class Fetcher(IFetcher):
                     and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
                 ):
                     logger.warning(
-                        "SSL verification failed for %s, retrying with certificate verification disabled. "
+                        "SSL verification failed for %s, retrying with certificate verification "
+                        "disabled. "
                         "This bypass is insecure and should only be used for testing.",
                         url,
                     )
@@ -1029,7 +1036,8 @@ class Fetcher(IFetcher):
                                         and parsed_length > self.max_response_size
                                     ):
                                         raise ResponseSizeLimitError(
-                                            f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
+                                            f"Response size {parsed_length} exceeds "
+                                            f"max_response_size {self.max_response_size}"
                                         )
 
                                 if (
@@ -1193,7 +1201,8 @@ class Fetcher(IFetcher):
                         parsed_length = _parse_content_length(content_length)
                         if parsed_length is not None and parsed_length > self.max_response_size:
                             raise ResponseSizeLimitError(
-                                f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
+                                f"Response size {parsed_length} exceeds "
+                                f"max_response_size {self.max_response_size}"
                             )
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
@@ -1277,7 +1286,8 @@ class Fetcher(IFetcher):
                     and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
                 ):
                     logger.warning(
-                        "SSL verification failed for %s, retrying with certificate verification disabled. "
+                        "SSL verification failed for %s, retrying with certificate verification "
+                        "disabled. "
                         "This bypass is insecure and should only be used for testing.",
                         url,
                     )
@@ -1355,7 +1365,8 @@ class Fetcher(IFetcher):
                                         and parsed_length > self.max_response_size
                                     ):
                                         raise ResponseSizeLimitError(
-                                            f"Response size {parsed_length} exceeds max_response_size {self.max_response_size}"
+                                            f"Response size {parsed_length} exceeds "
+                                            f"max_response_size {self.max_response_size}"
                                         )
 
                                 if (

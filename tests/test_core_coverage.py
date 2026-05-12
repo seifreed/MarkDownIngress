@@ -936,7 +936,10 @@ def test_metadata_extractor_author_meta():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="author" content="John Doe"></head><body><p>Content here</p></body></html>'
+    html = (
+        '<html><head><meta name="author" content="John Doe"></head>'
+        "<body><p>Content here</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["author"] == "John Doe"
 
@@ -946,7 +949,10 @@ def test_metadata_extractor_article_author():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta property="article:author" content="Jane Smith"></head><body><p>Content</p></body></html>'
+    html = (
+        '<html><head><meta property="article:author" content="Jane Smith"></head>'
+        "<body><p>Content</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["author"] == "Jane Smith"
 
@@ -980,7 +986,10 @@ def test_metadata_extractor_published_date_og():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta property="article:published_time" content="2024-01-15T10:00:00Z"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta property="article:published_time" '
+        'content="2024-01-15T10:00:00Z"></head><body><p>text</p></body></html>'
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["published_date"] == "2024-01-15T10:00:00Z"
 
@@ -990,7 +999,10 @@ def test_metadata_extractor_published_date_meta():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="datePublished" content="2024-02-01"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="datePublished" content="2024-02-01"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["published_date"] == "2024-02-01"
 
@@ -1000,7 +1012,10 @@ def test_metadata_extractor_published_date_publishdate():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="publishdate" content="2024-03-01"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="publishdate" content="2024-03-01"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["published_date"] == "2024-03-01"
 
@@ -1010,7 +1025,10 @@ def test_metadata_extractor_modified_date_og():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta property="article:modified_time" content="2024-01-20T12:00:00Z"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta property="article:modified_time" '
+        'content="2024-01-20T12:00:00Z"></head><body><p>text</p></body></html>'
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["modified_date"] == "2024-01-20T12:00:00Z"
 
@@ -1020,7 +1038,10 @@ def test_metadata_extractor_modified_date_meta():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="dateModified" content="2024-02-15"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="dateModified" content="2024-02-15"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["modified_date"] == "2024-02-15"
 
@@ -1030,7 +1051,10 @@ def test_metadata_extractor_modified_date_last_modified():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="last-modified" content="2024-03-10"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="last-modified" content="2024-03-10"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["modified_date"] == "2024-03-10"
 
@@ -1052,7 +1076,10 @@ def test_metadata_extractor_description_og():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta property="og:description" content="OG description"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta property="og:description" content="OG description"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["description"] == "OG description"
 
@@ -1062,7 +1089,10 @@ def test_metadata_extractor_description_twitter():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="twitter:description" content="Twitter desc"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="twitter:description" content="Twitter desc"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["description"] == "Twitter desc"
 
@@ -1072,7 +1102,11 @@ def test_metadata_extractor_keywords_og_tags():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta property="article:tag" content="python"><meta property="article:tag" content="testing"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta property="article:tag" content="python">'
+        '<meta property="article:tag" content="testing"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["keywords"] is not None
     assert "python" in result["keywords"]
@@ -1103,7 +1137,10 @@ def test_metadata_extractor_site_name_application():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta name="application-name" content="MyApp"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta name="application-name" content="MyApp"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["site_name"] == "MyApp"
 
@@ -1123,7 +1160,10 @@ def test_metadata_extractor_language_meta():
     from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
     extractor = MetadataExtractor()
-    html = '<html><head><meta http-equiv="content-language" content="fr-FR"></head><body><p>text</p></body></html>'
+    html = (
+        '<html><head><meta http-equiv="content-language" content="fr-FR"></head>'
+        "<body><p>text</p></body></html>"
+    )
     result = extractor.extract(html, "http://example.com")
     assert result["language"] == "fr"
 
@@ -1336,7 +1376,10 @@ def test_link_analyzer_invalid_url_no_domain():
     from markdown_ingress.core.link_analyzer import LinkAnalyzer
 
     analyzer = LinkAnalyzer()
-    html = '<html><body><a href="ftp://somehost/file">ftp link</a><a href="javascript:void(0)">js</a></body></html>'
+    html = (
+        '<html><body><a href="ftp://somehost/file">ftp link</a>'
+        '<a href="javascript:void(0)">js</a></body></html>'
+    )
     result = analyzer.analyze(html, "http://example.com")
     # ftp link gets skipped because scheme doesn't start with 'http'
     assert result["total"] >= 0
@@ -1347,7 +1390,10 @@ def test_link_analyzer_skip_mailto_tel():
     from markdown_ingress.core.link_analyzer import LinkAnalyzer
 
     analyzer = LinkAnalyzer()
-    html = '<html><body><a href="mailto:test@example.com">mail</a><a href="tel:555">phone</a></body></html>'
+    html = (
+        '<html><body><a href="mailto:test@example.com">mail</a>'
+        '<a href="tel:555">phone</a></body></html>'
+    )
     result = analyzer.analyze(html, "http://example.com")
     assert result["total"] == 0
 

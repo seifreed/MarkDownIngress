@@ -236,7 +236,10 @@ def test_ingest_cache_distinguishes_effective_output_profiles(monkeypatch):
 
     def fake_fetch_sync(self, url: str):
         calls["count"] += 1
-        html = "<html><body><article><h1>T</h1><p>hello world</p><pre><code>print(1)</code></pre></article></body></html>"
+        html = (
+            "<html><body><article><h1>T</h1><p>hello world</p>"
+            "<pre><code>print(1)</code></pre></article></body></html>"
+        )
         return _make_fetch_result(url, html)
 
     monkeypatch.setattr(
@@ -329,7 +332,10 @@ def test_ingest_uses_security_engine_recommendation_for_policy_action(monkeypatc
 
 def test_ingest_respects_language_and_security_explanation_flags(monkeypatch):
     def fake_fetch_sync(self, url: str):
-        html = '<html lang="fr-CA"><body><article><h1>Bonjour</h1><p>Salut tout le monde.</p></article></body></html>'
+        html = (
+            '<html lang="fr-CA"><body><article><h1>Bonjour</h1>'
+            "<p>Salut tout le monde.</p></article></body></html>"
+        )
         return _make_fetch_result(url, html)
 
     monkeypatch.setattr(
@@ -1396,7 +1402,8 @@ def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
         def fetch_sync(self, url: str):
             return _make_fetch_result(
                 url,
-                "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
+                "<html><body><article><h1>Fallback</h1>"
+                "<p>Recovered via fast fetch.</p></article></body></html>",
             )
 
     use_case.renderer_factory = lambda config: FakeRenderer()
@@ -1412,7 +1419,8 @@ def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
 
 def test_render_mode_degraded_fallback_closes_fetcher_clients():
     server, base_url, _handler = _start_counting_html_server(
-        b"<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>"
+        b"<html><body><article><h1>Fallback</h1>"
+        b"<p>Recovered via fast fetch.</p></article></body></html>"
     )
     try:
         use_case = IngestUseCase(playwright_available=True)
@@ -1420,7 +1428,8 @@ def test_render_mode_degraded_fallback_closes_fetcher_clients():
         class FakeRenderer:
             def render_sync(self, url: str):
                 raise RuntimeError(
-                    "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                    "Page.content: Unable to retrieve content because the page is "
+                    "navigating and changing the content."
                 )
 
         use_case.renderer_factory = lambda config: FakeRenderer()
@@ -1454,14 +1463,16 @@ def test_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path):
             if isinstance(self.config.screenshot, str):
                 Path(self.config.screenshot).write_bytes(b"fake screenshot bytes")
             raise RuntimeError(
-                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                "Page.content: Unable to retrieve content because the page is "
+                "navigating and changing the content."
             )
 
     class FakeFetcher:
         def fetch_sync(self, url: str):
             return _make_fetch_result(
                 url,
-                "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
+                "<html><body><article><h1>Fallback</h1>"
+                "<p>Recovered via fast fetch.</p></article></body></html>",
             )
 
     use_case.renderer_factory = cast(Any, lambda config: FakeRenderer(config))
@@ -1490,7 +1501,8 @@ def test_auto_mode_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path
         def fetch_sync(self, url: str):
             return _make_fetch_result(
                 url,
-                "<html><body><article><h1>Fallback</h1><p>Recovered via fast fetch.</p></article></body></html>",
+                "<html><body><article><h1>Fallback</h1>"
+                "<p>Recovered via fast fetch.</p></article></body></html>",
             )
 
     class FakeRenderer:
@@ -1501,7 +1513,8 @@ def test_auto_mode_render_fallback_keeps_explicit_screenshot_path(tmp_path: Path
             if isinstance(self.config.screenshot, str):
                 Path(self.config.screenshot).write_bytes(b"fake screenshot bytes")
             raise RuntimeError(
-                "Page.content: Unable to retrieve content because the page is navigating and changing the content."
+                "Page.content: Unable to retrieve content because the page is "
+                "navigating and changing the content."
             )
 
     use_case.fetcher_factory = cast(Any, lambda config: FakeFetcher())
@@ -1799,7 +1812,8 @@ def test_render_temp_screenshot_results_are_not_cached():
             captured_paths.append(screenshot_path)
             result = _make_fetch_result(
                 url,
-                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p></article></body></html>",
+                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p>"
+                "</article></body></html>",
             )
             result.metadata["screenshot_path"] = screenshot_path
             return result
@@ -1849,7 +1863,8 @@ def test_render_explicit_screenshot_results_are_not_cached(monkeypatch, tmp_path
             screenshot_path.write_bytes(f"shot {type(self).calls}".encode())
             result = _make_fetch_result(
                 url,
-                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p></article></body></html>",
+                f"<html><body><article><h1>Render</h1><p>call {type(self).calls}</p>"
+                "</article></body></html>",
             )
             result.metadata["screenshot_path"] = str(screenshot_path)
             return result

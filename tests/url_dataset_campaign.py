@@ -252,7 +252,10 @@ def default_scenarios() -> list[CampaignScenario]:
         ),
         CampaignScenario(
             name="domain_policy_override",
-            description="Fast ingestion using a per-domain policy override to exercise runtime policy resolution.",
+            description=(
+                "Fast ingestion using a per-domain policy override to exercise "
+                "runtime policy resolution."
+            ),
             weight=3,
             config=IngestConfig(
                 mode="fast",
@@ -271,7 +274,9 @@ def default_scenarios() -> list[CampaignScenario]:
         ),
         CampaignScenario(
             name="render_archive",
-            description="Render-heavy archival profile to exercise Playwright, screenshots disabled.",
+            description=(
+                "Render-heavy archival profile to exercise Playwright, " "screenshots disabled."
+            ),
             weight=2,
             config=IngestConfig(
                 mode="render",
@@ -611,7 +616,8 @@ def run_campaign(
     )
     if len(urls) < total_limit:
         raise AssertionError(
-            f"Requested {total_limit} available URLs but only found {len(urls)} after checking {availability_checked}"
+            f"Requested {total_limit} available URLs but only found {len(urls)} "
+            f"after checking {availability_checked}"
         )
 
     allocation = allocate_urls(urls, scenarios)
@@ -799,9 +805,12 @@ def run_campaign(
                 completed_now = len(completed) + min(start + len(batch), len(pending))
                 write_progress(scenario.name, completed_now, len(urls_for_scenario))
                 print(
-                    f"[url-campaign] scenario={scenario.name} completed={completed_now}/{len(urls_for_scenario)} "
-                    f"scenario_concurrency={scenario_concurrency} campaign_processed={campaign_counts['processed']} "
-                    f"errors={campaign_counts['errors']} timeouts={campaign_error_types.get('timeout', 0)}",
+                    f"[url-campaign] scenario={scenario.name} completed={completed_now}/"
+                    f"{len(urls_for_scenario)} "
+                    f"scenario_concurrency={scenario_concurrency} "
+                    f"campaign_processed={campaign_counts['processed']} "
+                    f"errors={campaign_counts['errors']} "
+                    f"timeouts={campaign_error_types.get('timeout', 0)}",
                     flush=True,
                 )
             summary = {

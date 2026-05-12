@@ -224,7 +224,10 @@ class AdvancedStealthRenderer:
                     metadata = {
                         "renderer": "advanced_stealth_playwright",
                         "user_agent": self.stealth_config.user_agent,
-                        "viewport": f"{self.stealth_config.viewport_width}x{self.stealth_config.viewport_height}",
+                        "viewport": (
+                            f"{self.stealth_config.viewport_width}x"
+                            f"{self.stealth_config.viewport_height}"
+                        ),
                         "device_scale_factor": self.stealth_config.device_scale_factor,
                         "timezone": self.stealth_config.timezone,
                         "http2_disabled": self.disable_http2,
