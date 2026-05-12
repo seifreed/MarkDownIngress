@@ -16,6 +16,13 @@ import yaml  # type: ignore[import-untyped]
 from markdown_ingress.config_models import (
     DomainPolicy,
     IngestConfig,
+    _ensure_bool,
+    _ensure_finite_float,
+    _ensure_int,
+    _ensure_optional_bool,
+    _ensure_optional_int,
+    _ensure_screenshot_value,
+    _ensure_str,
     _validate_output_profile_name,
     _validate_output_representations,
 )
@@ -228,6 +235,69 @@ class Config:
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
+        if not isinstance(self.mode, str):
+            raise ValueError(f"mode must be a string, got {type(self.mode).__name__}")
+        self.timeout = _ensure_finite_float("timeout", self.timeout)
+        self.auto_render_threshold = _ensure_int(
+            "auto_render_threshold", self.auto_render_threshold
+        )
+        self.strict = _ensure_bool("strict", self.strict)
+        self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
+        self.model = _ensure_str("model", self.model)
+        self.cache_enabled = _ensure_bool("cache_enabled", self.cache_enabled)
+        if not isinstance(self.cache_type, str):
+            raise ValueError(f"cache_type must be a string, got {type(self.cache_type).__name__}")
+        self.cache_ttl = _ensure_int("cache_ttl", self.cache_ttl)
+        self.cache_path = _ensure_str("cache_path", self.cache_path)
+        self.batch_max_concurrent = _ensure_int("batch_max_concurrent", self.batch_max_concurrent)
+        self.batch_timeout = _ensure_finite_float("batch_timeout", self.batch_timeout)
+        self.stealth = _ensure_bool("stealth", self.stealth)
+        self.disable_http2 = _ensure_bool("disable_http2", self.disable_http2)
+        self.extreme_mode = _ensure_bool("extreme_mode", self.extreme_mode)
+        self.screenshot = _ensure_screenshot_value("screenshot", self.screenshot)
+        self.fetcher_user_agent = _ensure_str("fetcher_user_agent", self.fetcher_user_agent)
+        self.domain_request_interval = _ensure_finite_float(
+            "domain_request_interval", self.domain_request_interval
+        )
+        self.circuit_breaker_threshold = _ensure_int(
+            "circuit_breaker_threshold", self.circuit_breaker_threshold
+        )
+        self.circuit_breaker_open_seconds = _ensure_finite_float(
+            "circuit_breaker_open_seconds", self.circuit_breaker_open_seconds
+        )
+        self.policy = _ensure_str("policy", self.policy)
+        if not isinstance(self.output_format, str):
+            raise ValueError(
+                f"output_format must be a string, got {type(self.output_format).__name__}"
+            )
+        self.output_profile = _ensure_str("output_profile", self.output_profile)
+        self.extract_blocks = _ensure_bool("extract_blocks", self.extract_blocks)
+        self.extract_metadata = _ensure_bool("extract_metadata", self.extract_metadata)
+        self.extract_links = _ensure_bool("extract_links", self.extract_links)
+        self.advanced_security = _ensure_bool("advanced_security", self.advanced_security)
+        self.use_llm = _ensure_bool("use_llm", self.use_llm)
+        self.detect_language = _ensure_bool("detect_language", self.detect_language)
+        self.normalize_multilingual = _ensure_bool(
+            "normalize_multilingual", self.normalize_multilingual
+        )
+        self.include_security_explanation = _ensure_bool(
+            "include_security_explanation", self.include_security_explanation
+        )
+        if not isinstance(self.chunking_strategy, str):
+            raise ValueError(
+                f"chunking_strategy must be a string, got {type(self.chunking_strategy).__name__}"
+            )
+        self.chunk_size = _ensure_int("chunk_size", self.chunk_size)
+        self.chunk_overlap = _ensure_int("chunk_overlap", self.chunk_overlap)
+        self.save_reports = _ensure_bool("save_reports", self.save_reports)
+        self.reports_dir = _ensure_str("reports_dir", self.reports_dir)
+        self.render_cost_budget = _ensure_optional_int(
+            "render_cost_budget", self.render_cost_budget
+        )
+        self.include_observability = _ensure_bool(
+            "include_observability", self.include_observability
+        )
+
         # Validate Literal fields
         if self.mode not in VALID_MODES:
             raise ValueError(

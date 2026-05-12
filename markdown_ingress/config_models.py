@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from dataclasses import MISSING, dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Any, Literal
@@ -32,6 +33,72 @@ VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
 VALID_OUTPUT_REPRESENTATIONS = ("markdown", "blocks", "chunks", "metadata", "security")
 VALID_POLICY_NAMES = ("permissive", "normal", "strict", "paranoid", "moderate")
 VALID_OUTPUT_PROFILES = ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive")
+
+
+def _ensure_bool(field_name: str, value: object) -> bool:
+    """Return a boolean value or reject untyped config input."""
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+    return value
+
+
+def _ensure_optional_bool(field_name: str, value: object) -> bool | None:
+    """Return an optional boolean value or reject untyped config input."""
+    if value is None:
+        return None
+    return _ensure_bool(field_name, value)
+
+
+def _ensure_str(field_name: str, value: object) -> str:
+    """Return a string value or reject untyped config input."""
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _ensure_optional_str(field_name: str, value: object) -> str | None:
+    """Return an optional string value or reject untyped config input."""
+    if value is None:
+        return None
+    return _ensure_str(field_name, value)
+
+
+def _ensure_int(field_name: str, value: object) -> int:
+    """Return an integer value or reject ambiguous numeric config input."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
+    return value
+
+
+def _ensure_optional_int(field_name: str, value: object) -> int | None:
+    """Return an optional integer value or reject ambiguous numeric config input."""
+    if value is None:
+        return None
+    return _ensure_int(field_name, value)
+
+
+def _ensure_finite_float(field_name: str, value: object) -> float:
+    """Return a finite float value or reject unsafe numeric config input."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    return numeric
+
+
+def _ensure_optional_finite_float(field_name: str, value: object) -> float | None:
+    """Return an optional finite float value or reject unsafe numeric config input."""
+    if value is None:
+        return None
+    return _ensure_finite_float(field_name, value)
+
+
+def _ensure_screenshot_value(field_name: str, value: object) -> bool | str | None:
+    """Return a screenshot option or reject unsupported untyped config input."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    raise ValueError(f"{field_name} must be a bool, string, or None, got {type(value).__name__}")
 
 
 def _validate_output_representations(value: list[str]) -> list[str]:
@@ -60,6 +127,8 @@ def _validate_output_profile_name(value: str | None) -> str | None:
     """Validate a named output profile."""
     if value is None:
         return None
+    if not isinstance(value, str):
+        raise ValueError(f"output_profile must be a string or None, got {type(value).__name__}")
     if value not in VALID_OUTPUT_PROFILES:
         raise ValueError(
             f"Unknown output profile '{value}'. "
@@ -191,11 +260,39 @@ class RenderConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
+        self.timeout = _ensure_finite_float("timeout", self.timeout)
+        if self.timeout <= 0.0:
+            raise ValueError(f"timeout must be > 0.0, got {self.timeout}")
+        self.wait_until = _ensure_str("wait_until", self.wait_until)
+        self.headless = _ensure_bool("headless", self.headless)
+        self.user_agent = _ensure_optional_str("user_agent", self.user_agent)
+        self.stealth = _ensure_bool("stealth", self.stealth)
+        self.disable_http2 = _ensure_bool("disable_http2", self.disable_http2)
+        self.extreme_mode = _ensure_bool("extreme_mode", self.extreme_mode)
+        self.block_resources = _ensure_bool("block_resources", self.block_resources)
+        self.block_images = _ensure_bool("block_images", self.block_images)
+        self.block_fonts = _ensure_bool("block_fonts", self.block_fonts)
+        self.block_media = _ensure_bool("block_media", self.block_media)
+        self.block_ads = _ensure_bool("block_ads", self.block_ads)
+        self.block_trackers = _ensure_bool("block_trackers", self.block_trackers)
+        self.screenshot = _ensure_screenshot_value("screenshot", self.screenshot)
+        self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
         if self.wait_until not in VALID_WAIT_UNTIL:
             raise ValueError(
                 f"Invalid wait_until '{self.wait_until}'. Must be one of: {', '.join(VALID_WAIT_UNTIL)}"
             )
-        self.dns_pins = dict(self.dns_pins or {})
+        if not isinstance(self.dns_pins, dict):
+            raise ValueError(
+                f"dns_pins must be a dict[str, str], got {type(self.dns_pins).__name__}"
+            )
+        normalized_pins: dict[str, str] = {}
+        for key, value in self.dns_pins.items():
+            if not isinstance(key, str):
+                raise ValueError(f"dns_pins keys must be strings, got {type(key).__name__}")
+            if not isinstance(value, str):
+                raise ValueError(f"dns_pins[{key!r}] must be a string, got {type(value).__name__}")
+            normalized_pins[key] = value
+        self.dns_pins = normalized_pins
 
 
 @dataclass
@@ -224,6 +321,46 @@ class DomainPolicy:
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
+        self.domain = _ensure_str("DomainPolicy.domain", self.domain)
+        self.include_subdomains = _ensure_bool(
+            "DomainPolicy.include_subdomains", self.include_subdomains
+        )
+        if self.mode is not None:
+            if not isinstance(self.mode, str):
+                raise ValueError(
+                    f"DomainPolicy.mode must be a string, got {type(self.mode).__name__}"
+                )
+            if self.mode not in ("fast", "render", "auto"):
+                raise ValueError(
+                    f"Invalid DomainPolicy.mode '{self.mode}'. "
+                    "Must be one of: fast, render, auto"
+                )
+        self.timeout = _ensure_optional_finite_float("DomainPolicy.timeout", self.timeout)
+        self.auto_render_threshold = _ensure_optional_int(
+            "DomainPolicy.auto_render_threshold", self.auto_render_threshold
+        )
+        self.strict = _ensure_optional_bool("DomainPolicy.strict", self.strict)
+        self.policy_name = _ensure_optional_str("DomainPolicy.policy_name", self.policy_name)
+        self.block_threshold = _ensure_optional_finite_float(
+            "DomainPolicy.block_threshold", self.block_threshold
+        )
+        self.warn_threshold = _ensure_optional_finite_float(
+            "DomainPolicy.warn_threshold", self.warn_threshold
+        )
+        self.request_interval = _ensure_optional_finite_float(
+            "DomainPolicy.request_interval", self.request_interval
+        )
+        self.render_cost_budget = _ensure_optional_int(
+            "DomainPolicy.render_cost_budget", self.render_cost_budget
+        )
+        self.extract_metadata = _ensure_optional_bool(
+            "DomainPolicy.extract_metadata", self.extract_metadata
+        )
+        self.extract_links = _ensure_optional_bool("DomainPolicy.extract_links", self.extract_links)
+        self.output_profile = _ensure_optional_str(
+            "DomainPolicy.output_profile", self.output_profile
+        )
+        self.notes = _ensure_optional_str("DomainPolicy.notes", self.notes)
         if not self.domain or not self.domain.strip():
             raise ValueError("DomainPolicy.domain cannot be empty")
         _validate_output_profile_name(self.output_profile)
@@ -436,10 +573,69 @@ class IngestConfig:
     def validate(self) -> IngestConfig:
         """Validate the current config state after construction or mutation."""
         valid_modes = ("fast", "render", "auto")
+        if not isinstance(self.mode, str):
+            raise ValueError(f"mode must be a string, got {type(self.mode).__name__}")
         if self.mode not in valid_modes:
             raise ValueError(
                 f"Invalid mode '{self.mode}'. Must be one of: {', '.join(valid_modes)}"
             )
+
+        self.strict = _ensure_bool("strict", self.strict)
+        self.model = _ensure_str("model", self.model)
+        self.timeout = _ensure_finite_float("timeout", self.timeout)
+        self.auto_render_threshold = _ensure_int(
+            "auto_render_threshold", self.auto_render_threshold
+        )
+        self.stealth = _ensure_bool("stealth", self.stealth)
+        self.disable_http2 = _ensure_bool("disable_http2", self.disable_http2)
+        self.extreme_mode = _ensure_bool("extreme_mode", self.extreme_mode)
+        self.screenshot = _ensure_screenshot_value("screenshot", self.screenshot)
+        self.extract_metadata = _ensure_bool("extract_metadata", self.extract_metadata)
+        self.extract_links = _ensure_bool("extract_links", self.extract_links)
+        self.advanced_security = _ensure_bool("advanced_security", self.advanced_security)
+        self.use_llm = _ensure_bool("use_llm", self.use_llm)
+        self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
+        self.cache_ttl = _ensure_optional_int("cache_ttl", self.cache_ttl)
+        self.policy_name = _ensure_str("policy_name", self.policy_name)
+        self.output_profile = _ensure_str("output_profile", self.output_profile)
+        if not isinstance(self.output_format, str):
+            raise ValueError(
+                f"output_format must be a string, got {type(self.output_format).__name__}"
+            )
+        self.extract_blocks = _ensure_bool("extract_blocks", self.extract_blocks)
+        if not isinstance(self.chunking_strategy, str):
+            raise ValueError(
+                f"chunking_strategy must be a string, got {type(self.chunking_strategy).__name__}"
+            )
+        self.chunk_size = _ensure_int("chunk_size", self.chunk_size)
+        self.chunk_overlap = _ensure_int("chunk_overlap", self.chunk_overlap)
+        self.detect_language = _ensure_bool("detect_language", self.detect_language)
+        self.normalize_multilingual = _ensure_bool(
+            "normalize_multilingual", self.normalize_multilingual
+        )
+        self.include_security_explanation = _ensure_bool(
+            "include_security_explanation", self.include_security_explanation
+        )
+        self.include_observability = _ensure_bool(
+            "include_observability", self.include_observability
+        )
+        self.save_reports = _ensure_bool("save_reports", self.save_reports)
+        self.reports_dir = _ensure_str("reports_dir", self.reports_dir)
+        self.domain_request_interval = _ensure_finite_float(
+            "domain_request_interval", self.domain_request_interval
+        )
+        self.circuit_breaker_threshold = _ensure_int(
+            "circuit_breaker_threshold", self.circuit_breaker_threshold
+        )
+        self.circuit_breaker_open_seconds = _ensure_finite_float(
+            "circuit_breaker_open_seconds", self.circuit_breaker_open_seconds
+        )
+        self.render_cost_budget = _ensure_optional_int(
+            "render_cost_budget", self.render_cost_budget
+        )
+        self.fetcher_user_agent = _ensure_str("fetcher_user_agent", self.fetcher_user_agent)
+        self.batch_timeout = _ensure_finite_float("batch_timeout", self.batch_timeout)
+        self.batch_max_concurrent = _ensure_int("batch_max_concurrent", self.batch_max_concurrent)
 
         if self.fetcher_user_agent and (
             "\r" in self.fetcher_user_agent or "\n" in self.fetcher_user_agent

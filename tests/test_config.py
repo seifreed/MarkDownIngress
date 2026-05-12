@@ -4,11 +4,13 @@ Tests for configuration file support
 
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.config_models import DomainPolicy, IngestConfig, RenderConfig
 from markdown_ingress.core.config import Config, ConfigLoader, load_config
 
 
@@ -303,6 +305,75 @@ cache_enabled: true
     def test_config_from_yaml_rejects_unknown_output_profile_early(self):
         with pytest.raises(ValueError, match="Unknown output profile 'bogus'"):
             Config.from_yaml("output_profile: bogus\n")
+
+    @pytest.mark.parametrize(
+        ("factory", "message"),
+        [
+            (
+                lambda: Config(timeout=cast(Any, "abc")),
+                "timeout must be a finite number",
+            ),
+            (
+                lambda: Config(strict=cast(Any, "false")),
+                "strict must be a bool",
+            ),
+            (
+                lambda: Config(cache_ttl=cast(Any, True)),
+                "cache_ttl must be an int",
+            ),
+            (
+                lambda: Config(timeout=cast(Any, float("nan"))),
+                "timeout must be a finite number",
+            ),
+            (
+                lambda: Config(screenshot=cast(Any, 123)),
+                "screenshot must be a bool, string, or None",
+            ),
+            (
+                lambda: IngestConfig(timeout=cast(Any, "abc")),
+                "timeout must be a finite number",
+            ),
+            (
+                lambda: IngestConfig(extract_blocks=cast(Any, "false")),
+                "extract_blocks must be a bool",
+            ),
+            (
+                lambda: IngestConfig(auto_render_threshold=cast(Any, 1.5)),
+                "auto_render_threshold must be an int",
+            ),
+            (
+                lambda: DomainPolicy(domain="example.com", timeout=cast(Any, "abc")),
+                "DomainPolicy.timeout must be a finite number",
+            ),
+            (
+                lambda: DomainPolicy(domain=cast(Any, 123)),
+                "DomainPolicy.domain must be a string",
+            ),
+            (
+                lambda: DomainPolicy(domain="example.com", strict=cast(Any, "false")),
+                "DomainPolicy.strict must be a bool",
+            ),
+            (
+                lambda: RenderConfig(timeout=cast(Any, "abc")),
+                "timeout must be a finite number",
+            ),
+            (
+                lambda: RenderConfig(headless=cast(Any, "false")),
+                "headless must be a bool",
+            ),
+            (
+                lambda: RenderConfig(wait_until=cast(Any, 123)),
+                "wait_until must be a string",
+            ),
+        ],
+    )
+    def test_config_objects_reject_invalid_scalar_types(
+        self,
+        factory: Callable[[], object],
+        message: str,
+    ):
+        with pytest.raises(ValueError, match=message):
+            factory()
 
 
 class TestConfigLoader:
