@@ -202,13 +202,13 @@ async def handle_batch_submit(
         )
     except Exception as exc:
         if _is_queue_full_error(exc):
-            raise HTTPException(status_code=429, detail=str(exc))
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         if _is_queue_unavailable_error(exc):
-            raise HTTPException(status_code=503, detail=str(exc))
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail="Invalid request")
+            raise HTTPException(status_code=400, detail="Invalid request") from exc
         _logger.exception("Unexpected batch submit error")
-        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL) from exc
 
     return BatchJobAccepted(
         job_id=job.job_id,
@@ -225,9 +225,9 @@ async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
         job = job_source(job_id) if callable(job_source) else job_source.get(job_id)
     except Exception as exc:
         if _is_queue_unavailable_error(exc):
-            raise HTTPException(status_code=503, detail=str(exc))
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         _logger.exception("Unexpected batch status error for %s", job_id)
-        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL) from exc
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return BatchJobResponse(
@@ -299,9 +299,9 @@ async def handle_extractor_comparison(
             compare_extractors_func, request.html, model=request.model
         )
         return ExtractorComparisonResponse(results=results)
-    except Exception:
+    except Exception as exc:
         _logger.exception("Error processing extractor comparison request")
-        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL) from exc
 
 
 def build_stats_payload(

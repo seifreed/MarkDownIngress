@@ -4,6 +4,7 @@ Tests for Nova-tracer integration
 
 import pytest
 
+from markdown_ingress.core import nova_guard as nova_guard_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
 from markdown_ingress.core.security_engine import SecurityEngine
 
@@ -157,3 +158,20 @@ class TestNovaAvailability:
 
         with pytest.raises(ImportError, match="nova-hunting not installed"):
             NovaGuard()
+
+    def test_rules_file_parse_error_preserves_parser_cause(self, monkeypatch, tmp_path):
+        class BadParser:
+            def parse(self, _content):
+                raise SyntaxError("bad nova rule")
+
+        monkeypatch.setattr(nova_guard_module, "NovaParser", BadParser, raising=False)
+        rules_file = tmp_path / "bad.nova"
+        rules_file.write_text("rule bad {")
+
+        guard = object.__new__(NovaGuard)
+        guard._allowed_rules_dirs = [tmp_path.resolve()]
+
+        with pytest.raises(ValueError, match="Failed to parse rules file") as exc_info:
+            guard._validate_and_load_rules_path(str(rules_file))
+
+        assert isinstance(exc_info.value.__cause__, SyntaxError)

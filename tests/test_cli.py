@@ -834,6 +834,18 @@ class TestCmdBatch:
             load_domain_policies(args)
 
         assert exc_info.value.code == 1
+        assert exc_info.value.__cause__ is None
+
+    def test_load_domain_policies_invalid_json_exits_without_chained_traceback(self, tmp_path):
+        policy_file = tmp_path / "policies.json"
+        policy_file.write_text("{invalid json")
+        args = Namespace(domain_policy_file=str(policy_file), domain_policy=[])
+
+        with pytest.raises(SystemExit) as exc_info:
+            load_domain_policies(args)
+
+        assert exc_info.value.code == 1
+        assert exc_info.value.__cause__ is None
 
     def test_load_domain_policies_rejects_non_object_entries(self, tmp_path):
         policy_file = tmp_path / "policies.json"

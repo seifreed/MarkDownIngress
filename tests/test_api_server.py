@@ -294,6 +294,7 @@ def test_handle_batch_submit_maps_webhook_validation_error_to_http_400():
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Invalid request"
+    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test_handle_sync_batch_maps_policy_block_to_http_403():

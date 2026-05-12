@@ -141,11 +141,11 @@ async def execute_render_session(
     """Run a single Playwright browser session using renderer-bound helpers."""
     try:
         from playwright.async_api import async_playwright
-    except ImportError:  # pragma: no cover
+    except ImportError as exc:  # pragma: no cover
         raise ImportError(  # pragma: no cover
             "Playwright is not installed. Install with: "
             "pip install 'markdown-ingress[render]' or pip install playwright && playwright install"
-        )
+        ) from exc
 
     start_time = time.perf_counter()
     browser = None

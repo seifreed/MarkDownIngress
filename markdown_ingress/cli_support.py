@@ -186,10 +186,10 @@ def load_domain_policies(args):
             loaded = json.loads(content)
         except OSError as exc:
             console.print(f"[red]Error: Could not read domain policy file {policy_file}: {exc}")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         except json.JSONDecodeError as exc:
             console.print(f"[red]Error: Invalid JSON in domain policy file {policy_file}: {exc}")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         if isinstance(loaded, dict):
             policies.append(loaded)
         elif isinstance(loaded, list):
@@ -209,7 +209,7 @@ def load_domain_policies(args):
             loaded_inline = json.loads(inline)
         except json.JSONDecodeError as exc:
             console.print(f"[red]Error: Invalid JSON in --domain-policy: {exc}")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         if not isinstance(loaded_inline, Mapping):
             console.print("[red]Error: --domain-policy must decode to a JSON object")
             raise SystemExit(1)

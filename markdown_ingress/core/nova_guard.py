@@ -186,20 +186,20 @@ class NovaGuard:
                     self.rules.append(parser.parse(block.strip()))
             else:
                 self.rules = [parser.parse(file_content)]
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Rules file not found: {rules_path}")
-        except IsADirectoryError:
-            raise ValueError(f"rules_path must be a file, not a directory: {rules_path}")
-        except PermissionError as e:
-            raise ValueError(f"Permission denied reading rules file: {rules_path}: {e}")
-        except UnicodeDecodeError as e:
-            raise ValueError(f"Rules file must be UTF-8 encoded: {e}")
-        except OSError as e:
-            raise ValueError(f"Cannot read rules file: {e}")
-        except Exception as e:
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Rules file not found: {rules_path}") from exc
+        except IsADirectoryError as exc:
+            raise ValueError(f"rules_path must be a file, not a directory: {rules_path}") from exc
+        except PermissionError as exc:
+            raise ValueError(f"Permission denied reading rules file: {rules_path}: {exc}") from exc
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Rules file must be UTF-8 encoded: {exc}") from exc
+        except OSError as exc:
+            raise ValueError(f"Cannot read rules file: {exc}") from exc
+        except Exception as exc:
             # BUG FIX: Catch all parsing exceptions, not just UnicodeDecodeError
             # parser.parse() can raise SyntaxError, ValueError, TypeError, etc.
-            raise ValueError(f"Failed to parse rules file: {e}")
+            raise ValueError(f"Failed to parse rules file: {exc}") from exc
 
     def _is_path_allowed(self, resolved_path: Path) -> bool:
         """

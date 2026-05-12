@@ -168,12 +168,12 @@ class AdvancedStealthRenderer:
         """Internal method to render URL with browser."""
         try:
             from playwright.async_api import async_playwright
-        except ImportError:  # pragma: no cover
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(  # pragma: no cover
                 "Playwright is not installed. Install with: "
                 "pip install 'markdown-ingress[render]' or "
                 "pip install playwright && playwright install"
-            )  # pragma: no cover
+            ) from exc  # pragma: no cover
 
         start_time = time.perf_counter()
 
