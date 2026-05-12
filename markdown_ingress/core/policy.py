@@ -5,10 +5,34 @@ Policy engine for configurable security rules
 import copy
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from markdown_ingress.core.security import InjectionPattern, _detect_redos_pattern
+
+
+def _ensure_finite_float(field_name: str, value: object) -> float:
+    """Return a finite float or reject ambiguous untyped policy input."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    return numeric
+
+
+def _ensure_score(field_name: str, value: object) -> float:
+    score = _ensure_finite_float(field_name, value)
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
+    return score
+
+
+def _ensure_bool(field_name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+    return value
 
 
 def _validate_regex_pattern(pattern: str, description: str) -> None:
@@ -84,27 +108,55 @@ class Policy:
 
     def __post_init__(self):
         """Validate policy configuration."""
-        if not 0.0 <= self.block_threshold <= 1.0:
-            raise ValueError("block_threshold must be between 0.0 and 1.0")
-        if not 0.0 <= self.warn_threshold <= 1.0:
-            raise ValueError("warn_threshold must be between 0.0 and 1.0")
+        self.block_threshold = _ensure_score("block_threshold", self.block_threshold)
+        self.warn_threshold = _ensure_score("warn_threshold", self.warn_threshold)
+        self.check_hidden_content = _ensure_bool("check_hidden_content", self.check_hidden_content)
+        self.check_injection_patterns = _ensure_bool(
+            "check_injection_patterns", self.check_injection_patterns
+        )
+        self.check_imperative_density = _ensure_bool(
+            "check_imperative_density", self.check_imperative_density
+        )
+        self.allow_embedded_scripts = _ensure_bool(
+            "allow_embedded_scripts", self.allow_embedded_scripts
+        )
+        self.allow_iframes = _ensure_bool("allow_iframes", self.allow_iframes)
+        self.allow_external_resources = _ensure_bool(
+            "allow_external_resources", self.allow_external_resources
+        )
         # warn_threshold >= block_threshold is invalid: both thresholds at same or wrong order
         if self.warn_threshold >= self.block_threshold:
             raise ValueError("warn_threshold must be < block_threshold")
         if self.strictness not in ["permissive", "normal", "strict", "paranoid"]:
             raise ValueError("strictness must be one of: permissive, normal, strict, paranoid")
         # Validate custom_pattern_weights values
+        if not isinstance(self.custom_pattern_weights, Mapping):
+            raise ValueError(
+                "custom_pattern_weights must be a mapping, "
+                f"got {type(self.custom_pattern_weights).__name__}"
+            )
+        normalized_weights: dict[str, float] = {}
         for name, weight in self.custom_pattern_weights.items():
-            if not 0.0 <= weight <= 1.0:
+            if not isinstance(name, str):
                 raise ValueError(
-                    f"custom_pattern_weights[{name!r}] must be between 0.0 and 1.0, got {weight}"
+                    "custom_pattern_weights keys must be strings, " f"got {type(name).__name__}"
                 )
+            normalized_weights[name] = _ensure_score(f"custom_pattern_weights[{name!r}]", weight)
+        self.custom_pattern_weights = normalized_weights
         # Validate custom_patterns weights and check for ReDoS vulnerabilities
+        if not isinstance(self.custom_patterns, list):
+            raise ValueError(
+                f"custom_patterns must be a list, got {type(self.custom_patterns).__name__}"
+            )
         for pattern in self.custom_patterns:
-            if not 0.0 <= pattern.weight <= 1.0:
+            if not isinstance(pattern, InjectionPattern):
                 raise ValueError(
-                    f"Custom pattern {pattern.description!r} weight must be between 0.0 and 1.0, got {pattern.weight}"
+                    "custom_patterns entries must be InjectionPattern instances, "
+                    f"got {type(pattern).__name__}"
                 )
+            pattern.weight = _ensure_score(
+                f"Custom pattern {pattern.description!r} weight", pattern.weight
+            )
             # Validate regex pattern for ReDoS vulnerabilities
             _validate_regex_pattern(pattern.pattern, pattern.description)
 
@@ -194,6 +246,10 @@ class PolicyEngine:
         Note:
             NaN and infinity values are treated as maximum risk (1.0) for safety.
         """
+        if isinstance(injection_score, bool) or not isinstance(injection_score, (int, float)):
+            raise ValueError(
+                f"injection_score must be a finite number, got {type(injection_score).__name__}"
+            )
         if math.isnan(injection_score) or math.isinf(injection_score):
             # Treat invalid scores as maximum risk for security
             return 1.0

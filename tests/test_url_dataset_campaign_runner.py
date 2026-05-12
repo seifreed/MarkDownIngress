@@ -187,6 +187,9 @@ def test_load_availability_pool_uses_latest_status_per_url(monkeypatch, tmp_path
 
 def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tests.url_dataset_campaign.output_dir", lambda: tmp_path)
+    dataset_file = tmp_path / "out.txt"
+    dataset_file.write_text("\n".join(f"https://good.example/{idx}" for idx in range(4)))
+    monkeypatch.setattr("tests.url_dataset_campaign.download_dataset", lambda: dataset_file)
 
     async def fake_collect_available_urls(
         *, total_limit, concurrency, progress_callback=None, timeout=5.0

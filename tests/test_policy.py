@@ -1,6 +1,7 @@
 """Tests for policy engine"""
 
 import re
+from typing import Any, cast
 
 import pytest
 
@@ -30,6 +31,47 @@ def test_policy_validation():
     # Invalid strictness
     with pytest.raises(ValueError):
         Policy(strictness="invalid")
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: Policy(block_threshold=cast(Any, "0.5")),
+            "block_threshold must be a finite number",
+        ),
+        (
+            lambda: Policy(block_threshold=cast(Any, True), warn_threshold=cast(Any, False)),
+            "block_threshold must be a finite number",
+        ),
+        (
+            lambda: Policy(custom_pattern_weights={"custom": cast(Any, "0.5")}),
+            "custom_pattern_weights\\['custom'\\] must be a finite number",
+        ),
+        (
+            lambda: Policy(custom_pattern_weights=cast(Any, [("custom", 0.5)])),
+            "custom_pattern_weights must be a mapping",
+        ),
+        (
+            lambda: Policy(check_hidden_content=cast(Any, "false")),
+            "check_hidden_content must be a bool",
+        ),
+        (
+            lambda: Policy(custom_patterns=cast(Any, [{"pattern": "x"}])),
+            "custom_patterns entries must be InjectionPattern instances",
+        ),
+        (
+            lambda: PolicyEngine.from_dict({"block_threshold": cast(Any, "0.5")}),
+            "block_threshold must be a finite number",
+        ),
+    ],
+)
+def test_policy_rejects_invalid_untyped_config(
+    factory: Any,
+    message: str,
+):
+    with pytest.raises(ValueError, match=message):
+        factory()
 
 
 def test_policy_engine_from_name():
@@ -63,6 +105,14 @@ def test_policy_engine_thresholds():
     assert engine.get_action(0.8) == "block"
     assert engine.should_warn(0.8)
     assert engine.should_block(0.8)
+
+
+@pytest.mark.parametrize("value", [cast(Any, "0.5"), cast(Any, True)])
+def test_policy_engine_rejects_invalid_score_types(value: Any):
+    engine = PolicyEngine.from_name("normal")
+
+    with pytest.raises(ValueError, match="injection_score must be a finite number"):
+        engine.get_action(value)
 
 
 def test_predefined_policies():
