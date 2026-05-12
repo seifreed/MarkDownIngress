@@ -1142,6 +1142,8 @@ class PersistentJobQueue:
                 raise RuntimeError("Task returned None result")
             if not isinstance(result, dict):
                 raise RuntimeError("Task returned non-dict result")
+            # Validate persistence while the failure path can still mark the job failed.
+            json.dumps(result)
         except Exception as exc:
             # Try to mark the job as failed.  If _mark_failed itself raises
             # (e.g. DB lock contention), log the secondary failure but always

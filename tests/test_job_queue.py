@@ -31,6 +31,24 @@ def test_persistent_job_queue_executes_immediately_and_persists_result(tmp_path:
     assert stored.result == {"ok": True, "count": 1}
 
 
+def test_persistent_job_queue_marks_inline_non_json_result_failed(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+    try:
+        with pytest.raises(TypeError, match="not JSON serializable"):
+            queue.submit(lambda: {"bad": object()}, start_immediately=True)
+
+        job_ids = _job_ids(queue)
+        assert len(job_ids) == 1
+        stored = queue.get(job_ids[0], cleanup_expired=False)
+
+        assert stored is not None
+        assert stored.status == "failed"
+        assert stored.error is not None
+        assert "not JSON serializable" in stored.error
+    finally:
+        queue.close()
+
+
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
