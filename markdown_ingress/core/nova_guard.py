@@ -23,6 +23,52 @@ DEFAULT_HIGH_THRESHOLD = 0.7
 DEFAULT_MEDIUM_THRESHOLD = 0.3
 
 
+def _ensure_bool(field_name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
+    return value
+
+
+def _ensure_threshold(field_name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            "Invalid severity thresholds: "
+            f"{field_name} must be a finite number, got {type(value).__name__}"
+        )
+    threshold = float(value)
+    if threshold != threshold or threshold in (float("inf"), float("-inf")):
+        raise ValueError(
+            f"Invalid severity thresholds: {field_name} must be a finite number, got {value!r}"
+        )
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(
+            f"Invalid severity thresholds: {field_name} must be between 0.0 and 1.0, got {threshold}"
+        )
+    return threshold
+
+
+def _coerce_rule_score(raw_score: object, rule_name: str) -> float:
+    if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+        logger.warning(
+            "Rule '%s' returned invalid score %r, defaulting to 0.5",
+            rule_name,
+            raw_score,
+        )
+        return 0.5
+    score = float(raw_score)
+    if score != score or score in (float("inf"), float("-inf")):
+        logger.warning(
+            "Rule '%s' returned non-finite score %r, defaulting to 0.5",
+            rule_name,
+            raw_score,
+        )
+        return 0.5
+    if not 0.0 <= score <= 1.0:
+        logger.warning("Rule '%s' returned out-of-range score %r, clamping", rule_name, raw_score)
+        return max(0.0, min(1.0, score))
+    return score
+
+
 class NovaGuard:
     """Advanced prompt injection detection using Nova Framework."""
 
@@ -41,15 +87,21 @@ class NovaGuard:
             raise ImportError("nova-hunting not installed")  # pragma: no cover
 
         # Validate severity thresholds
-        if not (0 <= severity_medium_threshold <= severity_high_threshold <= 1):
+        severity_high_threshold = _ensure_threshold(
+            "severity_high_threshold", severity_high_threshold
+        )
+        severity_medium_threshold = _ensure_threshold(
+            "severity_medium_threshold", severity_medium_threshold
+        )
+        if severity_medium_threshold > severity_high_threshold:
             raise ValueError(
                 f"Invalid severity thresholds: medium ({severity_medium_threshold}) must be <= "
                 f"high ({severity_high_threshold}) and both must be in [0, 1]"
             )
 
-        self.enable_keywords = enable_keywords
-        self.enable_semantics = enable_semantics
-        self.enable_llm = enable_llm
+        self.enable_keywords = _ensure_bool("enable_keywords", enable_keywords)
+        self.enable_semantics = _ensure_bool("enable_semantics", enable_semantics)
+        self.enable_llm = _ensure_bool("enable_llm", enable_llm)
         self.severity_high_threshold = severity_high_threshold
         self.severity_medium_threshold = severity_medium_threshold
 
@@ -76,7 +128,7 @@ class NovaGuard:
         self.matchers: list = []
         if self.rules:
             for rule in self.rules:
-                self.matchers.append(NovaMatcher(rule=rule, create_llm_evaluator=enable_llm))
+                self.matchers.append(NovaMatcher(rule=rule, create_llm_evaluator=self.enable_llm))
         else:
             logger.warning(
                 "Nova-tracer enabled but no rules were loaded. "
@@ -324,22 +376,23 @@ class NovaGuard:
         for matcher in self.matchers:
             result = matcher.check_prompt(text)
             if result.get("matched"):
+                rule_name = str(result.get("rule_name", "unknown"))
                 # Use confidence score if available, otherwise default to 0.5 (medium)
                 # This provides graduated scoring while avoiding false positives
                 # being treated as maximum severity
                 if "confidence" in result:
-                    score = result["confidence"]
+                    score = _coerce_rule_score(result["confidence"], rule_name)
                 elif "score" in result:
-                    score = result["score"]
+                    score = _coerce_rule_score(result["score"], rule_name)
                 else:
                     # Log warning when score is missing, default to medium severity
                     logger.warning(
                         "Rule '%s' matched without confidence/score, defaulting to 0.5",
-                        result.get("rule_name", "unknown"),
+                        rule_name,
                     )
                     score = 0.5
                 scores.append(score)
-                matched_rules.append(result.get("rule_name", "unknown"))
+                matched_rules.append(rule_name)
                 meta = result.get("meta", {})
                 if "category" in meta:
                     categories.append(meta["category"])
