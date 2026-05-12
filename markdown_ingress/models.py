@@ -61,6 +61,9 @@ class CaseInsensitiveHeaders(dict[str, str]):
         super().__setitem__(normalized, default)
         return default
 
+    def copy(self) -> "CaseInsensitiveHeaders":
+        return type(self)(self)
+
     def update(
         self,
         *args: Any,

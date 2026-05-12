@@ -49,3 +49,14 @@ def test_case_insensitive_headers_tolerate_non_string_lookup_defaults():
 
     assert headers.get(None, "fallback") == "fallback"
     assert headers.pop(None, "fallback") == "fallback"
+
+
+def test_case_insensitive_headers_copy_preserves_case_insensitive_lookup():
+    headers = CaseInsensitiveHeaders({"Content-Type": "text/html"})
+
+    copied = headers.copy()
+
+    assert isinstance(copied, CaseInsensitiveHeaders)
+    assert copied["CONTENT-TYPE"] == "text/html"
+    copied["X-Test"] = "1"
+    assert copied["x-test"] == "1"
