@@ -45,6 +45,10 @@ from markdown_ingress.core.security_data import (
 from markdown_ingress.core.security_data import (
     InjectionPattern,
 )
+from markdown_ingress.core.security_rules import (
+    DEFAULT_IMPERATIVE_VERBS,
+    DEFAULT_INJECTION_PATTERNS,
+)
 from markdown_ingress.core.security_text import (
     _decode_css_escapes as _decode_css_escapes,
 )
@@ -125,122 +129,8 @@ class SecurityAnalyzer:
         super().__init_subclass__(**kwargs)
         cls._PATTERNS_LOCK = threading.Lock()
 
-    # Pattern-based detection rules
-    INJECTION_PATTERNS: tuple[InjectionPattern, ...] = (
-        InjectionPattern(
-            pattern=r"\bignore\s+(previous|all|prior)\s+(instructions?|prompts?|commands?)\b",
-            weight=0.8,
-            description="Direct instruction override attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\bsystem\s+prompts?\b", weight=0.6, description="System prompt reference"
-        ),
-        InjectionPattern(
-            pattern=r"\b(developer|admin|debug)\s+mode\b",
-            weight=0.7,
-            description="Mode switching attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\breveal\s+(secret|password|key|token)s?\b",
-            weight=0.9,
-            description="Secret extraction attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\byou\s+are\s+(chatgpt|gpt-?\d|claude|an?\s+ai)\b",
-            weight=0.5,
-            description="Model identity manipulation",
-        ),
-        InjectionPattern(
-            pattern=r"\boverride\s+(policy|policies|rules?|settings?)\b",
-            weight=0.8,
-            description="Policy override attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\b(disregard|forget|reset)\s+(everything|all|previous)\b",
-            weight=0.7,
-            description="Context reset attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\bact\s+as\s+(if|though|a)\b",
-            weight=0.3,
-            description="Role-play instruction (weak signal)",
-        ),
-        InjectionPattern(
-            pattern=r"\bpretend\s+(you|that)\b",
-            weight=0.3,
-            description="Pretend instruction (weak signal)",
-        ),
-        InjectionPattern(
-            pattern=r"<\s*instruction\s*>", weight=0.9, description="Explicit instruction tags"
-        ),
-        # BUG FIX: Added patterns for closing tags, self-closing, and attributes
-        InjectionPattern(
-            pattern=r"</\s*instruction\s*>", weight=0.9, description="Instruction closing tags"
-        ),
-        InjectionPattern(
-            pattern=r"<\s*instruction\s*/?\s*>",
-            weight=0.9,
-            description="Instruction self-closing tags",
-        ),
-        InjectionPattern(
-            pattern=r"<\s*instruction\s+[^>]*>",
-            weight=0.85,
-            description="Instruction tags with attributes",
-        ),
-        # BUG FIX: Added critical injection patterns for jailbreak, DAN, and privilege escalation
-        InjectionPattern(pattern=r"\bjailbreak\b", weight=0.85, description="Jailbreak keyword"),
-        InjectionPattern(
-            pattern=r"\bDAN\b", weight=0.9, description="DAN (Do Anything Now) attack"
-        ),
-        InjectionPattern(
-            pattern=r"\b(sudo|root)\s+mode\b",
-            weight=0.75,
-            description="Privilege escalation attempt",
-        ),
-        InjectionPattern(
-            pattern=r"\b(escape|break)\s+out\b", weight=0.75, description="Escape attempt"
-        ),
-        InjectionPattern(
-            pattern=r"\b(simulate|imagine)\s+(you\s+are|being)\b",
-            weight=0.5,
-            description="Role-play injection",
-        ),
-    )
-
-    # Imperative verbs often used in injections
-    # BUG FIX: Added missing security-relevant verbs
-    IMPERATIVE_VERBS = frozenset(
-        {
-            "ignore",
-            "disregard",
-            "forget",
-            "override",
-            "reveal",
-            "show",
-            "display",
-            "tell",
-            "say",
-            "write",
-            "output",
-            "print",
-            "execute",
-            "run",
-            "enable",
-            "disable",
-            "bypass",
-            "skip",
-            "reset",
-            "change",
-            "modify",
-            "delete",
-            "dump",  # e.g., "dump all data"
-            "leak",  # e.g., "leak the prompt"
-            "expose",  # e.g., "expose the system"
-            "extract",  # e.g., "extract the rules"
-            "provide",  # e.g., "provide the instructions"
-            "list",  # e.g., "list all rules"
-        }
-    )
+    INJECTION_PATTERNS: tuple[InjectionPattern, ...] = DEFAULT_INJECTION_PATTERNS
+    IMPERATIVE_VERBS = DEFAULT_IMPERATIVE_VERBS
 
     def __init__(self, strict: bool = True):
         """
