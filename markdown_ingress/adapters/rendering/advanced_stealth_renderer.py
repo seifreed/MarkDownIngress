@@ -3,10 +3,14 @@
 import asyncio
 import logging
 import time
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
-from markdown_ingress.adapters.rendering.renderer_support import raise_for_render_status
+from markdown_ingress.adapters.rendering.renderer_support import (
+    _close_async_resource,
+    launch_chromium,
+    raise_for_render_status,
+)
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
@@ -25,16 +29,6 @@ from markdown_ingress.models import FetchResult
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 logger = logging.getLogger(__name__)
-
-
-async def _close_async_resource(resource: Any | None, label: str) -> None:
-    """Close an async Playwright resource without masking earlier failures."""
-    if resource is None:
-        return
-    try:
-        await resource.close()
-    except Exception as exc:  # pragma: no cover - defensive cleanup path
-        logger.warning("Failed to close %s cleanly: %s", label, exc)
 
 
 class AdvancedStealthRenderer:
@@ -193,7 +187,7 @@ class AdvancedStealthRenderer:
             }
 
             browser = None
-            browser = await p.chromium.launch(**cast(dict[str, Any], launch_options))
+            browser = await launch_chromium(p.chromium, launch_options, self.timeout)
             context = None
             page = None
 

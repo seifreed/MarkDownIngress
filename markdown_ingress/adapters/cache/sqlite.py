@@ -13,6 +13,7 @@ from markdown_ingress.adapters.cache.sqlite_document_codec import (
     deserialize_document,
     serialize_document,
 )
+from markdown_ingress.adapters.cache.sqlite_path import validate_db_path
 from markdown_ingress.adapters.cache.utils import _validate_ttl_value
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.models import SafeDocument
@@ -62,61 +63,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                 the current working directory, or is absolute when
                 allow_absolute_paths=False
         """
-        if not db_path or not db_path.strip():
-            raise ValueError("db_path cannot be empty")
-
-        # Convert to Path and resolve to absolute path
-        path = Path(db_path)
-
-        # Resolve the path to get the canonical form (resolves .., ., symlinks)
-        try:
-            # For paths that don't exist yet, resolve parent first
-            if path.exists():
-                resolved_path = path.resolve()
-            else:
-                # Resolve parent directory and then add the filename
-                parent = path.parent
-                if parent.exists():
-                    resolved_parent = parent.resolve()
-                else:
-                    # Create parent path by resolving from cwd
-                    resolved_parent = Path.cwd() / parent
-                    resolved_parent = resolved_parent.resolve()
-                resolved_path = resolved_parent / path.name
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"Invalid db_path '{db_path}': {exc}") from exc
-
-        # Get current working directory as the base allowed directory
-        cwd = Path.cwd().resolve()
-
-        # Check that the resolved path is within the current working directory
-        # or a subdirectory of it
-        try:
-            resolved_path.relative_to(cwd)
-        except ValueError:
-            # Path is outside cwd - check if it's an absolute path that was explicitly given
-            if path.is_absolute():
-                # BUG FIX: Optionally reject absolute paths for stricter security
-                if not allow_absolute_paths:
-                    raise ValueError(
-                        f"Absolute db_path '{db_path}' not allowed. "
-                        f"Resolved path: '{resolved_path}', Working directory: '{cwd}'. "
-                        "Set allow_absolute_paths=True to permit absolute paths."
-                    ) from None
-                _logger.warning(
-                    "SQLiteCache using absolute path '%s' outside working directory '%s'. "
-                    "Ensure this path is intentionally specified and secure.",
-                    resolved_path,
-                    cwd,
-                )
-            else:
-                raise ValueError(
-                    f"db_path '{db_path}' resolves to path outside current working directory. "
-                    f"Resolved path: '{resolved_path}', Working directory: '{cwd}'. "
-                    "Path traversal is not allowed for security reasons."
-                ) from None
-
-        return resolved_path
+        return validate_db_path(db_path, allow_absolute_paths)
 
     def __init__(
         self,

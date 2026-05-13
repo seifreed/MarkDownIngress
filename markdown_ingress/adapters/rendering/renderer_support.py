@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, Final, cast
@@ -13,6 +14,8 @@ from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
 _SCREENSHOT_UNSET: Final[Any] = object()
+_MIN_CHROMIUM_LAUNCH_TIMEOUT_MS: Final[int] = 1000
+_CHROMIUM_LAUNCH_RETRIES: Final[int] = 1
 
 # Lazy import for stealth injection
 try:
@@ -34,6 +37,31 @@ async def _close_async_resource(resource: Any | None, label: str) -> None:
         await resource.close()
     except Exception as exc:  # pragma: no cover - defensive cleanup path
         logger.warning("Failed to close %s cleanly: %s", label, exc)
+
+
+async def launch_chromium(chromium: Any, launch_options: dict[str, object], timeout_ms: int) -> Any:
+    """Launch Chromium with a bounded timeout and one retry for launch hangs."""
+    options = dict(launch_options)
+    options.setdefault(
+        "timeout",
+        max(_MIN_CHROMIUM_LAUNCH_TIMEOUT_MS, int(timeout_ms)),
+    )
+
+    for attempt in range(_CHROMIUM_LAUNCH_RETRIES + 1):
+        try:
+            return await chromium.launch(**options)
+        except Exception as exc:
+            if attempt >= _CHROMIUM_LAUNCH_RETRIES or not _is_launch_timeout(exc):
+                raise
+            logger.warning("Chromium launch timed out; retrying once: %s", exc)
+            await asyncio.sleep(0.1)
+
+    raise RuntimeError("Chromium launch retry loop exited unexpectedly")
+
+
+def _is_launch_timeout(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "launch" in message and "timeout" in message
 
 
 def raise_for_render_status(response: Any | None, url: str) -> None:
@@ -154,7 +182,11 @@ async def execute_render_session(
     async with async_playwright() as playwright:
         browser_args = renderer._prepare_browser_args()
         launch_options = renderer._prepare_launch_options(browser_args)
-        browser = await playwright.chromium.launch(**cast(dict[str, Any], launch_options))
+        browser = await launch_chromium(
+            playwright.chromium,
+            cast(dict[str, object], launch_options),
+            timeout_ms,
+        )
         try:
             context_options = renderer._prepare_context_options()
             context = await browser.new_context(**context_options)

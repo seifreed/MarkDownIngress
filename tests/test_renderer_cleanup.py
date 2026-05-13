@@ -10,7 +10,10 @@ import pytest
 
 from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
-from markdown_ingress.adapters.rendering.renderer_support import execute_render_session
+from markdown_ingress.adapters.rendering.renderer_support import (
+    execute_render_session,
+    launch_chromium,
+)
 from markdown_ingress.models import FetchResult
 
 
@@ -102,6 +105,17 @@ class _FakeAsyncPlaywrightCM:
         return False
 
 
+class _FlakyLaunchChromium:
+    def __init__(self) -> None:
+        self.launch_options: list[dict[str, object]] = []
+
+    async def launch(self, **kwargs):
+        self.launch_options.append(dict(kwargs))
+        if len(self.launch_options) == 1:
+            raise RuntimeError("BrowserType.launch: Timeout 5000ms exceeded")
+        return "browser"
+
+
 def _install_fake_playwright(
     monkeypatch,
     *,
@@ -131,6 +145,19 @@ def _install_fake_playwright(
     monkeypatch.setitem(sys.modules, "playwright", fake_pkg)
     monkeypatch.setitem(sys.modules, "playwright.async_api", fake_async_api)
     return page, context, browser
+
+
+@pytest.mark.asyncio
+async def test_launch_chromium_retries_timeout_with_bounded_launch_timeout():
+    chromium = _FlakyLaunchChromium()
+
+    browser = await launch_chromium(chromium, {"headless": True}, 5000)
+
+    assert browser == "browser"
+    assert chromium.launch_options == [
+        {"headless": True, "timeout": 5000},
+        {"headless": True, "timeout": 5000},
+    ]
 
 
 def _assert_ssrf_blocker_installed_with_performance_blocking_disabled(blocker, page):

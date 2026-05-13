@@ -52,6 +52,16 @@ from markdown_ingress.shared_results import BatchErrorItem
 client = TestClient(app)
 
 
+def _wait_for_job_queue_repair_thread_to_clear(timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        thread = api_server._JOB_QUEUE_REPAIR_THREAD
+        if thread is None:
+            return
+        thread.join(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+    assert api_server._JOB_QUEUE_REPAIR_THREAD is None
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -3327,7 +3337,7 @@ def test_backend_error_repair_loop_converges_without_recreating_replacement_queu
     api_server._start_job_queue_repair_loop()
     thread = api_server._JOB_QUEUE_REPAIR_THREAD
     assert thread is not None
-    thread.join(timeout=1.0)
+    _wait_for_job_queue_repair_thread_to_clear()
 
     assert build_calls == [queue]
     assert api_server._JOB_QUEUE_REPAIR_THREAD is None
@@ -3618,7 +3628,7 @@ def test_backend_error_repair_handles_non_runtime_build_failures(monkeypatch, tm
     api_server._start_job_queue_repair_loop()
     thread = api_server._JOB_QUEUE_REPAIR_THREAD
     assert thread is not None
-    thread.join(timeout=1.0)
+    _wait_for_job_queue_repair_thread_to_clear()
 
     assert api_server._JOB_QUEUE_REPAIR_THREAD is None
     assert api_server.JOB_QUEUE is queue
