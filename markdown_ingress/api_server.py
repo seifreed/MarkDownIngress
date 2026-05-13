@@ -9,7 +9,6 @@ import os
 import sqlite3
 import threading
 import time
-from collections import deque
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,6 +76,7 @@ from markdown_ingress.api_server_queue import (
     _read_job_from_queue,
     _TransientLegacyQueueReadError,
 )
+from markdown_ingress.api_server_rate_limit import RequestWindow, check_memory_rate_limit
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
@@ -96,7 +96,7 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 # ---------------------------------------------------------------------------
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
-_request_counts: dict[str, deque[float]] = {}
+_request_counts: dict[str, RequestWindow] = {}
 
 
 class _JobSubsystemSnapshot(TypedDict):
@@ -146,49 +146,17 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         return _check_rate_limit_redis(client_id)
 
     global _rate_limit_cleanup_counter
-    now = time.time()
-    with _rate_limit_lock:
-        # Periodic cleanup of stale client entries to prevent memory leak
-        _rate_limit_cleanup_counter += 1
-        if _rate_limit_cleanup_counter >= _RATE_LIMIT_CLEANUP_THRESHOLD:
-            _rate_limit_cleanup_counter = 0
-            stale_clients = [
-                cid
-                for cid, reqs in _request_counts.items()
-                if all(now - t >= RATE_LIMIT_WINDOW_SECONDS for t in reqs)
-            ]
-            for cid in stale_clients:
-                del _request_counts[cid]
-
-        if client_id not in _request_counts:
-            # No maxlen: rely solely on explicit window-expiry cleanup to avoid
-            # auto-eviction silently dropping timestamps still within the window.
-            _request_counts[client_id] = deque()
-        requests = _request_counts[client_id]
-        while requests and now - requests[0] >= RATE_LIMIT_WINDOW_SECONDS:
-            requests.popleft()
-        # Hard cap to prevent adversarial unbounded growth (well above normal rate limit)
-        rate_limit_hard_cap = RATE_LIMIT_REQUESTS * 10
-        while len(requests) > rate_limit_hard_cap:
-            requests.popleft()
-
-        if len(requests) >= RATE_LIMIT_REQUESTS:
-            # Calculate retry-after
-            oldest = requests[0]
-            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - oldest)) + 1)
-            return False, retry_after
-        requests.append(now)
-
-        # Size-based cleanup after adding the new client to enforce max limit
-        if len(_request_counts) > _RATE_LIMIT_MAX_CLIENTS:
-            client_ages = [
-                (cid, max(reqs) if reqs else float("-inf")) for cid, reqs in _request_counts.items()
-            ]
-            client_ages.sort(key=lambda x: x[1])  # Least recently active first
-            for cid, _ in client_ages[: len(client_ages) - _RATE_LIMIT_MAX_CLIENTS]:
-                del _request_counts[cid]
-
-        return True, 0
+    allowed, retry_after, _rate_limit_cleanup_counter = check_memory_rate_limit(
+        client_id,
+        request_counts=_request_counts,
+        lock=_rate_limit_lock,
+        cleanup_counter=_rate_limit_cleanup_counter,
+        cleanup_threshold=_RATE_LIMIT_CLEANUP_THRESHOLD,
+        max_clients=_RATE_LIMIT_MAX_CLIENTS,
+        rate_limit_requests=RATE_LIMIT_REQUESTS,
+        rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+    )
+    return allowed, retry_after
 
 
 JOB_TTL_SECONDS = _read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600)
