@@ -6,12 +6,16 @@ import copy
 import logging
 import math
 import os
-import re
 from collections.abc import Callable, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.core.document_security_patterns import (
+    PatternSpec,
+    _apply_custom_pattern_analysis,
+    _dedupe_preserving_order,
+)
 from markdown_ingress.core.domain_rules import apply_domain_html_rules
 from markdown_ingress.core.hashing import Hasher
 from markdown_ingress.core.ingest_stats import record_policy_action, timed_stage_with_snapshot
@@ -21,7 +25,6 @@ from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.plugin import PluginLoader
 from markdown_ingress.core.policy import PolicyBlockedError, PolicyEngine
 from markdown_ingress.core.scoring import Scorer
-from markdown_ingress.core.security import InjectionPattern, SecurityAnalyzer
 from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.ssrf import normalize_hostname
 from markdown_ingress.core.structured import (
@@ -30,14 +33,13 @@ from markdown_ingress.core.structured import (
     blocks_to_dicts,
     chunks_to_dicts,
 )
-from markdown_ingress.models import FetchResult, InjectionAnalysis, SafeDocument
+from markdown_ingress.models import FetchResult, SafeDocument
 
 _logger = logging.getLogger(__name__)
 
 _extractor_factory: Callable[[bool], IExtractor] | None = None
 _md_converter_factory: Callable[[], IMarkdownConverter] | None = None
 _token_estimator_factory: Callable[[str], ITokenEstimator] | None = None
-PatternSpec = str | tuple[str, float]
 
 
 def register_document_builder_factories(
@@ -49,51 +51,6 @@ def register_document_builder_factories(
     _extractor_factory = extractor_factory
     _md_converter_factory = md_converter_factory
     _token_estimator_factory = token_estimator_factory
-
-
-def _dedupe_preserving_order(values: list[str]) -> list[str]:
-    """Return unique values while preserving first-seen order."""
-    return list(dict.fromkeys(values))
-
-
-def _merge_pattern_matches(*groups: list[dict]) -> list[dict]:
-    """Merge pattern matches while deduplicating by description."""
-    merged: dict[str, dict] = {}
-    _anon_counter = 0
-    for group in groups:
-        for match in group:
-            if match.get("pattern") is not None:
-                key = str(match.get("pattern"))
-            else:
-                _anon_counter += 1
-                key = f"_anon_{_anon_counter}_{match.get('description', '')}"
-            existing = merged.get(key)
-            if existing is None:
-                merged[key] = {
-                    "pattern": match.get("pattern"),
-                    "weight": match.get("weight"),
-                    "occurrences": int(match.get("occurrences") or 0),
-                    "samples": list(match.get("samples", [])),
-                }
-                continue
-
-            existing["occurrences"] = int(existing.get("occurrences") or 0) + int(
-                match.get("occurrences") or 0
-            )
-            existing["weight"] = max(
-                float(existing.get("weight") or 0.0), float(match.get("weight") or 0.0)
-            )
-            samples = list(existing.get("samples", []))
-            for sample in match.get("samples", []):
-                if sample not in samples:
-                    samples.append(sample)
-            existing["samples"] = samples
-
-    # Truncate samples after all merging is complete to avoid order-dependent results
-    for item in merged.values():
-        item["samples"] = item["samples"][:3]
-
-    return list(merged.values())
 
 
 def build_policy_engine(
@@ -296,101 +253,6 @@ def _run_content_pipeline(
         operational_flags,
         domain_rule_stats,
         chunks_requested,
-    )
-
-
-def _create_custom_patterns(extra_patterns: Sequence[PatternSpec]) -> list[InjectionPattern]:
-    """Build InjectionPattern objects from pattern strings or (pattern, weight) tuples."""
-    patterns = []
-    for i, item in enumerate(extra_patterns):
-        if isinstance(item, tuple):
-            p, weight = item
-        else:
-            p = item
-            weight = 0.5
-        try:
-            re.compile(p)
-        except re.error as exc:
-            raise ValueError(f"Invalid custom pattern at index {i}: {exc}") from exc
-        patterns.append(
-            InjectionPattern(pattern=p, weight=weight, description=f"custom_pattern_{i + 1}")
-        )
-    return patterns
-
-
-def _run_and_merge_custom_analysis(
-    custom_defs: list[InjectionPattern],
-    security_result: dict,
-    extraction_result,
-    security_metadata: dict,
-    security_engine: SecurityEngine,
-    policy_engine: PolicyEngine,
-    config: IngestConfig,
-) -> dict:
-    """Run custom-pattern-only analysis and merge results into the base security result."""
-    # Only include custom patterns — default patterns are already in security_result.
-    extended_analyzer = SecurityAnalyzer(strict=config.strict)
-    extended_analyzer.INJECTION_PATTERNS = tuple(custom_defs)
-    extended_analysis = extended_analyzer.analyze(
-        extraction_result.text_content,
-        hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
-    )
-    security_result["injection_score"] = max(
-        security_result["injection_score"], extended_analysis.score
-    )
-    security_result["flags"] = _dedupe_preserving_order(
-        list(security_result["flags"]) + list(extended_analysis.flags)
-    )
-    security_result["pattern_matches"] = _merge_pattern_matches(
-        security_result["pattern_matches"],
-        extended_analysis.pattern_matches,
-    )
-    if len(security_result["pattern_matches"]) > 3:
-        security_result["flags"] = _dedupe_preserving_order(
-            [*list(security_result["flags"]), "multiple_injection_attempts"]
-        )
-    # Do NOT override imperative_density — it duplicates base computation on same text.
-    block_threshold, warn_threshold = security_engine.effective_thresholds(
-        policy_engine.policy.block_threshold,
-        policy_engine.policy.warn_threshold,
-        strict=config.strict,
-    )
-    security_result["explanation"] = security_engine._build_explanation(
-        final_score=security_result["injection_score"],
-        basic_analysis=InjectionAnalysis(
-            score=security_result["injection_score"],
-            flags=list(security_result["flags"]),
-            pattern_matches=list(security_result["pattern_matches"]),
-            hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
-            imperative_density=security_result["imperative_density"],
-        ),
-        nova_details=security_result.get("nova_details") or {},
-        scan_method=security_result["scan_method"],
-        block_threshold=block_threshold,
-        warn_threshold=warn_threshold,
-    )
-    return security_result
-
-
-def _apply_custom_pattern_analysis(
-    extra_patterns: Sequence[PatternSpec],
-    security_result: dict,
-    extraction_result,
-    security_metadata: dict,
-    security_engine: SecurityEngine,
-    policy_engine: PolicyEngine,
-    config: IngestConfig,
-) -> dict:
-    """Extend security_result with custom/plugin patterns and rebuild explanation."""
-    custom_defs = _create_custom_patterns(extra_patterns)
-    return _run_and_merge_custom_analysis(
-        custom_defs,
-        security_result,
-        extraction_result,
-        security_metadata,
-        security_engine,
-        policy_engine,
-        config,
     )
 
 

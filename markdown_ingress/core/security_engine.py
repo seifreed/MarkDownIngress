@@ -11,8 +11,8 @@ import logging
 import math
 from typing import Any
 
+from markdown_ingress.core import security as security_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
-from markdown_ingress.core.security import SecurityAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class SecurityEngine:
             self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
 
         # Initialize basic security analyzer
-        self.basic_analyzer = SecurityAnalyzer(strict=self.strict)
+        self.basic_analyzer = security_module.SecurityAnalyzer(strict=self.strict)
 
         # Initialize Nova if available and requested
         self.nova = None
