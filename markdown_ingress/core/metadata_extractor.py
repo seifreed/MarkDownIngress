@@ -11,6 +11,7 @@ from markdown_ingress.core.metadata_jsonld import (
     parse_author_from_jsonld_script,
     parse_date_from_jsonld_script,
 )
+from markdown_ingress.core.metadata_urls import extract_canonical_url
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class MetadataExtractor:
             "language_confidence": language_info["confidence"],
             "description": self._extract_description(parser),
             "keywords": self._extract_keywords(parser),
-            "canonical_url": self._extract_canonical_url(parser, url),
+            "canonical_url": extract_canonical_url(parser, url),
             "site_name": self._extract_site_name(parser),
             "content_type": self._detect_content_type(parser),
         }
@@ -262,58 +263,6 @@ class MetadataExtractor:
                 return ", ".join(tags)
 
         return None
-
-    def _extract_canonical_url(self, parser: HTMLParser, url: str) -> str | None:
-        """Extract canonical URL from link tag."""
-        from urllib.parse import urljoin, urlsplit
-
-        def _validate_http_url(candidate: str) -> str | None:
-            parsed = urlsplit(candidate)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                return None
-            return candidate
-
-        def _resolve_base_url() -> str:
-            base_tag = parser.css_first("base[href]")
-            if not base_tag:
-                return url
-            href = (base_tag.attributes.get("href") or "").strip()
-            if not href:
-                return url
-            return _validate_http_url(urljoin(url, href)) or url
-
-        def _resolve_candidate_url(candidate: str, base_url: str) -> str | None:
-            return _validate_http_url(urljoin(base_url, candidate))
-
-        def _iter_links_with_rel_token(token: str):
-            normalized_token = token.lower()
-            for link in parser.css("link[rel]"):
-                rel = link.attributes.get("rel") or ""
-                rel_tokens = {part.lower() for part in rel.split() if part}
-                if normalized_token in rel_tokens:
-                    yield link
-
-        base_url = _resolve_base_url()
-
-        # Try link rel=canonical
-        for canonical_link in _iter_links_with_rel_token("canonical"):
-            href = (canonical_link.attributes.get("href") or "").strip()
-            if href:
-                resolved = _resolve_candidate_url(href, base_url)
-                if resolved is not None:
-                    return resolved
-
-        # Try og:url
-        og_url = parser.css_first('meta[property="og:url"]')
-        if og_url:
-            content = (og_url.attributes.get("content") or "").strip()
-            if content:
-                resolved = _resolve_candidate_url(content, base_url)
-                if resolved is not None:
-                    return resolved
-
-        # Fallback to original URL
-        return url
 
     def _extract_site_name(self, parser: HTMLParser) -> str | None:
         """Extract site name from meta tags"""
