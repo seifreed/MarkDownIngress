@@ -5,14 +5,54 @@ import logging
 import random
 import ssl
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, NamedTuple, cast
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 
+from markdown_ingress.adapters.fetching.domain_state import DomainStateMixin
+from markdown_ingress.adapters.fetching.http_support import (
+    DEFAULT_DOMAIN_STATE_TTL as _DEFAULT_DOMAIN_STATE_TTL,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    DEFAULT_MAX_HOSTS as _DEFAULT_MAX_HOSTS,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    DEFAULT_MAX_RESPONSE_SIZE as _DEFAULT_MAX_RESPONSE_SIZE,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    FOLLOW_REDIRECT_STATUS as _FOLLOW_REDIRECT_STATUS,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    MAX_RETRIES as _MAX_RETRIES,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    RETRYABLE_STATUS as _RETRYABLE_STATUS,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    SAFE_HEADERS as _SAFE_HEADERS,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    PreparedRequest as _PreparedRequest,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    ResponseSizeLimitError,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    format_host_header as _format_host_header,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    parse_content_length as _parse_content_length,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    retry_delay_seconds as _retry_delay_seconds,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    validate_content_type as _validate_content_type,
+)
+from markdown_ingress.adapters.fetching.response_content import ResponseContentMixin
 from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.core.ssrf import (
@@ -25,129 +65,10 @@ from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
 
-_SAFE_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "max-age=0",
-    "DNT": "1",
-    "Upgrade-Insecure-Requests": "1",
-}
-
-_RETRYABLE_STATUS = {403, 429, 500, 502, 503, 504}
-_FOLLOW_REDIRECT_STATUS = {301, 302, 303, 307, 308}
-_MAX_RETRIES = 3
-_HTML_CONTENT_TYPES = (
-    "text/html",
-    "application/xhtml+xml",
-    "application/xml",
-    "text/xml",
-)
-_HOST_SOFT_THROTTLE_HINTS = {
-    "amazon.com": (3.0, 2.5),
-    "bestbuy.com": (2.5, 2.0),
-    "bestbuyads.com": (2.5, 2.0),
-    "facebook.com": (4.0, 3.0),
-    "instagram.com": (4.0, 3.0),
-    "sephora.com": (3.0, 2.0),
-    "wayfair.com": (3.0, 2.0),
-    "walmart.com": (2.5, 2.0),
-}
-
-_DEFAULT_DOMAIN_STATE_TTL = 3600
-_DEFAULT_MAX_HOSTS = 10000
-_DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
-
 _rng = random.SystemRandom()
 
 
-class ResponseSizeLimitError(ValueError):
-    """Raised when a response exceeds the configured fetch size limit."""
-
-
-class _PreparedRequest(NamedTuple):
-    transport_url: str
-    logical_url: str
-    host_header: str | None
-    sni_hostname: str | None
-    logical_host: str
-
-
-def _format_host_header(hostname: str, port: int | None, scheme: str) -> str:
-    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
-    default_port = 443 if scheme.lower() == "https" else 80
-    return f"{host}:{port}" if port is not None and port != default_port else host
-
-
-def _is_supported_html_content_type(content_type: str | None) -> bool:
-    if content_type is None:
-        logger.debug("Response has no Content-Type header; rejecting as non-HTML")
-        return False
-    if not content_type.strip():
-        logger.debug("Response has empty Content-Type header; rejecting as non-HTML")
-        return False
-    normalized = content_type.split(";", 1)[0].strip().lower()
-    return normalized in _HTML_CONTENT_TYPES
-
-
-def _validate_content_type(response: httpx.Response) -> None:
-    content_type = response.headers.get("content-type")
-    if _is_supported_html_content_type(content_type):
-        return
-    raise UnsupportedContentTypeError(
-        f"Unsupported content type for HTML ingestion: {content_type or 'unknown'}"
-    )
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    from email.utils import parsedate_to_datetime
-
-    if not value:
-        return None
-    raw = value.strip()
-    if not raw:
-        return None
-    try:
-        return max(0.25, float(raw))
-    except ValueError:
-        pass
-    try:
-        retry_at = parsedate_to_datetime(raw)
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=UTC)
-    except Exception:
-        return None
-    return max(0.25, (retry_at - datetime.now(UTC)).total_seconds())
-
-
-def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
-    retry_after = _parse_retry_after(response.headers.get("retry-after"))
-    if retry_after is not None:
-        return float(min(retry_after, 10.0))
-    if response.status_code == 429:
-        return float(min(1.5 * (2**attempt), 10.0))
-    return float(min(0.5 * (attempt + 1), 2.0))
-
-
-def _parse_content_length(content_length: str | None) -> int | None:
-    if not content_length:
-        return None
-    try:
-        value = int(content_length)
-        return value if value >= 0 else None
-    except ValueError:
-        logger.warning("Malformed Content-Length header: %s", content_length)
-        return None
-
-
-def _host_soft_throttle_delay(host: str, base_delay: float) -> float:
-    normalized = host.lower()
-    for suffix, (multiplier, minimum_delay) in _HOST_SOFT_THROTTLE_HINTS.items():
-        if normalized == suffix or normalized.endswith(f".{suffix}"):
-            return max(base_delay * multiplier, minimum_delay)
-    return base_delay
-
-
-class Fetcher(IFetcher):
+class Fetcher(ResponseContentMixin, DomainStateMixin, IFetcher):
     """HTTP fetcher for fast mode (no JS rendering)."""
 
     DEFAULT_TIMEOUT = 30.0
@@ -525,274 +446,6 @@ class Fetcher(IFetcher):
             return fallback_host
         resolved = cls._host_key(final_url)
         return resolved or fallback_host
-
-    def _cleanup_domain_state(self) -> None:
-        now = time.monotonic()
-        with self._cleanup_lock:
-            if now - self._last_cleanup < 60.0 or self._cleanup_running:
-                return
-            self._last_cleanup = now
-            self._cleanup_running = True
-        try:
-            self._do_cleanup_domain_state(now)
-        finally:
-            with self._cleanup_lock:
-                self._cleanup_running = False
-
-    def _do_cleanup_domain_state(self, now: float) -> None:
-        stale_hosts_set: set[str] = set()
-
-        if self.domain_state_ttl > 0:
-            with self._domain_lock:
-                stale_hosts = [
-                    host
-                    for host, ts in self._domain_state_timestamp.items()
-                    if now - ts > self.domain_state_ttl
-                ]
-                stale_hosts_set = set(stale_hosts)
-                for host in stale_hosts:
-                    self._next_allowed_by_host.pop(host, None)
-                    self._domain_state_timestamp.pop(host, None)
-
-        with self._domain_lock:
-            if len(self._next_allowed_by_host) > self.max_hosts:
-                sorted_hosts = sorted(
-                    self._domain_state_timestamp.items(),
-                    key=lambda x: x[1],
-                )
-                evict_count = len(self._next_allowed_by_host) - self.max_hosts
-                for host, _ in sorted_hosts[:evict_count]:
-                    self._next_allowed_by_host.pop(host, None)
-                    self._domain_state_timestamp.pop(host, None)
-                    stale_hosts_set.add(host)
-
-        with self._failure_lock:
-            for host in stale_hosts_set:
-                self._failures_by_host.pop(host, None)
-                self._failure_first_seen.pop(host, None)
-
-            remaining_stale = [
-                host
-                for host, ts in self._failure_first_seen.items()
-                if now - ts > self.domain_state_ttl
-            ]
-            for host in remaining_stale:
-                self._failures_by_host.pop(host, None)
-                self._failure_first_seen.pop(host, None)
-
-    def _apply_failure_decay_locked(self, host: str) -> int:
-        if self.failure_decay_seconds is None or self.failure_decay_seconds <= 0:
-            return self._failures_by_host.get(host, 0)
-
-        now = time.monotonic()
-        first_seen = self._failure_first_seen.get(host, now)
-        current: int = self._failures_by_host.get(host, 0)
-
-        if current > 0 and first_seen:
-            elapsed = now - first_seen
-            if elapsed > self.failure_decay_seconds:
-                self._failures_by_host[host] = 0
-                self._failure_first_seen[host] = now
-                return 0
-            failure_decay_seconds = cast(float, self.failure_decay_seconds)
-            decay_factor = 0.5 ** (elapsed / failure_decay_seconds)
-            decayed: int = round(float(current) * decay_factor)
-            return decayed
-        return current
-
-    def _apply_failure_decay(self, host: str) -> int:
-        with self._failure_lock:
-            return self._apply_failure_decay_locked(host)
-
-    def _reserve_domain_slot(self, host: str) -> float:
-        if not host:
-            logger.warning("Empty host detected - rate limiting bypassed for malformed URL")
-            return 0.0
-
-        self._cleanup_domain_state()
-
-        with self._domain_lock:
-            now = time.monotonic()
-            next_allowed = self._next_allowed_by_host.get(host, 0.0)
-            slot = max(now, next_allowed)
-            if self.domain_request_interval > 0.0:
-                self._next_allowed_by_host[host] = slot + self.domain_request_interval
-            else:
-                self._next_allowed_by_host[host] = slot
-            self._domain_state_timestamp[host] = now
-            return max(0.0, slot - now)
-
-    def _defer_host(self, host: str, delay_seconds: float) -> None:
-        if not host or delay_seconds <= 0.0:
-            return
-        with self._domain_lock:
-            now = time.monotonic()
-            next_allowed = self._next_allowed_by_host.get(host, now)
-            self._next_allowed_by_host[host] = max(next_allowed, now + delay_seconds)
-            self._domain_state_timestamp[host] = now
-
-    def _ensure_circuit_closed(self, host: str) -> None:
-        if not host:
-            return
-        with self._failure_lock:
-            self._apply_failure_decay_locked(host)
-            open_until = self._open_until_by_host.get(host, 0.0)
-            if open_until > time.monotonic():
-                raise DomainCircuitOpenError(f"Circuit breaker open for host: {host}")
-
-    def _record_success(self, host: str) -> None:
-        if not host:
-            return
-        with self._failure_lock:
-            self._failures_by_host.pop(host, None)
-            self._failure_first_seen.pop(host, None)
-            self._open_until_by_host.pop(host, None)
-
-    def _record_failure(self, host: str) -> None:
-        if not host:
-            return
-
-        now = time.monotonic()
-        should_cleanup = False
-        with self._cleanup_lock:
-            if now - self._last_failure_cleanup > 60.0:
-                should_cleanup = True
-                self._last_failure_cleanup = now
-
-        with self._failure_lock:
-            if host not in self._failure_first_seen:
-                self._failure_first_seen[host] = now
-
-            decayed = self._apply_failure_decay_locked(host)
-            new_count = decayed + 1
-            self._failures_by_host[host] = new_count
-
-            if new_count >= self.circuit_breaker_threshold:
-                self._open_until_by_host[host] = now + self.circuit_breaker_open_seconds
-                self._failures_by_host[host] = max(1, (self.circuit_breaker_threshold + 1) // 2)
-
-            if should_cleanup:
-                self._cleanup_stale_failures_locked(now)
-
-    def _cleanup_stale_failures_locked(self, now: float) -> None:
-        if self.domain_state_ttl <= 0:
-            return
-
-        stale_hosts = [
-            host
-            for host, ts in self._failure_first_seen.items()
-            if now - ts > self.domain_state_ttl
-        ]
-
-        for host in stale_hosts:
-            self._failures_by_host.pop(host, None)
-            self._failure_first_seen.pop(host, None)
-            self._open_until_by_host.pop(host, None)
-
-    def _record_soft_throttle(self, host: str, delay_seconds: float) -> None:
-        if not host:
-            return
-        self._defer_host(host, _host_soft_throttle_delay(host, delay_seconds))
-        with self._failure_lock:
-            self._failures_by_host.pop(host, None)
-            self._failure_first_seen.pop(host, None)
-
-    @staticmethod
-    def _decode_content(content: bytes, charset_encoding: str | None) -> str:
-        encoding = charset_encoding or "utf-8"
-        try:
-            return content.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            return content.decode("utf-8", errors="replace")
-
-    async def _read_async_response_content(self, response: httpx.Response) -> bytes:
-        chunks: list[bytes] = []
-        total_size = 0
-        async for chunk in response.aiter_bytes():
-            total_size += len(chunk)
-            if self.max_response_size is not None and total_size > self.max_response_size:
-                raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds "
-                    f"max_response_size {self.max_response_size}"
-                )
-            chunks.append(chunk)
-        return b"".join(chunks)
-
-    async def _drain_async_response_for_reuse(
-        self, response: httpx.Response, log_message: str
-    ) -> None:
-        total_size = 0
-        try:
-            async for chunk in response.aiter_bytes():
-                total_size += len(chunk)
-                if self.max_response_size is not None and total_size > self.max_response_size:
-                    raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds "
-                        f"max_response_size {self.max_response_size}"
-                    )
-        except ResponseSizeLimitError:
-            raise
-        except Exception:
-            logger.debug(log_message, exc_info=True)
-
-    def _read_sync_response_content(self, response: httpx.Response) -> bytes:
-        chunks: list[bytes] = []
-        total_size = 0
-        for chunk in response.iter_bytes():
-            total_size += len(chunk)
-            if self.max_response_size is not None and total_size > self.max_response_size:
-                raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds "
-                    f"max_response_size {self.max_response_size}"
-                )
-            chunks.append(chunk)
-        return b"".join(chunks)
-
-    def _drain_sync_response_for_reuse(self, response: httpx.Response, log_message: str) -> None:
-        total_size = 0
-        try:
-            for chunk in response.iter_bytes():
-                total_size += len(chunk)
-                if self.max_response_size is not None and total_size > self.max_response_size:
-                    raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds "
-                        f"max_response_size {self.max_response_size}"
-                    )
-        except ResponseSizeLimitError:
-            raise
-        except Exception:
-            logger.debug(log_message, exc_info=True)
-
-    def _make_fetch_result(
-        self,
-        content: bytes,
-        requested_url: str,
-        final_url: str,
-        response,
-        elapsed_ms: float,
-        ua: str,
-        attempt: int,
-        *,
-        ssl_bypass: bool = False,
-        total_attempt: int | None = None,
-    ) -> FetchResult:
-        html = self._decode_content(content, response.charset_encoding)
-        metadata: dict = {
-            "fetcher": "httpx",
-            "user_agent": ua,
-            "attempt": (total_attempt or attempt + 1),
-        }
-        if ssl_bypass:
-            metadata["ssl_bypass"] = True
-        return FetchResult(
-            html=html,
-            url=requested_url,
-            status_code=response.status_code,
-            final_url=final_url,
-            headers=response.headers,
-            timing_ms=elapsed_ms,
-            metadata=metadata,
-        )
 
     def _handle_retryable_status(
         self, response_host: str, status_code: int, retry_delay: float
