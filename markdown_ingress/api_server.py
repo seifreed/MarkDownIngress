@@ -9,10 +9,8 @@ import os
 import sqlite3
 import threading
 import time
-from contextlib import closing
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -71,12 +69,17 @@ from markdown_ingress.api_server_queue import (
     _is_active_owner_error,
     _is_stale_heartbeat,
     _job_record_within_api_ttl,
-    _legacy_unknown_ttl_expires_at,
     _queue_still_has_visible_jobs,
     _read_job_from_queue,
     _TransientLegacyQueueReadError,
 )
 from markdown_ingress.api_server_rate_limit import RequestWindow, check_memory_rate_limit
+from markdown_ingress.api_server_snapshot import (
+    JobSubsystemSnapshot as _JobSubsystemSnapshot,
+)
+from markdown_ingress.api_server_snapshot import (
+    build_job_subsystem_snapshot,
+)
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
@@ -97,24 +100,6 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
 _request_counts: dict[str, RequestWindow] = {}
-
-
-class _JobSubsystemSnapshot(TypedDict):
-    status: str
-    current_state: str
-    current_db_path: str
-    current_ttl_seconds: int | None
-    current_max_queued_jobs: int | None
-    current_pending: int | None
-    legacy_pending: int
-    pending_visible_total: int | None
-    legacy_visible_queues: int
-    legacy_db_paths: list[str]
-    pending_unknown: bool
-    current_unknown_ttl_jobs: int
-    legacy_unknown_ttl_jobs: int
-    legacy_unknown_ttl_seconds: int
-    repair_in_progress: bool
 
 
 _rate_limit_lock = threading.Lock()
@@ -609,111 +594,23 @@ def _get_job_record(job_id: str):
     return None
 
 
-def _optional_int_attr(source: object | None, name: str) -> int | None:
-    value = getattr(source, name, None)
-    if isinstance(value, bool):
-        return None
-    return value if isinstance(value, int) else None
-
-
 def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapshot:
     if start_repair:
         _maybe_start_job_queue_repair()
-
-    def read_pending(queue_obj: Any) -> int | None:
-        if queue_obj is None:
-            return None
-        try:
-            return cast(int, queue_obj.pending_count(cleanup_expired=False))
-        except (RuntimeError, SQLiteError):
-            return None
-        except TypeError:
-            try:
-                return cast(int, queue_obj.pending_count())
-            except (RuntimeError, SQLiteError):
-                return None
-
-    def count_unknown_ttl_jobs(queue_obj: Any) -> int:
-        connect = getattr(queue_obj, "_connect", None)
-        if not callable(connect):
-            return 0
-        try:
-            with closing(connect()) as conn:
-                rows = conn.execute("""
-                    SELECT completed_at, legacy_expires_at
-                    FROM jobs
-                    WHERE ttl_seconds IS NULL
-                    """).fetchall()
-        except (sqlite3.Error, OSError, ValueError) as exc:
-            _logger.warning("Error counting unknown TTL jobs: %s", exc, exc_info=True)
-            return 0
-        count = 0
-        now = datetime.now(UTC)
-        for row in rows:
-            completed_at = row["completed_at"] if hasattr(row, "keys") else row[0]
-            legacy_expires_at = row["legacy_expires_at"] if hasattr(row, "keys") else row[1]
-            expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
-            if expires_dt is None:
-                continue
-            if now <= expires_dt:
-                count += 1
-        return count
 
     with _JOB_QUEUE_LOCK:
         _prune_job_queue_history()
         current_queue = JOB_QUEUE
         history = list(_JOB_QUEUE_HISTORY)
         repair_thread = _JOB_QUEUE_REPAIR_THREAD
-        current_ttl_seconds = _optional_int_attr(current_queue, "ttl_seconds")
-        current_max_queued_jobs = _optional_int_attr(current_queue, "max_queued_jobs")
-
-    current_state = str(getattr(current_queue, "state", "uninitialized"))
-    current_pending = read_pending(current_queue)
-    legacy_pending = 0
-    legacy_unknown_ttl_jobs = 0
-    legacy_visible_queues = 0
-    legacy_db_paths: list[str] = []
-    seen_db_paths: set[str] = set()
-    if current_queue is not None:
-        seen_db_paths.add(str(getattr(current_queue, "db_path", JOB_DB_PATH)))
-    pending_unknown = current_pending is None
-    current_unknown_ttl_jobs = count_unknown_ttl_jobs(current_queue)
-    for legacy_queue in history:
-        raw_legacy_db_path = getattr(legacy_queue, "db_path", None)
-        legacy_db_path = str(raw_legacy_db_path) if raw_legacy_db_path is not None else None
-        if legacy_db_path is not None:
-            if legacy_db_path in seen_db_paths:
-                continue
-            seen_db_paths.add(legacy_db_path)
-        legacy_value = read_pending(legacy_queue)
-        if legacy_value is None:
-            pending_unknown = True
-            continue
-        legacy_pending += legacy_value
-        legacy_unknown_ttl_jobs += count_unknown_ttl_jobs(legacy_queue)
-        legacy_visible_queues += 1
-        if legacy_db_path is not None:
-            legacy_db_paths.append(legacy_db_path)
-
-    return {
-        "status": "healthy" if current_state == "open" and not pending_unknown else "degraded",
-        "current_state": current_state,
-        "current_db_path": str(getattr(current_queue, "db_path", JOB_DB_PATH)),
-        "current_ttl_seconds": current_ttl_seconds,
-        "current_max_queued_jobs": current_max_queued_jobs,
-        "current_pending": current_pending,
-        "legacy_pending": legacy_pending,
-        "pending_visible_total": (
-            None if pending_unknown or current_pending is None else current_pending + legacy_pending
-        ),
-        "legacy_visible_queues": legacy_visible_queues,
-        "legacy_db_paths": legacy_db_paths,
-        "pending_unknown": pending_unknown,
-        "current_unknown_ttl_jobs": current_unknown_ttl_jobs,
-        "legacy_unknown_ttl_jobs": legacy_unknown_ttl_jobs,
-        "legacy_unknown_ttl_seconds": LEGACY_UNKNOWN_TTL_SECONDS,
-        "repair_in_progress": bool(repair_thread is not None and repair_thread.is_alive()),
-    }
+    return build_job_subsystem_snapshot(
+        current_queue=current_queue,
+        history=history,
+        repair_thread=repair_thread,
+        job_db_path=JOB_DB_PATH,
+        legacy_unknown_ttl_seconds=LEGACY_UNKNOWN_TTL_SECONDS,
+        logger=_logger,
+    )
 
 
 def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
