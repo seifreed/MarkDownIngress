@@ -1882,6 +1882,7 @@ def test_get_job_queue_returns_external_owner_queue_and_starts_repair(monkeypatc
 
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", current_queue)
     monkeypatch.setattr("markdown_ingress.api_server._JOB_QUEUE_REPAIR_THREAD", None)
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
     monkeypatch.setattr(
         "markdown_ingress.api_server._start_job_queue_repair_loop", fake_start_repair
     )
@@ -1935,6 +1936,7 @@ def test_get_job_queue_keeps_existing_external_owner_wrapper_while_backend_still
     current_queue = ExternalOwnerQueue()
     monkeypatch.setattr("markdown_ingress.api_server.JOB_QUEUE", current_queue)
     monkeypatch.setattr("markdown_ingress.api_server._JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
 
     def failing_build():
         raise RuntimeError("Job queue DB is already owned by another active instance")

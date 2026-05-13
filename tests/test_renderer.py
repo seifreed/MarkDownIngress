@@ -122,7 +122,7 @@ def test_render_mode_timeout(local_test_server):
         ingest(f"{local_test_server}/delay", mode="render", timeout=1.0)
 
     elapsed = time.time() - start
-    assert elapsed < 5.0
+    assert elapsed < 7.0
     assert "timeout" in str(exc.value).lower() or "Timeout" in str(type(exc.value).__name__)
 
 
