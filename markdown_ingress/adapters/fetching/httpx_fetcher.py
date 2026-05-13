@@ -2,13 +2,8 @@
 
 import asyncio
 import logging
-import random
-import ssl
 import time
-from pathlib import Path
 from threading import Lock
-from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -24,25 +19,16 @@ from markdown_ingress.adapters.fetching.http_support import (
     DEFAULT_MAX_RESPONSE_SIZE as _DEFAULT_MAX_RESPONSE_SIZE,
 )
 from markdown_ingress.adapters.fetching.http_support import (
-    FOLLOW_REDIRECT_STATUS as _FOLLOW_REDIRECT_STATUS,
-)
-from markdown_ingress.adapters.fetching.http_support import (
     MAX_RETRIES as _MAX_RETRIES,
 )
 from markdown_ingress.adapters.fetching.http_support import (
     RETRYABLE_STATUS as _RETRYABLE_STATUS,
 )
 from markdown_ingress.adapters.fetching.http_support import (
-    SAFE_HEADERS as _SAFE_HEADERS,
-)
-from markdown_ingress.adapters.fetching.http_support import (
     PreparedRequest as _PreparedRequest,
 )
 from markdown_ingress.adapters.fetching.http_support import (
     ResponseSizeLimitError,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    format_host_header as _format_host_header,
 )
 from markdown_ingress.adapters.fetching.http_support import (
     parse_content_length as _parse_content_length,
@@ -53,23 +39,23 @@ from markdown_ingress.adapters.fetching.http_support import (
 from markdown_ingress.adapters.fetching.http_support import (
     validate_content_type as _validate_content_type,
 )
+from markdown_ingress.adapters.fetching.request_policy import FetchRequestPolicyMixin
 from markdown_ingress.adapters.fetching.response_content import ResponseContentMixin
 from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
-from markdown_ingress.core.ssrf import (
-    normalize_hostname,
-    resolve_allow_local_urls,
-    validate_http_url_no_ssrf,
-)
 from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
 
-_rng = random.SystemRandom()
 
-
-class Fetcher(ClientLifecycleMixin, ResponseContentMixin, DomainStateMixin, IFetcher):
+class Fetcher(
+    ClientLifecycleMixin,
+    FetchRequestPolicyMixin,
+    ResponseContentMixin,
+    DomainStateMixin,
+    IFetcher,
+):
     """HTTP fetcher for fast mode (no JS rendering)."""
 
     DEFAULT_TIMEOUT = 30.0
@@ -100,7 +86,7 @@ class Fetcher(ClientLifecycleMixin, ResponseContentMixin, DomainStateMixin, IFet
         self._stable_ua: str | None = None
         self._last_rotating_ua: str | None = None
         if user_agent is None and not self.rotate_ua:
-            self._stable_ua = _rng.choice(self._ua_pool)
+            self._stable_ua = self._next_user_agent()
         self.follow_redirects = follow_redirects
         self.max_redirects = max_redirects
         self.domain_request_interval = max(0.0, domain_request_interval)
@@ -140,169 +126,6 @@ class Fetcher(ClientLifecycleMixin, ResponseContentMixin, DomainStateMixin, IFet
         self._ssl_bypass_lock = Lock()
         self._closing = False
         self._async_close_tasks: set[asyncio.Task[None]] = set()
-
-    def _is_ssl_bypass_active(self, host: str) -> bool:
-        with self._ssl_bypass_lock:
-            expiry = self._ssl_bypass_hosts.get(host)
-            if expiry is None:
-                return False
-            if time.monotonic() > expiry:
-                self._ssl_bypass_hosts.pop(host, None)
-                return False
-            return True
-
-    def _should_follow_redirect(self, response: httpx.Response) -> bool:
-        if not self.follow_redirects:
-            return False
-        has_redirect_location = getattr(response, "has_redirect_location", None)
-        if has_redirect_location is not None:
-            return bool(has_redirect_location)
-        return response.status_code in _FOLLOW_REDIRECT_STATUS and bool(
-            response.headers.get("location")
-        )
-
-    def _is_redirect_response(self, response: httpx.Response) -> bool:
-        return (
-            bool(getattr(response, "is_redirect", False))
-            or response.status_code in _FOLLOW_REDIRECT_STATUS
-        )
-
-    def _prepare_request_url(self, url: str) -> _PreparedRequest:
-        logical_url = str(url).strip()
-        validated_url = self._validate_url(logical_url, allow_local_urls=self.allow_local_urls)
-        original_parts = urlsplit(logical_url)
-        original_hostname = original_parts.hostname or ""
-        validated_hostname = urlsplit(validated_url).hostname or ""
-        host_header: str | None = None
-        sni_hostname: str | None = None
-        if original_hostname and original_hostname != validated_hostname:
-            host_header = _format_host_header(
-                original_hostname,
-                original_parts.port,
-                original_parts.scheme,
-            )
-            sni_hostname = original_hostname
-        logical_host = self._host_key(logical_url)
-        return _PreparedRequest(
-            validated_url,
-            logical_url,
-            host_header,
-            sni_hostname,
-            logical_host,
-        )
-
-    def _prepare_redirect_url(
-        self,
-        response: httpx.Response,
-        logical_url: str,
-        redirect_count: int,
-    ) -> _PreparedRequest | None:
-        location = response.headers.get("location")
-        if not location:
-            return None
-        if redirect_count >= self.max_redirects:
-            raise httpx.TooManyRedirects(
-                f"Exceeded maximum allowed redirects: {self.max_redirects}",
-                request=getattr(response, "request", None),
-            )
-        redirect_url = str(httpx.URL(logical_url).join(location))
-        return self._prepare_request_url(redirect_url)
-
-    def _build_ssl_context(self, *, verify_certificates: bool = True) -> ssl.SSLContext:
-        ctx = ssl.create_default_context()
-        if not verify_certificates:
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            return ctx
-        if self.ca_bundle:
-            if Path(self.ca_bundle).is_dir():
-                ctx.load_verify_locations(capath=self.ca_bundle)
-            else:
-                ctx.load_verify_locations(cafile=self.ca_bundle)
-        return ctx
-
-    @property
-    def user_agent(self) -> str:
-        if self._fixed_ua is not None:
-            return self._fixed_ua
-        if not self.rotate_ua:
-            if self._stable_ua is None:
-                self._stable_ua = _rng.choice(self._ua_pool)
-            return self._stable_ua
-        return self._next_user_agent(previous=self._last_rotating_ua)
-
-    def _next_user_agent(self, *, previous: str | None = None) -> str:
-        if self._fixed_ua is not None:
-            return self._fixed_ua
-        if not self.rotate_ua:
-            return self.user_agent
-
-        if previous is not None and len(self._ua_pool) > 1:
-            candidates = [ua for ua in self._ua_pool if ua != previous]
-        else:
-            candidates = list(self._ua_pool)
-        ua = _rng.choice(candidates)
-        self._last_rotating_ua = ua
-        return ua
-
-    def _build_headers(self, ua: str, *, host_header: str | None = None) -> dict:
-        headers = dict(_SAFE_HEADERS)
-        headers["User-Agent"] = ua
-        if host_header is not None:
-            headers["Host"] = host_header
-        return headers
-
-    @staticmethod
-    def _stream_extensions(sni_hostname: str | None) -> dict[str, Any] | None:
-        if sni_hostname is None:
-            return None
-        return {"sni_hostname": sni_hostname.encode("ascii")}
-
-    @staticmethod
-    def _resolve_allow_local_urls(allow_local_urls: bool | None) -> bool:
-        return resolve_allow_local_urls(allow_local_urls)
-
-    @staticmethod
-    def _is_dns_transient_error(exc: Exception) -> bool:
-        """Return True when the exception indicates a transient DNS failure."""
-        import socket
-
-        if isinstance(exc, socket.gaierror):
-            return True
-        if isinstance(exc, ValueError):
-            msg = str(exc).lower()
-            for hint in ("dns", "resolve", "nxdomain", "timeout", "temporary failure"):
-                if hint in msg:
-                    return True
-        return False
-
-    @staticmethod
-    def _validate_url(url: str, *, allow_local_urls: bool = False) -> str:
-        return validate_http_url_no_ssrf(
-            url,
-            allow_local=allow_local_urls,
-            resolve_dns=True,
-        )
-
-    @staticmethod
-    def _host_key(url: str) -> str:
-        return normalize_hostname(urlsplit(url).hostname or "")
-
-    @classmethod
-    def _effective_host(cls, final_url: str | None, fallback_host: str) -> str:
-        if not final_url:
-            return fallback_host
-        resolved = cls._host_key(final_url)
-        return resolved or fallback_host
-
-    def _handle_retryable_status(
-        self, response_host: str, status_code: int, retry_delay: float
-    ) -> None:
-        if status_code in {403, 429}:
-            self._record_soft_throttle(response_host, retry_delay)
-        else:
-            self._defer_host(response_host, retry_delay)
-            self._record_failure(response_host)
 
     def _prepare_request_url_with_dns_retry(self, url: str) -> _PreparedRequest:
         """Call _prepare_request_url, retrying on transient DNS failures."""
