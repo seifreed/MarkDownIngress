@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from markdown_ingress.adapters.fetching.client_lifecycle import ClientLifecycleMixin
 from markdown_ingress.adapters.fetching.domain_state import DomainStateMixin
 from markdown_ingress.adapters.fetching.http_support import (
     DEFAULT_DOMAIN_STATE_TTL as _DEFAULT_DOMAIN_STATE_TTL,
@@ -68,7 +69,7 @@ logger = logging.getLogger(__name__)
 _rng = random.SystemRandom()
 
 
-class Fetcher(ResponseContentMixin, DomainStateMixin, IFetcher):
+class Fetcher(ClientLifecycleMixin, ResponseContentMixin, DomainStateMixin, IFetcher):
     """HTTP fetcher for fast mode (no JS rendering)."""
 
     DEFAULT_TIMEOUT = 30.0
@@ -139,22 +140,6 @@ class Fetcher(ResponseContentMixin, DomainStateMixin, IFetcher):
         self._ssl_bypass_lock = Lock()
         self._closing = False
         self._async_close_tasks: set[asyncio.Task[None]] = set()
-
-    def _track_async_close_task(self, task: asyncio.Task[None]) -> None:
-        self._async_close_tasks.add(task)
-
-        def _finalize_close_task(done_task: asyncio.Task[None]) -> None:
-            self._async_close_tasks.discard(done_task)
-            try:
-                done_task.result()
-            except Exception as exc:
-                logger.debug(
-                    "Background async HTTP client close failed: %s",
-                    exc,
-                    exc_info=True,
-                )
-
-        task.add_done_callback(_finalize_close_task)
 
     def _is_ssl_bypass_active(self, host: str) -> bool:
         with self._ssl_bypass_lock:
@@ -259,143 +244,6 @@ class Fetcher(ResponseContentMixin, DomainStateMixin, IFetcher):
         ua = _rng.choice(candidates)
         self._last_rotating_ua = ua
         return ua
-
-    def _get_sync_client(self) -> httpx.Client:
-        if self._sync_client is None:
-            with self._client_lock:
-                if self._sync_client is None:
-                    self._sync_client = httpx.Client(
-                        timeout=self.timeout,
-                        follow_redirects=False,
-                        max_redirects=self.max_redirects,
-                        verify=self._build_ssl_context(),
-                        trust_env=False,
-                    )
-        return self._sync_client
-
-    def _get_async_client_lock(self) -> asyncio.Lock:
-        with self._async_client_lock_guard:
-            if self._async_client_lock is None:
-                self._async_client_lock = asyncio.Lock()
-            return self._async_client_lock
-
-    async def _get_async_client(self) -> httpx.AsyncClient:
-        if self._closing:
-            raise RuntimeError("Fetcher is closing")
-        if self._async_client is None:
-            async with self._get_async_client_lock():
-                if self._closing:
-                    raise RuntimeError("Fetcher is closing")
-                if self._async_client is None:
-                    self._async_client = httpx.AsyncClient(
-                        timeout=self.timeout,
-                        follow_redirects=False,
-                        max_redirects=self.max_redirects,
-                        verify=self._build_ssl_context(),
-                        trust_env=False,
-                    )
-        return self._async_client
-
-    def close(self) -> None:
-        self._closing = True
-        with self._client_lock:
-            if self._sync_client is not None:
-                self._sync_client.close()
-                self._sync_client = None
-        with self._async_client_lock_guard:
-            client_to_close = self._async_client
-            self._async_client = None
-        if client_to_close is None:
-            return
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            try:
-                loop = asyncio.new_event_loop()
-                try:
-                    loop.run_until_complete(client_to_close.aclose())
-                finally:
-                    loop.close()
-            except Exception:
-                logger.warning(
-                    "Could not close async HTTP client synchronously; "
-                    "use 'async with fetcher:' or 'await fetcher.aclose()' instead."
-                )
-        else:
-            logger.warning(
-                "Cannot close async HTTP client from within a running event loop; "
-                "use 'async with fetcher:' or 'await fetcher.aclose()' instead. "
-                "Scheduling close as background task."
-            )
-            try:
-                loop = asyncio.get_running_loop()
-                self._track_async_close_task(loop.create_task(client_to_close.aclose()))
-            except Exception as exc:
-                logger.debug(
-                    "Failed to schedule async client close as background task: %s",
-                    exc,
-                    exc_info=True,
-                )
-
-    async def aclose(self) -> None:
-        self._closing = True
-        async with self._get_async_client_lock():
-            if self._async_client is not None:
-                await self._async_client.aclose()
-                self._async_client = None
-
-    def __enter__(self) -> "Fetcher":
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
-
-    async def __aenter__(self) -> "Fetcher":
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        await self.aclose()
-
-    def __del__(self) -> None:
-        sync_client_exists = False
-        async_client_exists = False
-        try:
-            with self._client_lock:
-                sync_client_exists = self._sync_client is not None
-        except Exception as exc:
-            logger.debug(
-                "Could not inspect sync client during finalization: %s", exc, exc_info=True
-            )
-        try:
-            with self._async_client_lock_guard:
-                async_client_exists = getattr(self, "_async_client", None) is not None
-        except Exception as exc:
-            logger.debug(
-                "Could not inspect async client during finalization: %s", exc, exc_info=True
-            )
-
-        if sync_client_exists or async_client_exists:
-            import warnings
-
-            warnings.warn(
-                "Fetcher was not properly closed; HTTP client resources may leak. "
-                "Use 'async with fetcher:' or call 'await fetcher.aclose()' explicitly.",
-                ResourceWarning,
-                stacklevel=2,
-            )
-        try:
-            with self._client_lock:
-                if self._sync_client is not None:
-                    self._sync_client.close()
-                    self._sync_client = None
-        except Exception as exc:
-            logger.debug("Could not close sync client during finalization: %s", exc, exc_info=True)
-        try:
-            with self._async_client_lock_guard:
-                self._async_client = None
-                self._async_client_lock = None
-        except Exception as exc:
-            logger.debug("Could not clear async client during finalization: %s", exc, exc_info=True)
 
     def _build_headers(self, ua: str, *, host_header: str | None = None) -> dict:
         headers = dict(_SAFE_HEADERS)
