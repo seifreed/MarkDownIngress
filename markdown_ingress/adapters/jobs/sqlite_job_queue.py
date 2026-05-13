@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
-import math
 import os
 import queue
 import socket
@@ -15,21 +13,41 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
+from markdown_ingress.adapters.jobs.job_queue_cleanup import JobCleanupMixin
+from markdown_ingress.adapters.jobs.job_queue_models import (
+    LEGACY_UNKNOWN_TTL_SECONDS,
+    JobAlreadyRunningError,
+    JobRecord,
+)
+from markdown_ingress.adapters.jobs.job_queue_models import (
+    utcnow as _utcnow,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    resolve_and_validate_ip as _resolve_and_validate_ip,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    validate_int_config as _validate_int_config,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    validate_job_db_path as _validate_job_db_path,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    validate_optional_positive_finite_float as _validate_optional_positive_finite_float,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    validate_positive_finite_float as _validate_positive_finite_float,
+)
+from markdown_ingress.adapters.jobs.job_queue_security import (
+    validate_webhook_url as _validate_webhook_url,
+)
+from markdown_ingress.adapters.jobs.job_state_machine import JobStateMachineMixin
 from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
 from markdown_ingress.core.interfaces import IWebhookNotifier
-from markdown_ingress.core.ssrf import (
-    is_blocked_hostname,
-    is_blocked_ip_address,
-    normalize_hostname,
-    normalize_ip_for_ssrf,
-    validate_http_url_no_ssrf,
-)
 
 _logger = logging.getLogger(__name__)
 
@@ -37,220 +55,6 @@ _logger = logging.getLogger(__name__)
 SQLiteError = sqlite3.Error
 
 _STOP_WORKER = object()
-LEGACY_UNKNOWN_TTL_SECONDS = 3600
-
-
-def _validate_int_config(field_name: str, value: object, *, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
-    return max(minimum, value)
-
-
-def _validate_positive_finite_float(field_name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
-    if numeric <= 0:
-        raise ValueError(f"{field_name} must be > 0")
-    return numeric
-
-
-def _validate_optional_positive_finite_float(field_name: str, value: object | None) -> float | None:
-    if value is None:
-        return None
-    return _validate_positive_finite_float(field_name, value)
-
-
-def _allowed_db_roots() -> list[Path]:
-    """Directories where the persistent job DB is allowed to live.
-
-    Defaults to ``$CWD``, ``$HOME/.markdown_ingress`` and the OS temp dir.
-    Callers may override via ``MDI_ALLOWED_DB_DIRS`` (``:`` separated on POSIX).
-    """
-    import tempfile
-
-    override = os.getenv("MDI_ALLOWED_DB_DIRS")
-    if override:
-        roots: list[Path] = []
-        for raw_root in override.split(os.pathsep):
-            stripped_root = raw_root.strip()
-            if not stripped_root:
-                continue
-            try:
-                roots.append(Path(stripped_root).expanduser().resolve())
-            except OSError:
-                continue
-        if roots:
-            return roots
-    candidates = [
-        Path.cwd(),
-        Path.home() / ".markdown_ingress",
-        Path(tempfile.gettempdir()),
-    ]
-    # On macOS tempfile returns /var/folders/... which resolves via /private
-    # prefix; include both to avoid spurious mismatches.
-    resolved: list[Path] = []
-    for c in candidates:
-        try:
-            resolved.append(c.resolve())
-        except OSError:
-            continue
-    return resolved
-
-
-def _validate_job_db_path(db_path: str | Path) -> Path:
-    """Resolve and validate a job-queue DB path against the allowed roots.
-
-    Security fix (S8): ``MDI_API_JOB_DB_PATH`` is user-configurable and previously
-    accepted any path (including ``/etc/passwd.sqlite3``). We now require the
-    resolved path to live inside an approved directory and refuse obvious
-    traversal attempts.
-    """
-    raw = str(db_path).strip()
-    if not raw:
-        raise ValueError("Job DB path cannot be empty")
-    if "\x00" in raw:
-        raise ValueError("Job DB path contains null byte")
-    candidate = Path(raw).expanduser()
-    resolved = (candidate if candidate.is_absolute() else (Path.cwd() / candidate)).resolve()
-    for root in _allowed_db_roots():
-        try:
-            resolved.relative_to(root)
-        except ValueError:
-            continue
-        return resolved
-    raise ValueError(
-        f"Job DB path {resolved!s} is outside the allowed roots. "
-        "Set MDI_ALLOWED_DB_DIRS to customise."
-    )
-
-
-# Blocked URL schemes and networks for SSRF protection
-_BLOCKED_SCHEMES = {
-    "file",
-    "ftp",
-    "data",
-    "gopher",
-    "dict",
-    "ldap",
-    "ldaps",
-    "jar",
-    "mailto",
-    "news",
-    "nntp",
-    "irc",
-    "mms",
-    "rtsp",
-    "svn",
-    "git",
-}
-
-
-def _is_private_ip(ip_str: str) -> bool:
-    """Check if an IP address is in a private network range (IPv4 and IPv6)."""
-    import socket
-
-    try:
-        for _, _, _, _, sockaddr in socket.getaddrinfo(ip_str, None):
-            ip_obj = ipaddress.ip_address(sockaddr[0])
-            if _is_private_ip_address(ip_obj):
-                return True
-        return False
-    except (socket.gaierror, OSError, ValueError):
-        # If we can't resolve, treat as potentially dangerous
-        return True
-
-
-def _is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Check if an IP address object is in a private/reserved range."""
-    return is_blocked_ip_address(normalize_ip_for_ssrf(ip_obj))
-
-
-def _resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str:
-    """Resolve hostname and validate the IP is not private/blocked.
-
-    Returns the resolved IP address if valid.
-
-    Raises:
-        ValueError: All resolved IPs blocked by SSRF policy (permanent).
-        socket.gaierror: DNS resolution failed (transient, retryable).
-    """
-    import socket
-
-    try:
-        normalized_hostname = normalize_hostname(hostname)
-        # Get all addresses for the hostname
-        addr_info = socket.getaddrinfo(normalized_hostname, None)
-        if not addr_info:
-            raise ValueError(f"No IP addresses resolved for {hostname}")
-        validated_ip: str | None = None
-        for _family, _, _, _, sockaddr in addr_info:
-            ip_str = str(sockaddr[0])
-            try:
-                ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(ip_str))
-            except ValueError:
-                continue
-            # Check blocked hosts
-            if is_blocked_hostname(ip_str) or is_blocked_hostname(normalized_hostname):
-                if not allow_local:
-                    raise ValueError(f"Hostname {hostname} resolves to blocked IP {ip_str}")
-            # Check private ranges
-            if not allow_local and is_blocked_ip_address(ip_obj):
-                raise ValueError(f"Hostname {hostname} resolves to private IP {ip_str}")
-            if validated_ip is None:
-                validated_ip = ip_str
-        if validated_ip is None:
-            raise ValueError(f"No valid public IP found for {hostname}")
-        return validated_ip
-    except socket.gaierror:
-        raise
-    except OSError as exc:
-        raise socket.gaierror(str(exc)) from exc
-
-
-def _validate_webhook_url(url: str | None, *, allow_local: bool = False) -> None:
-    """Validate webhook URL to prevent SSRF attacks.
-
-    Args:
-        url: The webhook URL to validate
-        allow_local: If True, allow localhost/private network addresses (for testing)
-
-    Raises:
-        ValueError: If the URL is invalid or potentially dangerous
-    """
-    if url is None:
-        return
-    if not isinstance(url, str):
-        raise ValueError(f"webhook_url must be a string, got {type(url).__name__}")
-    if len(url) > 2048:
-        raise ValueError("webhook_url exceeds maximum length of 2048 characters")
-    try:
-        # Resolve DNS at submit time to provide defense-in-depth against SSRF.
-        # The delivery-time re-check in _execute_job() provides a second layer.
-        validate_http_url_no_ssrf(url, allow_local=allow_local, resolve_dns=True)
-    except Exception as exc:
-        message = str(exc)
-        if "valid network location" in message or "valid host" in message:
-            raise ValueError("webhook_url must include a hostname") from exc
-        if "hostname blocked" in message:
-            parsed = urlparse(url)
-            hostname = normalize_hostname(parsed.hostname or "")
-            raise ValueError(f"webhook_url blocked: hostname {hostname!r} is not allowed") from exc
-        if "blocked range" in message:
-            parsed = urlparse(url)
-            hostname = normalize_hostname(parsed.hostname or "")
-            raise ValueError(
-                f"webhook_url blocked: hostname {hostname!r} is a private IP address"
-            ) from exc
-        raise ValueError(f"webhook_url blocked: {message.removeprefix('URL ')}") from exc
-    # validate_http_url_no_ssrf already calls validate_hostname_for_ssrf internally;
-    # a second call would perform a redundant DNS lookup for no added safety.
-
-
-def _utcnow() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _execute_task_in_subprocess(
@@ -268,25 +72,7 @@ def _execute_task_in_subprocess(
         conn.close()
 
 
-@dataclass
-class JobRecord:
-    job_id: str
-    status: str
-    created_at: str
-    started_at: str | None = None
-    completed_at: str | None = None
-    result: dict[str, Any] | None = None
-    error: str | None = None
-    webhook_url: str | None = None
-    ttl_seconds: int | None = None
-    legacy_expires_at: str | None = None
-
-
-class JobAlreadyRunningError(RuntimeError):
-    """Raised when a queued task is dispatched for a job that is already running."""
-
-
-class PersistentJobQueue:
+class PersistentJobQueue(JobCleanupMixin, JobStateMachineMixin):
     """SQLite-backed worker queue for long-running API jobs."""
 
     def __init__(
@@ -967,113 +753,6 @@ class PersistentJobQueue:
             legacy_expires_at=row["legacy_expires_at"],
         )
 
-    def _delete_ttl_expired_jobs(self, conn, now_iso: str) -> None:
-        conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
-              AND ttl_seconds IS NOT NULL
-              AND (
-                  completed_at IS NULL
-                  OR julianday(completed_at) IS NULL
-                  OR julianday(?) > julianday(completed_at) + (ttl_seconds / 86400.0)
-              )
-            """,
-            (now_iso,),
-        )
-
-    def _delete_corrupt_ttl_jobs(self, conn) -> None:
-        conn.execute("""
-            DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
-              AND ttl_seconds IS NOT NULL
-              AND (
-                  typeof(ttl_seconds) != 'integer'
-                  OR ttl_seconds <= 0
-              )
-            """)
-
-    def _delete_legacy_expired_jobs(self, conn, now_iso: str) -> None:
-        conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NOT NULL
-              AND (
-                  julianday(legacy_expires_at) IS NULL
-                  OR julianday(?) > julianday(legacy_expires_at)
-              )
-            """,
-            (now_iso,),
-        )
-
-    def _delete_corrupt_legacy_jobs(self, conn) -> None:
-        conn.execute("""
-            DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NULL
-              AND (completed_at IS NULL OR julianday(completed_at) IS NULL)
-            """)
-
-    def _compute_legacy_ttl_updates(
-        self, conn, now_dt
-    ) -> tuple[list[tuple[int, str, str]], list[str]]:
-        rows = conn.execute("""
-            SELECT job_id, completed_at
-            FROM jobs
-            WHERE status NOT IN ('queued', 'running')
-              AND completed_at IS NOT NULL
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NULL
-            """).fetchall()
-        updates: list[tuple[int, str, str]] = []
-        expired_ids: list[str] = []
-        for row in rows:
-            try:
-                completed_dt = self._parse_iso(row["completed_at"])
-            except ValueError:
-                continue
-            expires_at = (completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS)).isoformat()
-            if completed_dt + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt:
-                expired_ids.append(row["job_id"])
-            else:
-                updates.append((LEGACY_UNKNOWN_TTL_SECONDS, expires_at, row["job_id"]))
-        return updates, expired_ids
-
-    def _apply_legacy_ttl_backfill(
-        self, conn, updates: list[tuple[int, str, str]], expired_ids: list[str]
-    ) -> None:
-        if expired_ids:
-            conn.executemany(
-                "DELETE FROM jobs WHERE job_id = ?",
-                ((job_id,) for job_id in expired_ids),
-            )
-        if updates:
-            conn.executemany(
-                """
-                UPDATE jobs
-                SET ttl_seconds = ?,
-                    legacy_expires_at = ?
-                WHERE job_id = ?
-                """,
-                updates,
-            )
-
-    def cleanup_expired(self) -> None:
-        now_iso = _utcnow()
-        now_dt = datetime.now(UTC)
-        with closing(self._connect()) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            self._delete_corrupt_ttl_jobs(conn)
-            self._delete_ttl_expired_jobs(conn, now_iso)
-            self._delete_legacy_expired_jobs(conn, now_iso)
-            self._delete_corrupt_legacy_jobs(conn)
-            updates, expired_ids = self._compute_legacy_ttl_updates(conn, now_dt)
-            self._apply_legacy_ttl_backfill(conn, updates, expired_ids)
-            conn.commit()
-
     def _worker_loop(self) -> None:
         while True:
             item = self._queue.get()
@@ -1309,201 +988,6 @@ class PersistentJobQueue:
             raise RuntimeError("Task returned None result")
 
         return result_container[0]
-
-    # =========================================================================
-    # Job State Machine
-    # =========================================================================
-    # Valid state transitions:
-    #   queued -> running   : Job picked up by worker
-    #   queued -> failed    : Orphaned job recovery on startup
-    #   running -> completed: Job finished successfully
-    #   running -> failed   : Job finished with error
-    #   completed -> failed : Webhook delivery failed (result preserved)
-    #
-    # State validation ensures:
-    #   - Jobs cannot transition from 'completed' to 'failed' (except for webhook failure)
-    #   - Jobs cannot transition from 'failed' to 'completed'
-    #   - Jobs cannot be marked 'running' if already terminal (completed/failed)
-    #
-    # All state transitions use atomic UPDATE with WHERE clause to prevent TOCTOU races.
-    # =========================================================================
-
-    def _mark_running(self, job_id: str) -> None:
-        """Transition job from 'queued' to 'running'.
-
-        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
-        Raises:
-            RuntimeError: If job is in a terminal state (completed/failed) or not found.
-            JobAlreadyRunningError: If another worker already owns execution for this job.
-        """
-        with closing(self._connect()) as conn:
-            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
-            cursor = conn.execute(
-                "UPDATE jobs SET status = ?, started_at = ? WHERE job_id = ? AND status = ?",
-                ("running", _utcnow(), job_id, "queued"),
-            )
-            conn.commit()
-            if cursor.rowcount == 0:
-                # Job wasn't in 'queued' state - find current state for error message.
-                # Note: this SELECT is a best-effort diagnostic — the status may have
-                # changed between the commit above and this read (TOCTOU window).
-                row = conn.execute(
-                    "SELECT status FROM jobs WHERE job_id = ?",
-                    (job_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"Job {job_id} not found")
-                if row["status"] == "running":
-                    raise JobAlreadyRunningError(
-                        f"Job {job_id} is already running and cannot be executed twice"
-                    )
-                raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', "
-                    "expected 'queued'"
-                )
-
-    def _mark_completed(self, job_id: str, result: dict[str, Any]) -> None:
-        """Transition job from 'running' to 'completed'.
-
-        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
-        This is idempotent: if job is already 'completed', this is a no-op.
-
-        Raises:
-            RuntimeError: If job is in a terminal state (failed) or not found.
-        """
-        with closing(self._connect()) as conn:
-            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = ?, error = NULL
-                WHERE job_id = ? AND status = ?
-                """,
-                ("completed", _utcnow(), json.dumps(result), job_id, "running"),
-            )
-            conn.commit()
-            if cursor.rowcount == 0:
-                row = conn.execute(
-                    "SELECT status FROM jobs WHERE job_id = ?",
-                    (job_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"Job {job_id} not found")
-                # If already completed, this is likely a duplicate call - idempotent no-op
-                if row["status"] == "completed":
-                    return
-                raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', "
-                    "expected 'running'"
-                )
-
-    def _mark_failed(self, job_id: str, error: str) -> None:
-        """Transition job from 'queued' or 'running' to 'failed'.
-
-        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
-        This is idempotent: if job is already 'failed', this is a no-op.
-
-        Note: Use _mark_webhook_failed() for webhook failures where the job result
-        was computed but notification failed. This method clears result_json to
-        maintain consistency with the failed state.
-
-        BUG FIX: Removed 'completed' from allowed source states to avoid confusion.
-        Jobs should only transition to 'failed' from 'queued' or 'running'.
-        Completed jobs that need to transition to 'failed' should use
-        _mark_webhook_failed() which preserves the result.
-        """
-        with closing(self._connect()) as conn:
-            # Atomic UPDATE with status check in WHERE clause prevents TOCTOU race
-            # BUG FIX: Only allow transition from queued or running to failed
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = NULL, error = ?
-                WHERE job_id = ? AND status IN ('queued', 'running')
-                """,
-                ("failed", _utcnow(), error, job_id),
-            )
-            conn.commit()
-            if cursor.rowcount == 0:
-                # Check if job exists and is already failed (idempotent)
-                row = conn.execute(
-                    "SELECT status FROM jobs WHERE job_id = ?",
-                    (job_id,),
-                ).fetchone()
-                if row is None:
-                    return  # Job doesn't exist, nothing to fail
-                if row["status"] == "failed":
-                    return  # Already failed - idempotent no-op
-                # Job is in an unexpected state
-                raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', "
-                    "cannot transition to 'failed'"
-                )
-
-    def _mark_webhook_failed(self, job_id: str, error: str) -> None:
-        """Transition job from 'completed' to 'failed' while preserving the result.
-
-        This is specifically for webhook failures where the job computation succeeded
-        but the notification failed. The result is preserved so callers can still
-        retrieve it via the API.
-
-        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
-        This is idempotent: if job is already 'failed', this is a no-op.
-        """
-        with closing(self._connect()) as conn:
-            # First, update the job status to failed while preserving result_json
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, error = ?
-                WHERE job_id = ? AND status = 'completed'
-                """,
-                ("failed", error, job_id),
-            )
-            conn.commit()
-            if cursor.rowcount == 0:
-                # Check if job exists and is already failed (idempotent)
-                row = conn.execute(
-                    "SELECT status FROM jobs WHERE job_id = ?",
-                    (job_id,),
-                ).fetchone()
-                if row is None:
-                    return  # Job doesn't exist, nothing to fail
-                if row["status"] == "failed":
-                    return  # Already failed - idempotent no-op
-                # Job is in an unexpected state (e.g., still running)
-                raise RuntimeError(
-                    f"Invalid state transition: job {job_id} is '{row['status']}', "
-                    "expected 'completed'"
-                )
-
-    def _mark_completed_preserve_result(
-        self, job_id: str, result: dict[str, Any], error: str
-    ) -> None:
-        """Try to preserve job result while marking as failed due to lease loss.
-
-        This is called when a job completes but the lease was lost before persistence.
-        We attempt to save the result while marking status as 'failed' so callers
-        can still retrieve the computed result.
-
-        Uses atomic UPDATE with WHERE clause to prevent TOCTOU race conditions.
-        """
-        result_json = json.dumps(result) if result is not None else None
-        with closing(self._connect()) as conn:
-            # Try to mark as failed while preserving result
-            # Only update if still in 'running' state. Another process may have taken the lease.
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = ?, error = ?
-                WHERE job_id = ? AND status = 'running'
-                """,
-                ("failed", _utcnow(), result_json, error, job_id),
-            )
-            conn.commit()
-            if cursor.rowcount == 0:
-                # Job was already transitioned by another process - nothing to do
-                return
 
 
 def check_external_owner_still_owns(
