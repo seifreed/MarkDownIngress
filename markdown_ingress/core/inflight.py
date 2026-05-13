@@ -9,9 +9,12 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass, field
 
 from markdown_ingress.core.exception_copy import copy_exception_for_transfer
+from markdown_ingress.core.inflight_entry import (
+    InFlightEntry,
+    notify_entries_inactive,
+)
 from markdown_ingress.core.inflight_identity import (
     build_request_identity as build_request_identity,
 )
@@ -37,21 +40,6 @@ _REQUEST_KEY_LOG_TRUNCATE_LENGTH = 16
 
 _ALL_INFLIGHT_REGISTRIES: weakref.WeakSet[InFlightRegistry] = weakref.WeakSet()
 _ALL_INFLIGHT_REGISTRIES_LOCK = threading.Lock()
-
-
-@dataclass
-class InFlightEntry:
-    """Track an in-progress ingestion so duplicate callers can await the same result."""
-
-    condition: threading.Condition = field(default_factory=threading.Condition)
-    followers: int = 0
-    done: bool = False
-    completing: bool = False
-    leader_active: bool = True
-    document: SafeDocument | None = None
-    error: Exception | None = None
-    created_at: float = field(default_factory=time.monotonic)
-    request_key: str = ""
 
 
 class InFlightRegistry:
@@ -102,10 +90,7 @@ class InFlightRegistry:
                     with registry._lock:
                         to_notify = registry._cleanup_orphaned_entries_locked()
                         to_notify.extend(registry._evict_lru_entries_locked())
-                    for entry in to_notify:
-                        with entry.condition:
-                            entry.leader_active = False
-                            entry.condition.notify_all()
+                    notify_entries_inactive(to_notify)
 
             self._cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
             self._cleanup_thread.start()
@@ -188,10 +173,7 @@ class InFlightRegistry:
                 to_notify = self._cleanup_orphaned_entries_locked()
                 self._last_orphan_cleanup_at = now
             count = sum(1 for e in self._requests.values() if not e.done)
-        for entry in to_notify:
-            with entry.condition:
-                entry.leader_active = False
-                entry.condition.notify_all()
+        notify_entries_inactive(to_notify)
         return count
 
     def acquire(self, request_key: str) -> InFlightEntry | None:
@@ -236,10 +218,7 @@ class InFlightRegistry:
                 else:
                     self._requests[request_key] = InFlightEntry(request_key=request_key)
 
-        for entry in to_notify:
-            with entry.condition:
-                entry.leader_active = False
-                entry.condition.notify_all()
+        notify_entries_inactive(to_notify)
 
         return result
 
@@ -320,10 +299,7 @@ class InFlightRegistry:
                     double_release_followers = followers
             # Note: shared_count will be read inside entry.condition to avoid race.
 
-        for e in to_notify:
-            with e.condition:
-                e.leader_active = False
-                e.condition.notify_all()
+        notify_entries_inactive(to_notify)
 
         if double_release_followers is not None:
             return double_release_followers
