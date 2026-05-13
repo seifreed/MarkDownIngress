@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 LEGACY_UNKNOWN_TTL_SECONDS = 3600
+STOP_WORKER = object()
 
 
 def utcnow() -> str:

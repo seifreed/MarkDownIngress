@@ -9,20 +9,23 @@ import queue
 import socket
 import sqlite3
 import threading
-import time
 import uuid
 from collections.abc import Callable
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
 from markdown_ingress.adapters.jobs.job_queue_cleanup import JobCleanupMixin
+from markdown_ingress.adapters.jobs.job_queue_lifecycle import JobQueueLifecycleMixin
 from markdown_ingress.adapters.jobs.job_queue_models import (
     LEGACY_UNKNOWN_TTL_SECONDS,
     JobAlreadyRunningError,
     JobRecord,
+)
+from markdown_ingress.adapters.jobs.job_queue_models import (
+    STOP_WORKER as _STOP_WORKER,
 )
 from markdown_ingress.adapters.jobs.job_queue_models import (
     utcnow as _utcnow,
@@ -54,8 +57,6 @@ _logger = logging.getLogger(__name__)
 # Re-export so callers outside this module don't need to import sqlite3 directly.
 SQLiteError = sqlite3.Error
 
-_STOP_WORKER = object()
-
 
 def _execute_task_in_subprocess(
     task: Callable[[], dict[str, Any]],
@@ -72,7 +73,7 @@ def _execute_task_in_subprocess(
         conn.close()
 
 
-class PersistentJobQueue(JobCleanupMixin, JobStateMachineMixin):
+class PersistentJobQueue(JobQueueLifecycleMixin, JobCleanupMixin, JobStateMachineMixin):
     """SQLite-backed worker queue for long-running API jobs."""
 
     def __init__(
@@ -131,52 +132,6 @@ class PersistentJobQueue(JobCleanupMixin, JobStateMachineMixin):
         self._acquire_lease()
         self._recover_orphaned_jobs()
         self._start_lease_heartbeat()
-
-    def _get_process_start_time(self) -> float | None:
-        """Get the current process start time for PID recycling detection."""
-        try:
-            start_ticks = self._parse_proc_stat_start_ticks(os.getpid())
-            if start_ticks is not None:
-                clk_tck = os.sysconf("SC_CLK_TCK")
-                if clk_tck > 0:
-                    return start_ticks / clk_tck
-        except (OSError, ValueError, IndexError) as e:
-            _logger.debug("Could not read process start time from /proc: %s", e)
-        # No reliable start time available — return None so callers
-        # fall back to PID-only existence checks.
-        return None
-
-    @staticmethod
-    def _parse_proc_stat_start_ticks(pid: int) -> int | None:
-        """Parse /proc/{pid}/stat safely, handling spaces in the process name."""
-        proc_path = f"/proc/{pid}/stat"
-        if not os.path.exists(proc_path):
-            return None
-        with open(proc_path) as f:
-            stat_line = f.read()
-        # Field 2 is the command name enclosed in parentheses and may contain
-        # spaces. Find the last ')' to split the fixed prefix from the rest.
-        closing = stat_line.rfind(")")
-        if closing == -1:
-            return None
-        suffix = stat_line[closing + 1 :].strip()
-        parts = suffix.split()
-        # starttime is the 22nd field overall, which is the 20th field in the
-        # suffix (after the two fixed fields pid and comm).
-        if len(parts) > 19:
-            return int(parts[19])
-        return None
-
-    @property
-    def state(self) -> str:
-        """Expose the queue lifecycle state for callers coordinating shutdown/retry."""
-        if self._lease_lost:
-            return "lease_lost"
-        if self._shutdown_complete or self._closed:
-            return "closed"
-        if self._closing:
-            return "closing"
-        return "open"
 
     def _connect(self) -> sqlite3.Connection:
         # Re-validate path at open time to close the TOCTOU window between validation
@@ -259,362 +214,6 @@ class PersistentJobQueue(JobCleanupMixin, JobStateMachineMixin):
                     updates,
                 )
             conn.commit()
-
-    def _parse_iso(self, value: str) -> datetime:
-        """Parse an ISO datetime string and normalize it to UTC.
-
-        Legacy lease rows may omit timezone information. For lease comparisons
-        we interpret naive timestamps as UTC instead of letting aware/naive
-        arithmetic crash takeover logic.
-        """
-        try:
-            parsed = datetime.fromisoformat(value)
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"Invalid ISO datetime format: {value!r}") from exc
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC)
-
-    def _is_stale_heartbeat(self, heartbeat_at: str) -> bool:
-        age_seconds = (datetime.now(UTC) - self._parse_iso(heartbeat_at)).total_seconds()
-        return age_seconds > self.lease_timeout_seconds
-
-    def _is_owner_process_alive(
-        self, owner_pid: int, owner_start_time: float | None = None
-    ) -> bool:
-        """Check if a process with the given PID is alive.
-
-        To prevent PID recycling vulnerabilities, this also checks process start time
-        when available (on Unix systems with /proc filesystem).
-
-        Args:
-            owner_pid: The PID to check
-            owner_start_time: Optional start time of the owner process (epoch seconds)
-
-        Returns:
-            True if the process appears to be the same owner, False otherwise
-        """
-        if owner_pid <= 0:
-            return False
-        try:
-            os.kill(owner_pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            # Process exists but we can't signal it
-            # Fall through to start time check
-            pass
-
-        # Additional check: verify process start time to detect PID recycling
-        if owner_start_time is not None:
-            try:
-                # Try /proc filesystem (Linux/macOS)
-                start_ticks = self._parse_proc_stat_start_ticks(owner_pid)
-                if start_ticks is not None:
-                    # Convert clock ticks to seconds
-                    clk_tck = os.sysconf("SC_CLK_TCK")
-                    if clk_tck > 0:
-                        start_seconds = start_ticks / clk_tck
-                        # Check if start time matches expected (within 1 second tolerance)
-                        if abs(start_seconds - owner_start_time) > 1.0:
-                            return False
-            except (OSError, ValueError, IndexError) as e:
-                # If we can't read /proc, fall back to just PID existence check
-                _logger.debug("Could not verify owner process start time: %s", e)
-        return True
-
-    def _assert_queue_usable(
-        self, *, require_lease: bool = False, allow_closing: bool = False
-    ) -> None:
-        if self._lease_lost:
-            raise RuntimeError(
-                "Job queue lease was lost; this instance can no longer accept or execute jobs"
-            )
-        if self._closed:
-            raise RuntimeError("Job queue is closed")
-        if self._closing and not allow_closing:
-            raise RuntimeError("Job queue is closing")
-        if require_lease and not self._still_owns_lease():
-            self._lease_lost = True
-            raise RuntimeError(
-                "Job queue lease was lost; this instance can no longer accept or execute jobs"
-            )
-
-    def _still_owns_lease(self) -> bool:
-        with closing(self._connect()) as conn:
-            row = conn.execute(
-                "SELECT owner_id FROM queue_leases WHERE lease_name = ?",
-                ("default",),
-            ).fetchone()
-        return row is not None and row["owner_id"] == self.instance_id
-
-    def _acquire_lease(self) -> None:
-        """Acquire lease with exponential backoff retry for lock contention.
-
-        This prevents crashes when multiple instances start simultaneously.
-        """
-        last_error: Exception | None = None
-        for attempt in range(self.lease_acquire_max_retries):
-            try:
-                with closing(self._connect()) as conn:
-                    conn.execute("BEGIN IMMEDIATE")
-                    row = conn.execute(
-                        "SELECT owner_id, heartbeat_at, owner_pid, owner_start_time "
-                        "FROM queue_leases WHERE lease_name = ?",
-                        ("default",),
-                    ).fetchone()
-                    now_iso = _utcnow()
-                    if row is None:
-                        conn.execute(
-                            "INSERT INTO queue_leases "
-                            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
-                            "VALUES (?, ?, ?, ?, ?)",
-                            (
-                                "default",
-                                self.instance_id,
-                                now_iso,
-                                self.owner_pid,
-                                self.owner_start_time,
-                            ),
-                        )
-                    else:
-                        owner_id = row["owner_id"]
-                        heartbeat_at = row["heartbeat_at"]
-                        previous_heartbeat_stale = self._is_stale_heartbeat(heartbeat_at)
-                        if owner_id != self.instance_id and not previous_heartbeat_stale:
-                            # If the heartbeat is still fresh, it is the authoritative lease signal.
-                            # Do not allow takeover just because PID metadata is missing or stale.
-                            # Heartbeat freshness is what protects the lease from split-brain.
-                            conn.rollback()
-                            raise RuntimeError(
-                                "Job queue DB is already owned by another active instance"
-                            )
-                        self._recovered_orphaned_jobs = owner_id == self.instance_id
-                        conn.execute(
-                            "UPDATE queue_leases "
-                            "SET owner_id = ?, heartbeat_at = ?, owner_pid = ?, "
-                            "owner_start_time = ? WHERE lease_name = ?",
-                            (
-                                self.instance_id,
-                                now_iso,
-                                self.owner_pid,
-                                self.owner_start_time,
-                                "default",
-                            ),
-                        )
-                    conn.commit()
-                return  # Success
-            except sqlite3.OperationalError as e:
-                # Database is locked - retry with exponential backoff
-                last_error = e
-                if attempt < self.lease_acquire_max_retries - 1:
-                    delay = min(
-                        self.lease_acquire_base_delay * (2**attempt),
-                        self.lease_acquire_max_delay,
-                    )
-                    time.sleep(delay)
-                    continue
-        # All retries exhausted
-        raise RuntimeError(
-            f"Failed to acquire lease after {self.lease_acquire_max_retries} attempts: {last_error}"
-        ) from last_error
-
-    def _refresh_lease(self) -> None:
-        with closing(self._connect()) as conn:
-            cursor = conn.execute(
-                """
-                UPDATE queue_leases
-                SET heartbeat_at = ?, owner_pid = ?, owner_start_time = ?
-                WHERE lease_name = ? AND owner_id = ?
-                """,
-                (_utcnow(), self.owner_pid, self.owner_start_time, "default", self.instance_id),
-            )
-            conn.commit()
-            # Read rowcount BEFORE closing the connection to avoid
-            # use-after-close of the cursor.
-            updated = cursor.rowcount
-        # rowcount == 0 means the lease row was taken by another instance.
-        # rowcount may be -1 on older sqlite3 builds ("unknown"), which we treat as success.
-        if updated == 0:
-            raise RuntimeError("Job queue lease was lost")
-
-    def _start_lease_heartbeat(self) -> None:
-        # Heartbeat retry configuration
-        max_heartbeat_retries = 3
-        heartbeat_base_delay = 1.0  # Base delay for exponential backoff
-        heartbeat_max_delay = 10.0  # Maximum delay between retries
-
-        def heartbeat_loop() -> None:
-            consecutive_failures = 0
-            skip_interval = False
-            while True:
-                if not skip_interval:
-                    if self._heartbeat_stop.wait(self.heartbeat_interval_seconds):
-                        break
-                skip_interval = False
-                try:
-                    self._refresh_lease()
-                    consecutive_failures = 0  # Reset on success
-                except (
-                    sqlite3.OperationalError,
-                    sqlite3.InterfaceError,
-                    sqlite3.NotSupportedError,
-                ):
-                    # Runtime fix (L4): transient DB errors (locks, timeouts,
-                    # network-mount I/O hiccups surfacing as InterfaceError or
-                    # NotSupportedError) must retry with backoff. Previously
-                    # only OperationalError was retried, so a transient network
-                    # glitch forced immediate shutdown.
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_heartbeat_retries:
-                        # Max retries exceeded - initiate graceful shutdown
-                        with self._lock:
-                            self._lease_lost = True
-                            self._closed = True
-                            self._closing = True
-                            if not self._worker_stop_requested:
-                                worker_count = len(self._workers)
-                                for _ in range(worker_count):
-                                    self._queue.put(_STOP_WORKER)
-                                self._worker_stop_requested = True
-                        return
-                    # Exponential backoff: 1s, 2s, 4s, etc. (capped at max_delay)
-                    delay = min(
-                        heartbeat_base_delay * (2 ** (consecutive_failures - 1)),
-                        heartbeat_max_delay,
-                    )
-                    # Wait for either the backoff delay or stop signal
-                    if self._heartbeat_stop.wait(timeout=delay):
-                        break
-                    skip_interval = True
-                except Exception:  # pragma: no cover
-                    # Non-transient errors - immediate shutdown
-                    _logger.critical("Heartbeat loop fatal error, shutting down", exc_info=True)
-                    with self._lock:
-                        self._lease_lost = True
-                        self._closed = True
-                        self._closing = True
-                        if not self._worker_stop_requested:
-                            worker_count = len(self._workers)
-                            for _ in range(worker_count):
-                                self._queue.put(_STOP_WORKER)
-                            self._worker_stop_requested = True
-                    return
-
-        self._heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
-        self._heartbeat_thread.start()
-
-    def close(
-        self,
-        *,
-        inline_wait_timeout: float | None = None,
-        preserve_state_on_inline_timeout: bool = False,
-    ) -> None:
-        # Runtime fix (L5): guard against concurrent close() callers racing on
-        # the worker-join loop. ``_close_in_progress`` tracks a _currently-running_
-        # close() (separate from ``_closing`` which the heartbeat also sets on
-        # lease loss) so a second thread waits for the first to publish
-        # ``_shutdown_complete`` instead of re-running the teardown. The flag
-        # is reset on every exit path so a caller can retry close() after a
-        # transient failure (e.g., workers that did not stop in time).
-        if self._shutdown_complete:
-            return
-        claimed_close = False
-        try:
-            with self._lock:
-                if self._shutdown_complete:
-                    return
-                if getattr(self, "_close_in_progress", False):
-                    while (
-                        getattr(self, "_close_in_progress", False) and not self._shutdown_complete
-                    ):
-                        self._state_changed.wait(timeout=0.1)
-                    if self._shutdown_complete:
-                        return
-                if preserve_state_on_inline_timeout and self._inline_jobs_running > 0:
-                    raise RuntimeError("Job queue inline jobs did not stop before lease release")
-                if preserve_state_on_inline_timeout and any(
-                    worker.is_alive() for worker in self._workers
-                ):
-                    raise RuntimeError("Job queue workers did not stop before lease release")
-                self._close_in_progress = True
-                claimed_close = True
-                self._closing = True
-                if not self._worker_stop_requested:
-                    worker_count = len(self._workers)
-                    for _ in range(worker_count):
-                        self._queue.put(_STOP_WORKER)
-                    self._worker_stop_requested = True
-                deadline = (
-                    None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
-                )
-                while self._inline_jobs_running > 0:
-                    if deadline is not None:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise RuntimeError(
-                                "Job queue inline jobs did not stop before lease release"
-                            )
-                        self._state_changed.wait(timeout=min(0.1, remaining))
-                    else:
-                        self._state_changed.wait(timeout=0.1)
-            for worker in list(self._workers):
-                worker.join(timeout=2.0)
-            still_alive = [worker for worker in self._workers if worker.is_alive()]
-            if still_alive:
-                raise RuntimeError("Job queue workers did not stop before lease release")
-            self._heartbeat_stop.set()
-            if self._heartbeat_thread is not None:
-                self._heartbeat_thread.join(timeout=2.0)
-            with closing(self._connect()) as conn:
-                if not self._lease_lost:
-                    conn.execute(
-                        "DELETE FROM queue_leases WHERE lease_name = ? AND owner_id = ?",
-                        ("default", self.instance_id),
-                    )
-                conn.commit()
-            with self._lock:
-                self._closed = True
-                self._shutdown_complete = True
-                self._state_changed.notify_all()
-        finally:
-            if claimed_close and not self._shutdown_complete:
-                # The teardown raised partway; release the claim so a retry
-                # can pick up where this attempt left off.
-                with self._lock:
-                    self._close_in_progress = False
-                    self._state_changed.notify_all()
-
-    def _recover_orphaned_jobs(self) -> None:
-        """Fail queued/running jobs from a previous process instance.
-
-        The queue persists job state in SQLite, but executable callables only live in the
-        current process. After a restart there is no safe way to replay queued/running jobs,
-        so they must be marked failed instead of remaining pending forever.
-        """
-        if self._recovered_orphaned_jobs:
-            return
-        with closing(self._connect()) as conn:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'failed',
-                    completed_at = ?,
-                    result_json = NULL,
-                    ttl_seconds = COALESCE(ttl_seconds, ?),
-                    error = CASE
-                        WHEN status = 'running'
-                            THEN 'Job interrupted by process restart; persisted task '
-                                 || 'payload is not recoverable'
-                        ELSE 'Job abandoned after process restart; persisted task '
-                             || 'payload is not recoverable'
-                    END
-                WHERE status IN ('queued', 'running')
-                """,
-                (_utcnow(), self.ttl_seconds),
-            )
-            conn.commit()
-        self._recovered_orphaned_jobs = True
 
     def _ensure_workers(self) -> None:
         with self._lock:
