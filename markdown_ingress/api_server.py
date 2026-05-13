@@ -50,6 +50,7 @@ from markdown_ingress.api_server_handlers import (
     handle_security_report,
     handle_sync_batch,
 )
+from markdown_ingress.api_server_legacy_routes import register_legacy_routes
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     BatchIngestResponse,
@@ -739,44 +740,16 @@ async def root():
 
 
 # Compatibility aliases for existing clients/tests.
-_LEGACY_API_DEPENDENCIES = [Depends(_require_api_key), Depends(_require_rate_limit)]
-
-app.add_api_route(
-    "/ingest",
-    ingest_endpoint,
-    methods=["POST"],
-    response_model=IngestResponse,
-    dependencies=_LEGACY_API_DEPENDENCIES,
+register_legacy_routes(
+    app,
+    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+    ingest_endpoint=ingest_endpoint,
+    retry_ingest_endpoint=retry_ingest_endpoint,
+    batch_ingest_endpoint=batch_ingest_endpoint,
+    security_report_endpoint=security_report_endpoint,
+    extractor_comparison_endpoint=extractor_comparison_endpoint,
+    health_endpoint=health,
 )
-app.add_api_route(
-    "/ingest/retry",
-    retry_ingest_endpoint,
-    methods=["POST"],
-    response_model=IngestResponse,
-    dependencies=_LEGACY_API_DEPENDENCIES,
-)
-app.add_api_route(
-    "/ingest/batch",
-    batch_ingest_endpoint,
-    methods=["POST"],
-    response_model=BatchIngestResponse,
-    dependencies=_LEGACY_API_DEPENDENCIES,
-)
-app.add_api_route(
-    "/security/report",
-    security_report_endpoint,
-    methods=["POST"],
-    response_model=SecurityReportResponse,
-    dependencies=_LEGACY_API_DEPENDENCIES,
-)
-app.add_api_route(
-    "/evaluate/extractors",
-    extractor_comparison_endpoint,
-    methods=["POST"],
-    response_model=ExtractorComparisonResponse,
-    dependencies=_LEGACY_API_DEPENDENCIES,
-)
-app.add_api_route("/health", health, methods=["GET"])
 
 
 def main():
