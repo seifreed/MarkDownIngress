@@ -19,6 +19,7 @@ from markdown_ingress.config_models import (
     _normalize_domain_policies,
 )
 from markdown_ingress.core.cache import Cache
+from markdown_ingress.core.config_runtime import build_ingest_config
 
 _logger = logging.getLogger(__name__)
 
@@ -354,97 +355,7 @@ class Config:
 
     def to_ingest_config(self) -> IngestConfig:
         """Convert legacy Config into the runtime IngestConfig used by the API/CLI."""
-        kwargs: dict[str, Any] = dict(
-            mode=self.mode,
-            strict=self.strict,
-            model=self.model,
-            timeout=self.timeout,
-            auto_render_threshold=self.auto_render_threshold,
-            cache=self.create_cache(),
-            cache_ttl=self.cache_ttl if self.cache_enabled else None,
-            allow_local_urls=self.allow_local_urls,
-            policy_name=self.normalized_policy(),
-            custom_patterns=_validate_string_list("custom_patterns", self.custom_patterns),
-            plugin_dirs=_validate_string_list("plugin_dirs", self.plugin_dirs),
-            domain_policies=_normalize_domain_policies(self.domain_policies),
-            output_format=self.output_format,
-            output_profile=self.output_profile,
-            output_formats=_validate_string_list("output_formats", self.output_formats),
-            extract_blocks=self.extract_blocks,
-            extract_metadata=self.extract_metadata,
-            extract_links=self.extract_links,
-            advanced_security=self.advanced_security,
-            use_llm=self.use_llm,
-            detect_language=self.detect_language,
-            normalize_multilingual=self.normalize_multilingual,
-            include_security_explanation=self.include_security_explanation,
-            chunking_strategy=self.chunking_strategy,
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            save_reports=self.save_reports,
-            reports_dir=self.reports_dir,
-            render_cost_budget=self.render_cost_budget,
-            include_observability=self.include_observability,
-            fetcher_user_agent=self.fetcher_user_agent,
-            domain_request_interval=self.domain_request_interval,
-            circuit_breaker_threshold=self.circuit_breaker_threshold,
-            circuit_breaker_open_seconds=self.circuit_breaker_open_seconds,
-            batch_timeout=self.batch_timeout,
-            batch_max_concurrent=self.batch_max_concurrent,
-        )
-        # Forward render-related settings when present on the legacy Config
-        for render_field in ("stealth", "disable_http2", "extreme_mode", "screenshot"):
-            if hasattr(self, render_field):
-                kwargs[render_field] = getattr(self, render_field)
-
-        ingest_config = IngestConfig(**kwargs)
-        config_to_runtime_keys: dict[str, tuple[str, ...]] = {
-            "mode": ("mode",),
-            "timeout": ("timeout",),
-            "auto_render_threshold": ("auto_render_threshold",),
-            "strict": ("strict",),
-            "allow_local_urls": ("allow_local_urls",),
-            "model": ("model",),
-            "cache_enabled": ("cache", "cache_ttl"),
-            "cache_ttl": ("cache_ttl",),
-            "policy": ("policy_name",),
-            "custom_patterns": ("custom_patterns",),
-            "plugin_dirs": ("plugin_dirs",),
-            "domain_policies": ("domain_policies",),
-            "output_format": ("output_format",),
-            "output_profile": ("output_profile",),
-            "output_formats": ("output_formats",),
-            "extract_blocks": ("extract_blocks",),
-            "extract_metadata": ("extract_metadata",),
-            "extract_links": ("extract_links",),
-            "advanced_security": ("advanced_security",),
-            "use_llm": ("use_llm",),
-            "detect_language": ("detect_language",),
-            "normalize_multilingual": ("normalize_multilingual",),
-            "include_security_explanation": ("include_security_explanation",),
-            "chunking_strategy": ("chunking_strategy",),
-            "chunk_size": ("chunk_size",),
-            "chunk_overlap": ("chunk_overlap",),
-            "save_reports": ("save_reports",),
-            "reports_dir": ("reports_dir",),
-            "stealth": ("stealth",),
-            "disable_http2": ("disable_http2",),
-            "extreme_mode": ("extreme_mode",),
-            "screenshot": ("screenshot",),
-            "batch_timeout": ("batch_timeout",),
-            "batch_max_concurrent": ("batch_max_concurrent",),
-            "render_cost_budget": ("render_cost_budget",),
-            "include_observability": ("include_observability",),
-            "fetcher_user_agent": ("fetcher_user_agent",),
-            "domain_request_interval": ("domain_request_interval",),
-            "circuit_breaker_threshold": ("circuit_breaker_threshold",),
-            "circuit_breaker_open_seconds": ("circuit_breaker_open_seconds",),
-        }
-        explicit_runtime_keys: set[str] = set()
-        for config_key in self.explicit_keys():
-            explicit_runtime_keys.update(config_to_runtime_keys.get(config_key, ()))
-        object.__setattr__(ingest_config, "_explicit_keys", frozenset(explicit_runtime_keys))
-        return ingest_config
+        return build_ingest_config(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], strict: bool = False) -> "Config":
