@@ -284,6 +284,42 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
     assert client.user_agents[0] != client.user_agents[1]
 
 
+def test_ssl_bypass_policy_requires_first_ssl_verification_failure():
+    from markdown_ingress.adapters.fetching.http_support import (
+        should_retry_with_ssl_bypass,
+        ssl_bypass_retry_delay,
+    )
+
+    class FakeSSLFailureError(Exception):
+        pass
+
+    ssl_error = FakeSSLFailureError("handshake failed")
+    certificate_error = RuntimeError("certificate verify failed")
+
+    assert should_retry_with_ssl_bypass(
+        allow_ssl_bypass=True,
+        ssl_retried=False,
+        exc=ssl_error,
+    )
+    assert should_retry_with_ssl_bypass(
+        allow_ssl_bypass=True,
+        ssl_retried=False,
+        exc=certificate_error,
+    )
+    assert not should_retry_with_ssl_bypass(
+        allow_ssl_bypass=False,
+        ssl_retried=False,
+        exc=ssl_error,
+    )
+    assert not should_retry_with_ssl_bypass(
+        allow_ssl_bypass=True,
+        ssl_retried=True,
+        exc=ssl_error,
+    )
+    assert ssl_bypass_retry_delay(0) == 0.5
+    assert ssl_bypass_retry_delay(3) == 2.0
+
+
 @pytest.mark.parametrize("status_code", [500, 502, 504])
 def test_fetch_sync_server_errors_open_circuit_breaker(monkeypatch, status_code):
     from markdown_ingress.adapters.fetching.httpx_fetcher import DomainCircuitOpenError, Fetcher

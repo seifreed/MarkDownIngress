@@ -110,6 +110,20 @@ def retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
     return float(min(0.5 * (attempt + 1), 2.0))
 
 
+def is_ssl_verification_error(exc: Exception) -> bool:
+    return "SSL" in type(exc).__name__ or "certificate" in str(exc).lower()
+
+
+def should_retry_with_ssl_bypass(
+    *, allow_ssl_bypass: bool, ssl_retried: bool, exc: Exception
+) -> bool:
+    return not ssl_retried and allow_ssl_bypass and is_ssl_verification_error(exc)
+
+
+def ssl_bypass_retry_delay(attempt: int) -> float:
+    return float(min(0.5 * (2**attempt), 2.0))
+
+
 def parse_content_length(content_length: str | None) -> int | None:
     if not content_length:
         return None

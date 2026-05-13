@@ -34,6 +34,12 @@ from markdown_ingress.adapters.fetching.http_support import (
     retry_delay_seconds as _retry_delay_seconds,
 )
 from markdown_ingress.adapters.fetching.http_support import (
+    should_retry_with_ssl_bypass as _should_retry_with_ssl_bypass,
+)
+from markdown_ingress.adapters.fetching.http_support import (
+    ssl_bypass_retry_delay as _ssl_bypass_retry_delay,
+)
+from markdown_ingress.adapters.fetching.http_support import (
     validate_content_type as _validate_content_type,
 )
 from markdown_ingress.adapters.fetching.request_policy import FetchRequestPolicyMixin
@@ -265,10 +271,10 @@ class Fetcher(
                 last_exc = exc
                 self._record_failure(host)
 
-                if (
-                    not ssl_retried
-                    and self.allow_ssl_bypass
-                    and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
+                if _should_retry_with_ssl_bypass(
+                    allow_ssl_bypass=self.allow_ssl_bypass,
+                    ssl_retried=ssl_retried,
+                    exc=exc,
                 ):
                     logger.warning(
                         "SSL verification failed for %s, retrying with certificate verification "
@@ -424,7 +430,7 @@ class Fetcher(
                         ssl_last_exc = exc
                         self._record_failure(host)
                         if ssl_attempt < remaining_attempts - 1:
-                            retry_delay = float(min(0.5 * (2**ssl_attempt), 2.0))
+                            retry_delay = _ssl_bypass_retry_delay(ssl_attempt)
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed for %s: %s, retrying in %.1fs",
                                 ssl_attempt_num,
@@ -571,10 +577,10 @@ class Fetcher(
                 last_exc = exc
                 self._record_failure(host)
 
-                if (
-                    not ssl_retried
-                    and self.allow_ssl_bypass
-                    and ("SSL" in type(exc).__name__ or "certificate" in str(exc).lower())
+                if _should_retry_with_ssl_bypass(
+                    allow_ssl_bypass=self.allow_ssl_bypass,
+                    ssl_retried=ssl_retried,
+                    exc=exc,
                 ):
                     logger.warning(
                         "SSL verification failed for %s, retrying with certificate verification "
@@ -730,7 +736,7 @@ class Fetcher(
                         ssl_last_exc = exc
                         self._record_failure(host)
                         if ssl_attempt < remaining_attempts - 1:
-                            retry_delay = float(min(0.5 * (2**ssl_attempt), 2.0))
+                            retry_delay = _ssl_bypass_retry_delay(ssl_attempt)
                             logger.warning(
                                 "SSL bypass attempt %d/%d failed for %s: %s, retrying in %.1fs",
                                 ssl_attempt_num,
