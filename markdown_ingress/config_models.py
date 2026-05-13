@@ -7,18 +7,36 @@ These dataclasses replace long parameter lists for better maintainability.
 from __future__ import annotations
 
 import copy
-import logging
-import math
-import re
 from collections.abc import Mapping
-from dataclasses import MISSING, dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import markdown_ingress.config_validation as config_validation
 from markdown_ingress.core.ssrf import normalize_domain_pattern
 
-_logger = logging.getLogger(__name__)
+VALID_WAIT_UNTIL = config_validation.VALID_WAIT_UNTIL
+VALID_OUTPUT_FORMATS = config_validation.VALID_OUTPUT_FORMATS
+VALID_OUTPUT_REPRESENTATIONS = config_validation.VALID_OUTPUT_REPRESENTATIONS
+VALID_POLICY_NAMES = config_validation.VALID_POLICY_NAMES
+VALID_OUTPUT_PROFILES = config_validation.VALID_OUTPUT_PROFILES
+
+_ensure_bool = config_validation.ensure_bool
+_ensure_optional_bool = config_validation.ensure_optional_bool
+_ensure_str = config_validation.ensure_str
+_ensure_optional_str = config_validation.ensure_optional_str
+_ensure_int = config_validation.ensure_int
+_ensure_optional_int = config_validation.ensure_optional_int
+_ensure_finite_float = config_validation.ensure_finite_float
+_ensure_optional_finite_float = config_validation.ensure_optional_finite_float
+_ensure_screenshot_value = config_validation.ensure_screenshot_value
+_validate_output_representations = config_validation.validate_output_representations
+_validate_output_profile_name = config_validation.validate_output_profile_name
+_validate_optional_string_list = config_validation.validate_optional_string_list
+_validate_string_list = config_validation.validate_string_list
+_validate_regex_patterns = config_validation.validate_regex_patterns
+_collect_init_values = config_validation.collect_init_values
 
 
 class IngestMode(StrEnum):
@@ -27,203 +45,6 @@ class IngestMode(StrEnum):
     FAST = "fast"
     RENDER = "render"
     AUTO = "auto"
-
-
-# Valid values for RenderConfig.wait_until
-VALID_WAIT_UNTIL = ("networkidle", "load", "domcontentloaded")
-VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
-VALID_OUTPUT_REPRESENTATIONS = ("markdown", "blocks", "chunks", "metadata", "security")
-VALID_POLICY_NAMES = ("permissive", "normal", "strict", "paranoid", "moderate")
-VALID_OUTPUT_PROFILES = ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive")
-
-
-def _ensure_bool(field_name: str, value: object) -> bool:
-    """Return a boolean value or reject untyped config input."""
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
-
-
-def _ensure_optional_bool(field_name: str, value: object) -> bool | None:
-    """Return an optional boolean value or reject untyped config input."""
-    if value is None:
-        return None
-    return _ensure_bool(field_name, value)
-
-
-def _ensure_str(field_name: str, value: object) -> str:
-    """Return a string value or reject untyped config input."""
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string, got {type(value).__name__}")
-    return value
-
-
-def _ensure_optional_str(field_name: str, value: object) -> str | None:
-    """Return an optional string value or reject untyped config input."""
-    if value is None:
-        return None
-    return _ensure_str(field_name, value)
-
-
-def _ensure_int(field_name: str, value: object) -> int:
-    """Return an integer value or reject ambiguous numeric config input."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
-    return value
-
-
-def _ensure_optional_int(field_name: str, value: object) -> int | None:
-    """Return an optional integer value or reject ambiguous numeric config input."""
-    if value is None:
-        return None
-    return _ensure_int(field_name, value)
-
-
-def _ensure_finite_float(field_name: str, value: object) -> float:
-    """Return a finite float value or reject unsafe numeric config input."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
-    return numeric
-
-
-def _ensure_optional_finite_float(field_name: str, value: object) -> float | None:
-    """Return an optional finite float value or reject unsafe numeric config input."""
-    if value is None:
-        return None
-    return _ensure_finite_float(field_name, value)
-
-
-def _ensure_screenshot_value(field_name: str, value: object) -> bool | str | None:
-    """Return a screenshot option or reject unsupported untyped config input."""
-    if value is None or isinstance(value, (bool, str)):
-        return value
-    raise ValueError(f"{field_name} must be a bool, string, or None, got {type(value).__name__}")
-
-
-def _validate_output_representations(value: list[str]) -> list[str]:
-    """Validate requested document output representations."""
-    if not isinstance(value, list):
-        raise ValueError(
-            "output_formats must be a non-empty list of supported format strings, "
-            f"got {type(value).__name__}"
-        )
-    if not value:
-        raise ValueError("output_formats must be a non-empty list of supported format strings")
-    normalized: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            raise ValueError(f"output_formats[{index}] must be a string, got {type(item).__name__}")
-        if item not in VALID_OUTPUT_REPRESENTATIONS:
-            raise ValueError(
-                "Invalid output_formats entry "
-                f"'{item}'. Must be one of: {', '.join(VALID_OUTPUT_REPRESENTATIONS)}"
-            )
-        normalized.append(item)
-    return normalized
-
-
-def _validate_output_profile_name(value: str | None) -> str | None:
-    """Validate a named output profile."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"output_profile must be a string or None, got {type(value).__name__}")
-    if value not in VALID_OUTPUT_PROFILES:
-        raise ValueError(
-            f"Unknown output profile '{value}'. "
-            f"Valid profiles: {', '.join(VALID_OUTPUT_PROFILES)}"
-        )
-    return value
-
-
-def _validate_optional_string_list(field_name: str, value: list[str] | None) -> list[str] | None:
-    """Validate optional list[str] fields used by domain-specific rules."""
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
-    normalized: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
-        normalized.append(item)
-    return normalized
-
-
-def _validate_string_list(field_name: str, value: object) -> list[str]:
-    """Validate required list[str] fields used by runtime configuration."""
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
-    normalized: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
-        normalized.append(item)
-    return normalized
-
-
-def _validate_regex_patterns(patterns: list[str]) -> None:
-    """Validate user-provided regex patterns before runtime scanning."""
-    for pattern in patterns:
-        try:
-            re.compile(pattern)
-        except re.error as exc:
-            raise ValueError(f"Invalid regex pattern '{pattern}': {exc}") from exc
-
-
-def _collect_init_values(
-    cls, args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> tuple[dict[str, Any], frozenset[str]]:
-    """Resolve dataclass-style init arguments while preserving explicit keys."""
-    init_fields = [config_field for config_field in fields(cls) if config_field.init]
-    if len(args) > len(init_fields):
-        raise TypeError(
-            f"{cls.__name__}.__init__() takes at most {len(init_fields)} positional arguments "
-            f"but {len(args)} were given"
-        )
-
-    remaining_kwargs = dict(kwargs)
-    values: dict[str, Any] = {}
-    explicit: set[str] = set()
-
-    for index, config_field in enumerate(init_fields):
-        if index < len(args):
-            if config_field.name in remaining_kwargs:
-                raise TypeError(
-                    f"{cls.__name__}.__init__() got multiple values for argument "
-                    f"{config_field.name!r}"
-                )
-            values[config_field.name] = args[index]
-            explicit.add(config_field.name)
-            continue
-
-        if config_field.name in remaining_kwargs:
-            values[config_field.name] = remaining_kwargs.pop(config_field.name)
-            explicit.add(config_field.name)
-            continue
-
-        if config_field.default is not MISSING:
-            values[config_field.name] = copy.deepcopy(config_field.default)
-            continue
-
-        if config_field.default_factory is not MISSING:
-            values[config_field.name] = config_field.default_factory()
-            continue
-
-        raise TypeError(
-            f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'"
-        )
-
-    if remaining_kwargs:
-        unexpected = next(iter(remaining_kwargs))
-        raise TypeError(
-            f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'"
-        )
-
-    return values, frozenset(explicit)
 
 
 @dataclass

@@ -5,26 +5,18 @@ Configuration file support for MarkDownIngress
 import copy
 import json
 import logging
-import re
 from collections.abc import Callable, Mapping
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml  # type: ignore[import-untyped]
 
+import markdown_ingress.config_validation as config_validation
 from markdown_ingress.config_models import (
     DomainPolicy,
     IngestConfig,
-    _ensure_bool,
-    _ensure_finite_float,
-    _ensure_int,
-    _ensure_optional_bool,
-    _ensure_optional_int,
-    _ensure_screenshot_value,
-    _ensure_str,
-    _validate_output_profile_name,
-    _validate_output_representations,
+    _normalize_domain_policies,
 )
 from markdown_ingress.core.cache import Cache
 
@@ -41,9 +33,22 @@ def register_cache_factory(fn: Callable[[str, str | None, int], Cache]) -> None:
 # Valid values for Literal fields
 VALID_MODES = ("fast", "render", "auto")
 VALID_CACHE_TYPES = ("memory", "sqlite")
-VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
+VALID_OUTPUT_FORMATS = config_validation.VALID_OUTPUT_FORMATS
 VALID_CHUNKING_STRATEGIES = ("none", "heading", "size")
 VALID_POLICIES = ("permissive", "normal", "strict", "paranoid", "moderate")
+
+_collect_config_init_values = config_validation.collect_init_values
+_ensure_bool = config_validation.ensure_bool
+_ensure_finite_float = config_validation.ensure_finite_float
+_ensure_int = config_validation.ensure_int
+_ensure_optional_bool = config_validation.ensure_optional_bool
+_ensure_optional_int = config_validation.ensure_optional_int
+_ensure_screenshot_value = config_validation.ensure_screenshot_value
+_ensure_str = config_validation.ensure_str
+_validate_output_profile_name = config_validation.validate_output_profile_name
+_validate_output_representations = config_validation.validate_output_representations
+_validate_regex_patterns = config_validation.validate_regex_patterns
+_validate_string_list = config_validation.validate_string_list
 
 _MAX_TIMEOUT_SECONDS = 3_600
 _MIN_CHUNK_SIZE = 100
@@ -63,100 +68,6 @@ _DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 3
 _DEFAULT_CIRCUIT_BREAKER_OPEN_SECONDS = 30.0
 _DEFAULT_CHUNK_SIZE = 1200
 _DEFAULT_CHUNK_OVERLAP = 120
-
-
-def _validate_regex_patterns(patterns: list[str]) -> None:
-    for pattern in patterns:
-        try:
-            re.compile(pattern)
-        except re.error as e:
-            raise ValueError(f"Invalid regex pattern '{pattern}': {e}") from e
-
-
-def _validate_string_list(field_name: str, value: Any) -> list[str]:
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
-    normalized: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
-        normalized.append(item)
-    return normalized
-
-
-def _normalize_domain_policies(value: Any) -> list[DomainPolicy]:
-    if not isinstance(value, list):
-        raise ValueError(
-            "domain_policies must be a list of DomainPolicy objects or mappings, "
-            f"got {type(value).__name__}"
-        )
-    normalized: list[DomainPolicy] = []
-    for index, item in enumerate(value):
-        if isinstance(item, DomainPolicy):
-            normalized.append(copy.deepcopy(item))
-            continue
-        if not isinstance(item, Mapping):
-            raise ValueError(
-                f"domain_policies[{index}] must be a mapping or DomainPolicy, "
-                f"got {type(item).__name__}"
-            )
-        try:
-            normalized.append(DomainPolicy(**dict(item)))
-        except Exception as exc:
-            raise ValueError(f"domain_policies[{index}] is invalid: {exc}") from exc
-    return normalized
-
-
-def _collect_config_init_values(
-    cls, args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> tuple[dict[str, Any], frozenset[str]]:
-    """Resolve dataclass-style init arguments while preserving explicit keys."""
-    init_fields = [config_field for config_field in fields(cls) if config_field.init]
-    if len(args) > len(init_fields):
-        raise TypeError(
-            f"{cls.__name__}.__init__() takes at most {len(init_fields)} positional arguments "
-            f"but {len(args)} were given"
-        )
-
-    remaining_kwargs = dict(kwargs)
-    values: dict[str, Any] = {}
-    explicit: set[str] = set()
-
-    for index, config_field in enumerate(init_fields):
-        if index < len(args):
-            if config_field.name in remaining_kwargs:
-                raise TypeError(
-                    f"{cls.__name__}.__init__() got multiple values for argument "
-                    f"{config_field.name!r}"
-                )
-            values[config_field.name] = args[index]
-            explicit.add(config_field.name)
-            continue
-
-        if config_field.name in remaining_kwargs:
-            values[config_field.name] = remaining_kwargs.pop(config_field.name)
-            explicit.add(config_field.name)
-            continue
-
-        if config_field.default is not MISSING:
-            values[config_field.name] = copy.deepcopy(config_field.default)
-            continue
-
-        if config_field.default_factory is not MISSING:
-            values[config_field.name] = config_field.default_factory()
-            continue
-
-        raise TypeError(
-            f"{cls.__name__}.__init__() missing required argument: '{config_field.name}'"
-        )
-
-    if remaining_kwargs:
-        unexpected = next(iter(remaining_kwargs))
-        raise TypeError(
-            f"{cls.__name__}.__init__() got an unexpected keyword argument '{unexpected}'"
-        )
-
-    return values, frozenset(explicit)
 
 
 @dataclass(init=False)
