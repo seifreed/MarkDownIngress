@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
@@ -17,6 +18,50 @@ from markdown_ingress.core.interfaces import ICacheBackend
 from markdown_ingress.models import SafeDocument
 
 UNSET = object()
+
+_NONE_EXPLICIT_RUNTIME_KEYS = (
+    "mode",
+    "strict",
+    "model",
+    "timeout",
+    "auto_render_threshold",
+    "stealth",
+    "disable_http2",
+    "extreme_mode",
+    "extract_metadata",
+    "extract_links",
+    "advanced_security",
+    "use_llm",
+    "policy_name",
+    "custom_patterns",
+    "plugin_dirs",
+    "output_format",
+    "output_profile",
+    "output_formats",
+    "extract_blocks",
+    "chunking_strategy",
+    "chunk_size",
+    "chunk_overlap",
+    "detect_language",
+    "normalize_multilingual",
+    "include_security_explanation",
+    "include_observability",
+    "save_reports",
+    "reports_dir",
+    "fetcher_user_agent",
+    "domain_request_interval",
+    "circuit_breaker_threshold",
+    "circuit_breaker_open_seconds",
+    "domain_policies",
+)
+
+_UNSET_EXPLICIT_RUNTIME_KEYS = (
+    "allow_local_urls",
+    "screenshot",
+    "cache",
+    "cache_ttl",
+    "render_cost_budget",
+)
 
 
 class _IsolatedCacheBackend:
@@ -91,6 +136,14 @@ def clone_ingest_config(config: IngestConfig) -> IngestConfig:
     if getattr(cloned, "cache", None) is not None:
         cloned.cache = _IsolatedCacheBackend(cast(ICacheBackend, cloned.cache))
     return cloned
+
+
+def _collect_explicit_runtime_keys(values: Mapping[str, object]) -> set[str]:
+    explicit_keys = {key for key in _NONE_EXPLICIT_RUNTIME_KEYS if values.get(key) is not None}
+    explicit_keys.update(
+        key for key in _UNSET_EXPLICIT_RUNTIME_KEYS if values.get(key) is not UNSET
+    )
+    return explicit_keys
 
 
 def build_runtime_config(
@@ -206,202 +259,89 @@ def build_runtime_config(
             render_cost_budget=None if render_cost_budget is UNSET else render_cost_budget,
             domain_policies=validated_domain_policies,
         )
-        explicit_build_keys: set[str] = set()
-        if mode is not None:
-            explicit_build_keys.add("mode")
-        if strict is not None:
-            explicit_build_keys.add("strict")
-        if allow_local_urls is not UNSET:
-            explicit_build_keys.add("allow_local_urls")
-        if model is not None:
-            explicit_build_keys.add("model")
-        if timeout is not None:
-            explicit_build_keys.add("timeout")
-        if auto_render_threshold is not None:
-            explicit_build_keys.add("auto_render_threshold")
-        if stealth is not None:
-            explicit_build_keys.add("stealth")
-        if disable_http2 is not None:
-            explicit_build_keys.add("disable_http2")
-        if extreme_mode is not None:
-            explicit_build_keys.add("extreme_mode")
-        if screenshot is not UNSET:
-            explicit_build_keys.add("screenshot")
-        if extract_metadata is not None:
-            explicit_build_keys.add("extract_metadata")
-        if extract_links is not None:
-            explicit_build_keys.add("extract_links")
-        if advanced_security is not None:
-            explicit_build_keys.add("advanced_security")
-        if use_llm is not None:
-            explicit_build_keys.add("use_llm")
-        if cache is not UNSET:
-            explicit_build_keys.add("cache")
-        if cache_ttl is not UNSET:
-            explicit_build_keys.add("cache_ttl")
-        if policy_name is not None:
-            explicit_build_keys.add("policy_name")
-        if custom_patterns is not None:
-            explicit_build_keys.add("custom_patterns")
-        if plugin_dirs is not None:
-            explicit_build_keys.add("plugin_dirs")
-        if output_format is not None:
-            explicit_build_keys.add("output_format")
-        if output_profile is not None:
-            explicit_build_keys.add("output_profile")
-        if output_formats is not None:
-            explicit_build_keys.add("output_formats")
-        if extract_blocks is not None:
-            explicit_build_keys.add("extract_blocks")
-        if chunking_strategy is not None:
-            explicit_build_keys.add("chunking_strategy")
-        if chunk_size is not None:
-            explicit_build_keys.add("chunk_size")
-        if chunk_overlap is not None:
-            explicit_build_keys.add("chunk_overlap")
-        if detect_language is not None:
-            explicit_build_keys.add("detect_language")
-        if normalize_multilingual is not None:
-            explicit_build_keys.add("normalize_multilingual")
-        if include_security_explanation is not None:
-            explicit_build_keys.add("include_security_explanation")
-        if include_observability is not None:
-            explicit_build_keys.add("include_observability")
-        if save_reports is not None:
-            explicit_build_keys.add("save_reports")
-        if reports_dir is not None:
-            explicit_build_keys.add("reports_dir")
-        if fetcher_user_agent is not None:
-            explicit_build_keys.add("fetcher_user_agent")
-        if domain_request_interval is not None:
-            explicit_build_keys.add("domain_request_interval")
-        if circuit_breaker_threshold is not None:
-            explicit_build_keys.add("circuit_breaker_threshold")
-        if circuit_breaker_open_seconds is not None:
-            explicit_build_keys.add("circuit_breaker_open_seconds")
-        if render_cost_budget is not UNSET:
-            explicit_build_keys.add("render_cost_budget")
-        if domain_policies is not None:
-            explicit_build_keys.add("domain_policies")
+        explicit_build_keys = _collect_explicit_runtime_keys(locals())
         object.__setattr__(runtime_config, "_explicit_keys", frozenset(explicit_build_keys))
         return runtime_config.validate()
 
     runtime_config = clone_ingest_config(normalized)
     explicit_keys: set[str] = set(runtime_config.explicit_keys())
+    explicit_keys.update(_collect_explicit_runtime_keys(locals()))
     if mode is not None:
         runtime_config.mode = mode
-        explicit_keys.add("mode")
     if strict is not None:
         runtime_config.strict = strict
-        explicit_keys.add("strict")
     if allow_local_urls is not UNSET:
         runtime_config.allow_local_urls = allow_local_urls
-        explicit_keys.add("allow_local_urls")
     if model is not None:
         runtime_config.model = model
-        explicit_keys.add("model")
     if timeout is not None:
         runtime_config.timeout = timeout
-        explicit_keys.add("timeout")
     if auto_render_threshold is not None:
         runtime_config.auto_render_threshold = auto_render_threshold
-        explicit_keys.add("auto_render_threshold")
     if stealth is not None:
         runtime_config.stealth = stealth
-        explicit_keys.add("stealth")
     if disable_http2 is not None:
         runtime_config.disable_http2 = disable_http2
-        explicit_keys.add("disable_http2")
     if extreme_mode is not None:
         runtime_config.extreme_mode = extreme_mode
-        explicit_keys.add("extreme_mode")
     if screenshot is not UNSET:
         runtime_config.screenshot = screenshot
-        explicit_keys.add("screenshot")
     if extract_metadata is not None:
         runtime_config.extract_metadata = extract_metadata
-        explicit_keys.add("extract_metadata")
     if extract_links is not None:
         runtime_config.extract_links = extract_links
-        explicit_keys.add("extract_links")
     if advanced_security is not None:
         runtime_config.advanced_security = advanced_security
-        explicit_keys.add("advanced_security")
     if use_llm is not None:
         runtime_config.use_llm = use_llm
-        explicit_keys.add("use_llm")
     if cache is not UNSET:
         runtime_config.cache = cache
-        explicit_keys.add("cache")
     if cache_ttl is not UNSET:
         runtime_config.cache_ttl = cache_ttl
-        explicit_keys.add("cache_ttl")
     if policy_name is not None:
         runtime_config.policy_name = policy_name
-        explicit_keys.add("policy_name")
     if custom_patterns is not None:
         runtime_config.custom_patterns = validated_custom_patterns
-        explicit_keys.add("custom_patterns")
     if plugin_dirs is not None:
         runtime_config.plugin_dirs = validated_plugin_dirs
-        explicit_keys.add("plugin_dirs")
     if output_format is not None:
         runtime_config.output_format = output_format
-        explicit_keys.add("output_format")
     if output_profile is not None:
         runtime_config.output_profile = validated_output_profile or "default"
-        explicit_keys.add("output_profile")
     if output_formats is not None:
         runtime_config.output_formats = output_formats
-        explicit_keys.add("output_formats")
     if extract_blocks is not None:
         runtime_config.extract_blocks = extract_blocks
-        explicit_keys.add("extract_blocks")
     if chunking_strategy is not None:
         runtime_config.chunking_strategy = chunking_strategy
-        explicit_keys.add("chunking_strategy")
     if chunk_size is not None:
         runtime_config.chunk_size = chunk_size
-        explicit_keys.add("chunk_size")
     if chunk_overlap is not None:
         runtime_config.chunk_overlap = chunk_overlap
-        explicit_keys.add("chunk_overlap")
     if detect_language is not None:
         runtime_config.detect_language = detect_language
-        explicit_keys.add("detect_language")
     if normalize_multilingual is not None:
         runtime_config.normalize_multilingual = normalize_multilingual
-        explicit_keys.add("normalize_multilingual")
     if include_security_explanation is not None:
         runtime_config.include_security_explanation = include_security_explanation
-        explicit_keys.add("include_security_explanation")
     if include_observability is not None:
         runtime_config.include_observability = include_observability
-        explicit_keys.add("include_observability")
     if save_reports is not None:
         runtime_config.save_reports = save_reports
-        explicit_keys.add("save_reports")
     if reports_dir is not None:
         runtime_config.reports_dir = reports_dir
-        explicit_keys.add("reports_dir")
     if fetcher_user_agent is not None:
         runtime_config.fetcher_user_agent = fetcher_user_agent
-        explicit_keys.add("fetcher_user_agent")
     if domain_request_interval is not None:
         runtime_config.domain_request_interval = domain_request_interval
-        explicit_keys.add("domain_request_interval")
     if circuit_breaker_threshold is not None:
         runtime_config.circuit_breaker_threshold = circuit_breaker_threshold
-        explicit_keys.add("circuit_breaker_threshold")
     if circuit_breaker_open_seconds is not None:
         runtime_config.circuit_breaker_open_seconds = circuit_breaker_open_seconds
-        explicit_keys.add("circuit_breaker_open_seconds")
     if render_cost_budget is not UNSET:
         runtime_config.render_cost_budget = render_cost_budget
-        explicit_keys.add("render_cost_budget")
     if domain_policies is not None:
         runtime_config.domain_policies = validated_domain_policies
-        explicit_keys.add("domain_policies")
 
     object.__setattr__(runtime_config, "_explicit_keys", frozenset(explicit_keys))
     return runtime_config.validate()
