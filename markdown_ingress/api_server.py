@@ -88,6 +88,7 @@ from markdown_ingress.api_server_snapshot import (
     build_job_subsystem_snapshot,
 )
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
+from markdown_ingress.api_server_threads import stop_control_thread
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
@@ -445,36 +446,22 @@ def _init_job_queue(previous_queue=None):
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
 
-    def _stop_control_thread(
-        name: str,
-        thread: threading.Thread | None,
-        stop_event: threading.Event | None,
-    ) -> None:
-        if stop_event is not None:
-            stop_event.set()
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=1.0)
-            if thread.is_alive():
-                raise RuntimeError(f"{name} did not stop before reload")
-
     # BUG FIX #5: Use getter functions instead of cached module-level variables.
     # This prevents issues with stale references during module reload.
-    _stop_control_thread(
+    stop_control_thread(
         "Previous job queue repair thread",
         _get_previous_repair_thread(),
         _get_previous_repair_stop(),
     )
-    _stop_control_thread(
-        "Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-    )
+    stop_control_thread("Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP)
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
-    _stop_control_thread(
+    stop_control_thread(
         "Previous job queue watchdog thread",
         _get_previous_watchdog_thread(),
         _get_previous_watchdog_stop(),
     )
-    _stop_control_thread(
+    stop_control_thread(
         "Job queue watchdog thread", _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
     )
     _JOB_QUEUE_WATCHDOG_STOP = None
