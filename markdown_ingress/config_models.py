@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import markdown_ingress.config_output_profiles as output_profiles
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.core.ssrf import normalize_domain_pattern
 
@@ -642,10 +643,7 @@ class IngestConfig:
     @classmethod
     def output_profile_fields(cls) -> frozenset[str]:
         """Return the set of config fields managed by output profiles."""
-        field_names: set[str] = set()
-        for profile in ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive"):
-            field_names.update(cls.output_profile_defaults(profile).keys())
-        return frozenset(field_names)
+        return output_profiles.output_profile_fields()
 
     def explicit_keys(self) -> frozenset[str]:
         """Return config fields explicitly set by the caller."""
@@ -654,52 +652,12 @@ class IngestConfig:
     @classmethod
     def output_profile_defaults(cls, profile: str) -> dict[str, Any]:
         """Return runtime overrides for a named output profile."""
-        profiles: dict[str, dict[str, Any]] = {
-            "default": {},
-            "llm_safe": {
-                "strict": True,
-                "extract_metadata": True,
-                "extract_links": True,
-                "extract_blocks": True,
-                "chunking_strategy": "heading",
-                "output_formats": ["markdown", "blocks", "security"],
-            },
-            "rag_chunkable": {
-                "extract_metadata": True,
-                "extract_links": True,
-                "extract_blocks": True,
-                "chunking_strategy": "heading",
-                "chunk_size": 900,
-                "chunk_overlap": 120,
-                "output_formats": ["markdown", "blocks", "chunks"],
-            },
-            "for_search": {
-                "mode": "fast",
-                "strict": False,
-                "extract_metadata": True,
-                "extract_links": True,
-                "extract_blocks": True,
-                "chunking_strategy": "size",
-                "chunk_size": 700,
-                "chunk_overlap": 80,
-                "output_formats": ["markdown", "blocks", "chunks", "metadata"],
-            },
-            "for_archive": {
-                "mode": "render",
-                "strict": True,
-                "extract_metadata": True,
-                "extract_links": True,
-                "extract_blocks": True,
-                "chunking_strategy": "none",
-                "output_formats": ["markdown", "blocks", "metadata", "security"],
-            },
-        }
-        return profiles.get(profile, {})
+        return output_profiles.output_profile_defaults(profile)
 
     @classmethod
     def is_known_profile(cls, profile: str) -> bool:
         """Check if a profile name is recognized."""
-        return profile in VALID_OUTPUT_PROFILES
+        return output_profiles.is_known_output_profile(profile)
 
     def apply_output_profile(self) -> IngestConfig:
         """Apply preset defaults to a cloned config, preserving explicit overrides."""
