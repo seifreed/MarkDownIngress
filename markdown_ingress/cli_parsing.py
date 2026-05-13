@@ -168,29 +168,28 @@ def _validate_chunk_overlap(value):
     return ivalue
 
 
-def add_common_ingest_args(parser):
-    """Add common ingest arguments to a parser."""
-    parser.add_argument("--config", help="Load runtime settings from a YAML/JSON config file")
-    # Mode group: --fast and --render are mutually exclusive
+def _add_mode_args(parser, *, render_help: str, fast_help: str) -> None:
     mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--render", action="store_true", help="Force render mode (Playwright)")
-    mode_group.add_argument("--fast", action="store_true", help="Force fast mode (HTTP only)")
-    # Strictness group: --strict and --permissive are mutually exclusive
+    mode_group.add_argument("--render", action="store_true", help=render_help)
+    mode_group.add_argument("--fast", action="store_true", help=fast_help)
+
+
+def _add_strictness_args(parser) -> None:
     strict_group = parser.add_mutually_exclusive_group()
     strict_group.add_argument("--strict", action="store_true", help="Enable strict security mode")
     strict_group.add_argument("--permissive", action="store_true", help="Disable strict mode")
-    parser.add_argument("--model", default=None, help="LLM model for token estimation")
-    parser.add_argument("--timeout", type=float, default=None, help="Request timeout in seconds")
-    parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--no-content", action="store_true", help="Hide markdown content in output")
-    parser.add_argument("--save", metavar="FILE", help="Save output to file")
+
+
+def _add_screenshot_arg(parser) -> None:
     parser.add_argument(
         "--screenshot",
         nargs="?",
         const=True,
         help="Capture screenshot (render mode only). Optionally specify path.",
     )
-    # Metadata extraction: --metadata / --no-metadata (mutually exclusive)
+
+
+def _add_metadata_args(parser) -> None:
     metadata_group = parser.add_mutually_exclusive_group()
     metadata_group.add_argument(
         "--metadata", action="store_true", help="Enable metadata extraction"
@@ -198,11 +197,15 @@ def add_common_ingest_args(parser):
     metadata_group.add_argument(
         "--no-metadata", action="store_true", help="Disable metadata extraction"
     )
-    # Link extraction: --links / --no-links (mutually exclusive)
+
+
+def _add_link_args(parser) -> None:
     links_group = parser.add_mutually_exclusive_group()
     links_group.add_argument("--links", action="store_true", help="Enable link extraction")
     links_group.add_argument("--no-links", action="store_true", help="Disable link extraction")
-    # Advanced security: --advanced-security / --no-advanced-security (mutually exclusive)
+
+
+def _add_advanced_security_args(parser) -> None:
     advanced_sec_group = parser.add_mutually_exclusive_group()
     advanced_sec_group.add_argument(
         "--advanced-security",
@@ -214,7 +217,9 @@ def add_common_ingest_args(parser):
         action="store_true",
         help="Disable Nova-tracer advanced injection detection",
     )
-    # LLM usage: --use-llm / --no-llm (mutually exclusive)
+
+
+def _add_llm_args(parser) -> None:
     llm_group = parser.add_mutually_exclusive_group()
     llm_group.add_argument(
         "--use-llm",
@@ -226,6 +231,9 @@ def add_common_ingest_args(parser):
         action="store_true",
         help="Disable LLM-based detection tier",
     )
+
+
+def _add_output_structure_args(parser) -> None:
     parser.add_argument("--output-profile", default=None, help="Preset output profile")
     parser.add_argument(
         "--extract-blocks",
@@ -265,6 +273,32 @@ def add_common_ingest_args(parser):
     )
 
 
+def _add_ingest_policy_args(parser) -> None:
+    _add_metadata_args(parser)
+    _add_link_args(parser)
+    _add_advanced_security_args(parser)
+    _add_llm_args(parser)
+    _add_output_structure_args(parser)
+
+
+def add_common_ingest_args(parser):
+    """Add common ingest arguments to a parser."""
+    parser.add_argument("--config", help="Load runtime settings from a YAML/JSON config file")
+    _add_mode_args(
+        parser,
+        render_help="Force render mode (Playwright)",
+        fast_help="Force fast mode (HTTP only)",
+    )
+    _add_strictness_args(parser)
+    parser.add_argument("--model", default=None, help="LLM model for token estimation")
+    parser.add_argument("--timeout", type=float, default=None, help="Request timeout in seconds")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--no-content", action="store_true", help="Hide markdown content in output")
+    parser.add_argument("--save", metavar="FILE", help="Save output to file")
+    _add_screenshot_arg(parser)
+    _add_ingest_policy_args(parser)
+
+
 def create_ingest_parser(subparsers):
     ingest_parser = subparsers.add_parser("ingest", help="Ingest single URL")
     ingest_parser.add_argument("url", help="URL to ingest")
@@ -275,14 +309,12 @@ def create_batch_parser(subparsers):
     batch_parser = subparsers.add_parser("batch", help="Process multiple URLs from file")
     batch_parser.add_argument("file", help="File containing URLs (one per line)")
     batch_parser.add_argument("--config", help="Load runtime settings from a YAML/JSON config file")
-    # Mode group: --fast and --render are mutually exclusive
-    mode_group = batch_parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--render", action="store_true", help="Force render mode for all URLs")
-    mode_group.add_argument("--fast", action="store_true", help="Force fast mode for all URLs")
-    # Strictness group: --strict and --permissive are mutually exclusive
-    strict_group = batch_parser.add_mutually_exclusive_group()
-    strict_group.add_argument("--strict", action="store_true", help="Enable strict security mode")
-    strict_group.add_argument("--permissive", action="store_true", help="Disable strict mode")
+    _add_mode_args(
+        batch_parser,
+        render_help="Force render mode for all URLs",
+        fast_help="Force fast mode for all URLs",
+    )
+    _add_strictness_args(batch_parser)
     batch_parser.add_argument("--model", default=None, help="LLM model for token estimation")
     batch_parser.add_argument("--timeout", type=float, default=None, help="Request timeout per URL")
     batch_parser.add_argument(
@@ -293,93 +325,8 @@ def create_batch_parser(subparsers):
         "--no-content", action="store_true", help="Hide markdown content in output"
     )
     batch_parser.add_argument("--output", "-o", help="Output directory (markdown) or file (json)")
-    batch_parser.add_argument(
-        "--screenshot",
-        nargs="?",
-        const=True,
-        help="Capture screenshot (render mode only). Optionally specify path.",
-    )
-    # Metadata extraction: --metadata / --no-metadata (mutually exclusive)
-    batch_metadata_group = batch_parser.add_mutually_exclusive_group()
-    batch_metadata_group.add_argument(
-        "--metadata", action="store_true", help="Enable metadata extraction"
-    )
-    batch_metadata_group.add_argument(
-        "--no-metadata", action="store_true", help="Disable metadata extraction"
-    )
-    # Link extraction: --links / --no-links (mutually exclusive)
-    batch_links_group = batch_parser.add_mutually_exclusive_group()
-    batch_links_group.add_argument("--links", action="store_true", help="Enable link extraction")
-    batch_links_group.add_argument(
-        "--no-links", action="store_true", help="Disable link extraction"
-    )
-    # Advanced security: --advanced-security / --no-advanced-security (mutually exclusive)
-    batch_advanced_sec_group = batch_parser.add_mutually_exclusive_group()
-    batch_advanced_sec_group.add_argument(
-        "--advanced-security",
-        action="store_true",
-        help="Enable Nova-tracer advanced injection detection (requires nova-hunting)",
-    )
-    batch_advanced_sec_group.add_argument(
-        "--no-advanced-security",
-        action="store_true",
-        help="Disable Nova-tracer advanced injection detection",
-    )
-    # LLM usage: --use-llm / --no-llm (mutually exclusive)
-    batch_llm_group = batch_parser.add_mutually_exclusive_group()
-    batch_llm_group.add_argument(
-        "--use-llm",
-        action="store_true",
-        help="Enable LLM-based detection tier (slow but most accurate, requires ANTHROPIC_API_KEY)",
-    )
-    batch_llm_group.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="Disable LLM-based detection tier",
-    )
-    batch_parser.add_argument("--output-profile", default=None, help="Preset output profile")
-    batch_parser.add_argument(
-        "--extract-blocks",
-        action=argparse.BooleanOptionalAction,
-        help="Emit structured blocks",
-    )
-    batch_parser.add_argument(
-        "--chunking-strategy",
-        choices=["none", "heading", "size"],
-        default=None,
-        help="Enable native chunking strategy",
-    )
-    batch_parser.add_argument(
-        "--chunk-size",
-        type=_validate_chunk_size,
-        default=None,
-        help=f"Target chunk size in characters (100-{MAX_CHUNK_SIZE_CLI})",
-    )
-    batch_parser.add_argument(
-        "--chunk-overlap",
-        type=_validate_chunk_overlap,
-        default=None,
-        help=f"Chunk overlap in characters (0-{MAX_CHUNK_OVERLAP_CLI})",
-    )
-    batch_parser.add_argument(
-        "--render-cost-budget", type=int, default=None, help="Render cost budget"
-    )
-    batch_parser.add_argument(
-        "--domain-policy-file", help="JSON file with one or more domain policies"
-    )
-    batch_parser.add_argument(
-        "--domain-policy",
-        action="append",
-        default=[],
-        help="Inline JSON domain policy; may be repeated",
-    )
-    batch_parser.add_argument(
-        "--show-blocks", action="store_true", help="Show structured block summary"
-    )
-    batch_parser.add_argument("--show-chunks", action="store_true", help="Show chunk summary")
-    batch_parser.add_argument(
-        "--show-observability", action="store_true", help="Show observability data in rich output"
-    )
+    _add_screenshot_arg(batch_parser)
+    _add_ingest_policy_args(batch_parser)
 
 
 def create_compare_parser(subparsers):
