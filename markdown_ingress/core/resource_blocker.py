@@ -6,11 +6,38 @@ to speed up rendering and reduce bandwidth usage.
 """
 
 import logging
-import re
 import threading
 from collections.abc import Mapping
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
+from markdown_ingress.core.resource_block_patterns import (
+    _AD_DOMAIN_ONLY_PATTERNS,
+    _AD_DOMAINS,
+    _TRACKER_DOMAIN_ONLY_PATTERNS,
+    _TRACKER_DOMAINS,
+    _TRACKER_HOST_PATH_PATTERNS,
+    _TRACKER_PATH_PATTERNS,
+    extract_resource_url_parts,
+    match_domain_only_patterns,
+    match_host_path_patterns,
+    match_host_patterns,
+    match_path_patterns,
+)
+from markdown_ingress.core.resource_block_patterns import (
+    _DOMAIN_ONLY_PATTERNS as _DOMAIN_ONLY_PATTERNS,
+)
+from markdown_ingress.core.resource_block_patterns import (
+    _PATH_PATTERNS as _PATH_PATTERNS,
+)
+from markdown_ingress.core.resource_block_patterns import (
+    BLOCKED_DOMAINS as BLOCKED_DOMAINS,
+)
+from markdown_ingress.core.resource_block_patterns import (
+    BLOCKED_RESOURCE_TYPES as BLOCKED_RESOURCE_TYPES,
+)
+from markdown_ingress.core.resource_block_patterns import (
+    _decode_url_fully as _decode_url_fully,
+)
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
     dns_pin_matches_hostname,
@@ -20,104 +47,6 @@ from markdown_ingress.core.ssrf import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _decode_url_fully(url: str) -> str:
-    """Decode URL recursively to handle multi-level encoding.
-
-    This prevents bypasses where URLs are double or triple encoded
-    to evade detection (e.g., %252e -> %2e -> . bypasses patterns
-    looking for dots).
-
-    Args:
-        url: URL string that may contain percent-encoded characters.
-
-    Returns:
-        Fully decoded URL string (lowercase for consistent matching).
-    """
-    decoded = unquote(url)
-    # Keep decoding until no change (handles double/triple encoding)
-    # Limit iterations to prevent infinite loops on malicious input
-    max_iterations = 10
-    iterations = 0
-    while decoded != unquote(decoded) and iterations < max_iterations:
-        decoded = unquote(decoded)
-        iterations += 1
-    return decoded.lower()
-
-
-# Resource types that can be blocked
-BLOCKED_RESOURCE_TYPES = [
-    "image",  # Block images (we only need text)
-    "font",  # Block fonts (faster)
-    "media",  # Block videos/audio
-    "stylesheet",  # Optionally block CSS
-]
-
-# Domain patterns commonly used for ads and tracking
-_TRACKER_DOMAINS = [
-    "google-analytics.com",
-    "googletagmanager.com",
-    "facebook.net",
-    "scorecardresearch.com",
-    "quantserve.com",
-    "hotjar.com",
-    "mouseflow.com",
-    "fullstory.com",
-    "clarity.ms",
-    "segment.io",
-    "cdn.segment.com",
-    "api.segment.com",
-    "mixpanel.com",
-    "amplitude.com",
-]
-
-_AD_DOMAINS = [
-    "doubleclick.net",
-    "googlesyndication.com",
-    "adservice.google",
-    "adnxs.com",
-    "adsrvr.org",
-    "criteo.com",
-    "taboola.com",
-    "outbrain.com",
-]
-
-_TRACKER_HOST_PATH_PATTERNS = [
-    ("facebook.com", "/tr"),
-]
-
-BLOCKED_DOMAINS = (
-    _TRACKER_DOMAINS + [f"{host}{path}" for host, path in _TRACKER_HOST_PATH_PATTERNS] + _AD_DOMAINS
-)
-
-# Patterns matched against the URL domain only (not the full path)
-# to avoid false positives like "loads" matching "ads".
-_TRACKER_DOMAIN_ONLY_PATTERNS = [
-    "analytics.",
-    "tracker.",
-    "telemetry.",
-]
-
-_AD_DOMAIN_ONLY_PATTERNS = [
-    "ads.",
-    ".ads.",
-]
-
-# Path-level patterns: matched against the full URL but use boundary-aware
-# patterns (slash or dot prefix) to avoid substring false positives.
-_TRACKER_PATH_PATTERNS = [
-    "/tracking.",
-    "/tracking/",
-    "/pixel.",
-    "/pixel/",
-    "/beacon.",
-    "/beacon/",
-    "/beacon?",
-]
-
-_DOMAIN_ONLY_PATTERNS = _AD_DOMAIN_ONLY_PATTERNS + _TRACKER_DOMAIN_ONLY_PATTERNS
-_PATH_PATTERNS = list(_TRACKER_PATH_PATTERNS)
 _BROWSER_INTERNAL_SCHEMES = frozenset({"about", "blob", "data"})
 _SSRF_BLOCK_REASON = "ssrf_protection"
 
@@ -283,54 +212,49 @@ class ResourceBlocker:
 
         # Block by domain patterns (for ads, trackers, and custom blocklists).
         if self.block_ads or self.block_trackers or self._custom_blocked_domains:
-            # Decode URL recursively to prevent encoding-based bypasses
-            # (e.g., /tracking%252e bypasses /tracking. by double encoding)
             try:
-                url_decoded = _decode_url_fully(url)
-            except Exception:
-                # Malformed URL encoding - block for security
+                url_parts = extract_resource_url_parts(url)
+            except ValueError:
                 return True, None
-
-            try:
-                parts = urlsplit(url_decoded)
-                domain = (parts.hostname or "").lower().rstrip(".")
-            except Exception:
-                # Malformed URL - block for security
-                return True, None
-
-            # Security: Ensure domain was successfully extracted
-            if not domain:
-                # Empty or malformed domain - block for security
-                return True, None
-
-            path = parts.path or "/"
-            path_with_query = path if not parts.query else f"{path}?{parts.query}"
 
             # Custom domains should be enforced independently of the built-in
             # ad/tracker toggles so callers can define their own blocklist.
-            matched = self._match_host_patterns(domain, self._custom_blocked_domains)
+            matched = self._match_host_patterns(url_parts.domain, self._custom_blocked_domains)
             if matched is not None:
                 return True, matched
 
             if self.block_trackers:
-                matched = self._match_host_patterns(domain, _TRACKER_DOMAINS)
+                matched = self._match_host_patterns(url_parts.domain, _TRACKER_DOMAINS)
                 if matched is not None:
                     return True, matched
-                matched = self._match_host_path_patterns(domain, path, _TRACKER_HOST_PATH_PATTERNS)
+                matched = self._match_host_path_patterns(
+                    url_parts.domain,
+                    url_parts.path,
+                    _TRACKER_HOST_PATH_PATTERNS,
+                )
                 if matched is not None:
                     return True, matched
-                matched = self._match_domain_only_patterns(domain, _TRACKER_DOMAIN_ONLY_PATTERNS)
+                matched = self._match_domain_only_patterns(
+                    url_parts.domain,
+                    _TRACKER_DOMAIN_ONLY_PATTERNS,
+                )
                 if matched is not None:
                     return True, matched
-                matched = self._match_path_patterns(path_with_query, _TRACKER_PATH_PATTERNS)
+                matched = self._match_path_patterns(
+                    url_parts.path_with_query,
+                    _TRACKER_PATH_PATTERNS,
+                )
                 if matched is not None:
                     return True, matched
 
             if self.block_ads:
-                matched = self._match_host_patterns(domain, _AD_DOMAINS)
+                matched = self._match_host_patterns(url_parts.domain, _AD_DOMAINS)
                 if matched is not None:
                     return True, matched
-                matched = self._match_domain_only_patterns(domain, _AD_DOMAIN_ONLY_PATTERNS)
+                matched = self._match_domain_only_patterns(
+                    url_parts.domain,
+                    _AD_DOMAIN_ONLY_PATTERNS,
+                )
                 if matched is not None:
                     return True, matched
 
@@ -383,64 +307,10 @@ class ResourceBlocker:
                 return True, _SSRF_BLOCK_REASON
         return None
 
-    @staticmethod
-    def _match_host_patterns(domain: str, patterns: list[str]) -> str | None:
-        """Match full-domain host patterns with subdomain boundary support."""
-        for pattern in patterns:
-            if "/" in pattern:
-                continue
-            if domain == pattern:
-                return pattern
-            if domain.endswith(f".{pattern}"):
-                return pattern
-        return None
-
-    @staticmethod
-    def _match_host_path_patterns(
-        domain: str, path: str, patterns: list[tuple[str, str]]
-    ) -> str | None:
-        """Match known tracker endpoints that depend on both host and path."""
-        for host_pattern, path_pattern in patterns:
-            if not (domain == host_pattern or domain.endswith(f".{host_pattern}")):
-                continue
-            if path == path_pattern or path.startswith(f"{path_pattern}/"):
-                return f"{host_pattern}{path_pattern}"
-        return None
-
-    @staticmethod
-    def _match_domain_only_patterns(domain: str, patterns: list[str]) -> str | None:
-        """Match boundary-aware domain fragments."""
-        labels = [label for label in domain.split(".") if label]
-        for pattern in patterns:
-            normalized = pattern.strip(".")
-            if normalized and normalized in labels:
-                return pattern
-        return None
-
-    @staticmethod
-    def _match_path_patterns(path_with_query: str, patterns: list[str]) -> str | None:
-        """Match tracking paths with segment boundaries instead of raw substrings."""
-        stems_to_suffixes: dict[str, set[str]] = {}
-        for pattern in patterns:
-            if not pattern.startswith("/") or len(pattern) < 3:
-                continue
-            stems_to_suffixes.setdefault(pattern[1:-1], set()).add(pattern[-1])
-
-        if not stems_to_suffixes:
-            return None
-
-        pattern_re = re.compile(
-            rf"(?:^|/)(?P<stem>{'|'.join(map(re.escape, stems_to_suffixes))})(?P<suffix>[./?])"
-        )
-        match = pattern_re.search(path_with_query)
-        if match is None:
-            return None
-
-        stem = match.group("stem")
-        suffix = match.group("suffix")
-        if suffix in stems_to_suffixes.get(stem, set()):
-            return f"/{stem}{suffix}"
-        return None
+    _match_host_patterns = staticmethod(match_host_patterns)
+    _match_host_path_patterns = staticmethod(match_host_path_patterns)
+    _match_domain_only_patterns = staticmethod(match_domain_only_patterns)
+    _match_path_patterns = staticmethod(match_path_patterns)
 
     def get_stats(self) -> dict:
         """
