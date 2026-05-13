@@ -1918,7 +1918,7 @@ async def test_batch_success_does_not_cancel_internal_inflight_future(monkeypatc
     batch_use_case = BatchIngestUseCase(ingest_use_case=IngestUseCase(playwright_available=False))
     monkeypatch.setattr(batch_use_case, "_execute_item_isolated", fake_execute_item_isolated)
     monkeypatch.setattr(
-        "markdown_ingress.application.use_cases.asyncio.get_running_loop",
+        "markdown_ingress.application.batch_ingest_use_case.asyncio.get_running_loop",
         lambda: LoopProxy(loop),
     )
 

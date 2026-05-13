@@ -7,7 +7,8 @@ import logging
 from collections.abc import Callable
 from typing import Literal
 
-from markdown_ingress.application.use_cases import BatchIngestUseCase, IngestUseCase
+from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
+from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult

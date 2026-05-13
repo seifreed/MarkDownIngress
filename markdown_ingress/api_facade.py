@@ -13,8 +13,8 @@ from markdown_ingress.adapters.rendering.playwright_renderer import (
     PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
 )
 from markdown_ingress.api_runtime import UNSET, _validate_batch_max_concurrent, build_runtime_config
+from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.use_cases import (
-    BatchIngestUseCase,
     GenerateSecurityReportUseCase,
     IngestUseCase,
 )

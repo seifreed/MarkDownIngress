@@ -719,7 +719,7 @@ def test_ingest_many_persists_policy_blocked_documents(tmp_path):
             side_effect=PolicyBlockedError("blocked", document=doc),
         ),
         patch(
-            "markdown_ingress.application.use_cases._select_execution_strategy",
+            "markdown_ingress.application.batch_ingest_use_case._select_execution_strategy",
             return_value=("local", None),
         ),
         patch(
@@ -789,7 +789,7 @@ def test_ingest_many_policy_blocked_report_persist_value_error_is_fail_open(capl
             side_effect=PolicyBlockedError("blocked", document=doc),
         ),
         patch(
-            "markdown_ingress.application.use_cases._select_execution_strategy",
+            "markdown_ingress.application.batch_ingest_use_case._select_execution_strategy",
             return_value=("local", None),
         ),
         patch(

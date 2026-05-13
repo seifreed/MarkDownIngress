@@ -32,7 +32,7 @@ from markdown_ingress.reporting import persist_report_for_document
 from markdown_ingress.shared_results import BatchErrorItem
 
 if TYPE_CHECKING:
-    from markdown_ingress.application.use_cases import BatchIngestUseCase
+    from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 
 _logger = logging.getLogger(__name__)
 
