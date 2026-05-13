@@ -99,9 +99,8 @@ async def demo_resource_blocking():
         if "blocked_requests" in result_with_block.metadata:
             blocked = result_with_block.metadata["blocked_requests"]
             total = result_with_block.metadata["total_requests"]
-            print(
-                f"Blocked {blocked} out of {total} requests ({result_with_block.metadata['block_rate_pct']:.1f}%)"
-            )
+            block_rate = result_with_block.metadata["block_rate_pct"]
+            print(f"Blocked {blocked} out of {total} requests ({block_rate:.1f}%)")
 
     print("=" * 80)
 

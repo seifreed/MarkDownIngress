@@ -81,7 +81,10 @@ async def example_custom_config():
     # Create custom config
     config = get_advanced_stealth_config(
         randomize=True,
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        ),
         viewport=(1920, 1080),
         timezone="America/New_York",
     )
