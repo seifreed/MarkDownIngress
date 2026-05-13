@@ -49,6 +49,10 @@ class FetchRequestPolicyMixin:
                 return False
             return True
 
+    def _remember_ssl_bypass_host(self: Any, host: str) -> None:
+        with self._ssl_bypass_lock:
+            self._ssl_bypass_hosts[host] = time.monotonic() + self._ssl_bypass_ttl
+
     def _should_follow_redirect(self: Any, response: httpx.Response) -> bool:
         if not self.follow_redirects:
             return False

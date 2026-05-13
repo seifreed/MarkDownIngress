@@ -31,9 +31,6 @@ from markdown_ingress.adapters.fetching.http_support import (
     ResponseSizeLimitError,
 )
 from markdown_ingress.adapters.fetching.http_support import (
-    parse_content_length as _parse_content_length,
-)
-from markdown_ingress.adapters.fetching.http_support import (
     retry_delay_seconds as _retry_delay_seconds,
 )
 from markdown_ingress.adapters.fetching.http_support import (
@@ -191,14 +188,7 @@ class Fetcher(
                         redirect_count += 1
                         continue
 
-                    if self.max_response_size is not None:
-                        content_length = response.headers.get("content-length")
-                        parsed_length = _parse_content_length(content_length)
-                        if parsed_length is not None and parsed_length > self.max_response_size:
-                            raise ResponseSizeLimitError(
-                                f"Response size {parsed_length} exceeds "
-                                f"max_response_size {self.max_response_size}"
-                            )
+                    self._enforce_declared_response_size(response)
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
                         content = await self._read_async_response_content(response)
@@ -352,17 +342,7 @@ class Fetcher(
                                     redirect_count += 1
                                     continue
 
-                                if self.max_response_size is not None:
-                                    content_length = response.headers.get("content-length")
-                                    parsed_length = _parse_content_length(content_length)
-                                    if (
-                                        parsed_length is not None
-                                        and parsed_length > self.max_response_size
-                                    ):
-                                        raise ResponseSizeLimitError(
-                                            f"Response size {parsed_length} exceeds "
-                                            f"max_response_size {self.max_response_size}"
-                                        )
+                                self._enforce_declared_response_size(response)
 
                                 if (
                                     self._is_redirect_response(response)
@@ -371,10 +351,7 @@ class Fetcher(
                                     ssl_content = await self._read_async_response_content(response)
                                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                                     self._record_success(response_host)
-                                    with self._ssl_bypass_lock:
-                                        self._ssl_bypass_hosts[host] = (
-                                            time.monotonic() + self._ssl_bypass_ttl
-                                        )
+                                    self._remember_ssl_bypass_host(host)
                                     return self._make_fetch_result(
                                         ssl_content,
                                         requested_logical_url,
@@ -394,10 +371,7 @@ class Fetcher(
 
                             elapsed_ms = (time.perf_counter() - start_time) * 1000
                             self._record_success(response_host)
-                            with self._ssl_bypass_lock:
-                                self._ssl_bypass_hosts[host] = (
-                                    time.monotonic() + self._ssl_bypass_ttl
-                                )
+                            self._remember_ssl_bypass_host(host)
                             return self._make_fetch_result(
                                 ssl_content,
                                 requested_logical_url,
@@ -520,14 +494,7 @@ class Fetcher(
                         redirect_count += 1
                         continue
 
-                    if self.max_response_size is not None:
-                        content_length = response.headers.get("content-length")
-                        parsed_length = _parse_content_length(content_length)
-                        if parsed_length is not None and parsed_length > self.max_response_size:
-                            raise ResponseSizeLimitError(
-                                f"Response size {parsed_length} exceeds "
-                                f"max_response_size {self.max_response_size}"
-                            )
+                    self._enforce_declared_response_size(response)
 
                     if self._is_redirect_response(response) and not self.follow_redirects:
                         sync_content = self._read_sync_response_content(response)
@@ -681,17 +648,7 @@ class Fetcher(
                                     redirect_count += 1
                                     continue
 
-                                if self.max_response_size is not None:
-                                    content_length = response.headers.get("content-length")
-                                    parsed_length = _parse_content_length(content_length)
-                                    if (
-                                        parsed_length is not None
-                                        and parsed_length > self.max_response_size
-                                    ):
-                                        raise ResponseSizeLimitError(
-                                            f"Response size {parsed_length} exceeds "
-                                            f"max_response_size {self.max_response_size}"
-                                        )
+                                self._enforce_declared_response_size(response)
 
                                 if (
                                     self._is_redirect_response(response)
@@ -700,10 +657,7 @@ class Fetcher(
                                     ssl_sync_content = self._read_sync_response_content(response)
                                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                                     self._record_success(response_host)
-                                    with self._ssl_bypass_lock:
-                                        self._ssl_bypass_hosts[host] = (
-                                            time.monotonic() + self._ssl_bypass_ttl
-                                        )
+                                    self._remember_ssl_bypass_host(host)
                                     return self._make_fetch_result(
                                         ssl_sync_content,
                                         requested_logical_url,
@@ -723,10 +677,7 @@ class Fetcher(
 
                             elapsed_ms = (time.perf_counter() - start_time) * 1000
                             self._record_success(response_host)
-                            with self._ssl_bypass_lock:
-                                self._ssl_bypass_hosts[host] = (
-                                    time.monotonic() + self._ssl_bypass_ttl
-                                )
+                            self._remember_ssl_bypass_host(host)
                             return self._make_fetch_result(
                                 ssl_sync_content,
                                 requested_logical_url,

@@ -5,7 +5,10 @@ from typing import Any
 
 import httpx
 
-from markdown_ingress.adapters.fetching.http_support import ResponseSizeLimitError
+from markdown_ingress.adapters.fetching.http_support import (
+    ResponseSizeLimitError,
+    parse_content_length,
+)
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
@@ -23,6 +26,17 @@ class ResponseContentMixin:
             return content.decode(encoding)
         except (UnicodeDecodeError, LookupError):
             return content.decode("utf-8", errors="replace")
+
+    def _enforce_declared_response_size(self, response: httpx.Response) -> None:
+        if self.max_response_size is None:
+            return
+        content_length = response.headers.get("content-length")
+        parsed_length = parse_content_length(content_length)
+        if parsed_length is not None and parsed_length > self.max_response_size:
+            raise ResponseSizeLimitError(
+                f"Response size {parsed_length} exceeds "
+                f"max_response_size {self.max_response_size}"
+            )
 
     async def _read_async_response_content(self, response: httpx.Response) -> bytes:
         chunks: list[bytes] = []
