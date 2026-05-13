@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Callable
 from typing import Any, cast
 
-from markdown_ingress.application.batch_processor import _CostBudget
+from markdown_ingress.application.batch_state import _CostBudget
 from markdown_ingress.application.heuristics import (
     _looks_like_auth_interstitial,
     _looks_like_non_html_resource,

@@ -7,9 +7,9 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Protocol, cast
 
-from markdown_ingress.application.batch_processor import (
+from markdown_ingress.application.batch_processor import _BatchUrlProcessor
+from markdown_ingress.application.batch_state import (
     _BatchContext,
-    _BatchUrlProcessor,
     _PreparedBatchRequest,
 )
 from markdown_ingress.application.fetcher_manager import (
