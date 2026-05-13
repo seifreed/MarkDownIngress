@@ -9,6 +9,10 @@ import threading
 import time
 from pathlib import Path
 
+from markdown_ingress.adapters.cache.sqlite_document_codec import (
+    deserialize_document,
+    serialize_document,
+)
 from markdown_ingress.adapters.cache.utils import _validate_ttl_value
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.models import SafeDocument
@@ -436,26 +440,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
 
     def _serialize_document(self, doc: SafeDocument) -> str:
         """Serialize SafeDocument to JSON"""
-        return json.dumps(
-            {
-                "markdown": doc.markdown,
-                "metadata": doc.metadata,
-                "token_estimate": doc.token_estimate,
-                "content_hash": doc.content_hash,
-                "injection_score": doc.injection_score,
-                "flags": doc.flags,
-                "removed_elements": doc.removed_elements,
-                "screenshot_path": doc.screenshot_path,
-                "enriched_metadata": doc.enriched_metadata,
-                "links": doc.links,
-                "nova_score": doc.nova_score,
-                "nova_details": doc.nova_details,
-                "structured_blocks": doc.structured_blocks,
-                "chunks": doc.chunks,
-                "security_explanation": doc.security_explanation,
-                "observability": doc.observability,
-            }
-        )
+        return serialize_document(doc)
 
     def _deserialize_document(self, json_str: str) -> SafeDocument:
         """Deserialize JSON to SafeDocument.
@@ -475,36 +460,4 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             TypeError: If required fields are missing and have no default
             ValueError: If data values are invalid
         """
-        import dataclasses
-
-        data = json.loads(json_str)
-        if not isinstance(data, dict):
-            raise ValueError(
-                f"Cache entry root has unexpected type {type(data).__name__}; expected object"
-            )
-        # Filter out keys no longer in the schema (forward compat)
-        known_fields = {f.name for f in dataclasses.fields(SafeDocument)}
-        filtered = {k: v for k, v in data.items() if k in known_fields}
-        # Supply defaults for missing fields that have them (backward compat)
-        for f in dataclasses.fields(SafeDocument):
-            if f.name not in filtered:
-                if f.default is not dataclasses.MISSING:
-                    filtered[f.name] = f.default
-                elif f.default_factory is not dataclasses.MISSING:
-                    filtered[f.name] = f.default_factory()
-        # Basic type validation for primitive fields to reject corrupted cache entries.
-        _primitive_field_types: dict[str, type | tuple[type, ...]] = {
-            "markdown": str,
-            "title": (str, type(None)),
-            "url": str,
-            "token_estimate": int,
-            "injection_score": (int, float),
-            "content_hash": (str, type(None)),
-        }
-        for field_name, expected in _primitive_field_types.items():
-            if field_name in filtered and not isinstance(filtered[field_name], expected):
-                raise ValueError(
-                    f"Cache entry field '{field_name}' has unexpected type "
-                    f"{type(filtered[field_name]).__name__}"
-                )
-        return SafeDocument(**filtered)
+        return deserialize_document(json_str)
