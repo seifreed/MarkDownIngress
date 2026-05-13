@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import queue
-import socket
 import sqlite3
 import threading
 import uuid
@@ -14,18 +13,15 @@ from collections.abc import Callable
 from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import urlparse
+from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_cleanup import JobCleanupMixin
+from markdown_ingress.adapters.jobs.job_queue_execution import JobQueueExecutionMixin
 from markdown_ingress.adapters.jobs.job_queue_lifecycle import JobQueueLifecycleMixin
 from markdown_ingress.adapters.jobs.job_queue_models import (
     LEGACY_UNKNOWN_TTL_SECONDS,
-    JobAlreadyRunningError,
+    STOP_WORKER,
     JobRecord,
-)
-from markdown_ingress.adapters.jobs.job_queue_models import (
-    STOP_WORKER as _STOP_WORKER,
 )
 from markdown_ingress.adapters.jobs.job_queue_models import (
     utcnow as _utcnow,
@@ -43,9 +39,6 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_optional_positive_finite_float as _validate_optional_positive_finite_float,
 )
 from markdown_ingress.adapters.jobs.job_queue_security import (
-    validate_positive_finite_float as _validate_positive_finite_float,
-)
-from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_webhook_url as _validate_webhook_url,
 )
 from markdown_ingress.adapters.jobs.job_state_machine import JobStateMachineMixin
@@ -56,24 +49,15 @@ _logger = logging.getLogger(__name__)
 
 # Re-export so callers outside this module don't need to import sqlite3 directly.
 SQLiteError = sqlite3.Error
+_STOP_WORKER = STOP_WORKER
 
 
-def _execute_task_in_subprocess(
-    task: Callable[[], dict[str, Any]],
-    conn,
-) -> None:
-    try:
-        conn.send(("result", task()))
-    except BaseException as exc:  # pragma: no cover - child process path
-        try:
-            conn.send(("exception", exc))
-        except Exception:
-            conn.send(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
-    finally:
-        conn.close()
-
-
-class PersistentJobQueue(JobQueueLifecycleMixin, JobCleanupMixin, JobStateMachineMixin):
+class PersistentJobQueue(
+    JobQueueLifecycleMixin,
+    JobCleanupMixin,
+    JobQueueExecutionMixin,
+    JobStateMachineMixin,
+):
     """SQLite-backed worker queue for long-running API jobs."""
 
     def __init__(
@@ -145,6 +129,10 @@ class PersistentJobQueue(JobQueueLifecycleMixin, JobCleanupMixin, JobStateMachin
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @staticmethod
+    def _resolve_webhook_hostname_ip(hostname: str) -> str:
+        return _resolve_and_validate_ip(hostname)
 
     def _init_db(self) -> None:
         with closing(self._connect()) as conn:
@@ -351,242 +339,6 @@ class PersistentJobQueue(JobQueueLifecycleMixin, JobCleanupMixin, JobStateMachin
             ttl_seconds=row["ttl_seconds"],
             legacy_expires_at=row["legacy_expires_at"],
         )
-
-    def _worker_loop(self) -> None:
-        while True:
-            item = self._queue.get()
-            job_id = None
-            try:
-                if item is _STOP_WORKER:
-                    return
-                job_id, task = cast(tuple[str, Callable[[], dict[str, Any]]], item)
-                self._assert_queue_usable(require_lease=True, allow_closing=True)
-                self._execute_job(job_id, task)
-            except JobAlreadyRunningError as exc:
-                _logger.info("Skipping duplicate execution for job %s: %s", job_id, exc)
-            except Exception as exc:  # pragma: no cover
-                _logger.warning("Worker loop exception for job %s: %s", job_id, exc)
-                if job_id is not None:
-                    try:
-                        job = self.get(job_id, cleanup_expired=False)
-                        if job is not None and job.status not in {"failed", "completed"}:
-                            self._mark_failed(job_id, str(exc))
-                    except Exception as mark_exc:
-                        _logger.warning(
-                            "Could not mark job %s as failed: %s",
-                            job_id,
-                            mark_exc,
-                            exc_info=True,
-                        )
-                        # Fallback: force-update to prevent job staying stuck
-                        # in 'running' if the main _mark_failed path failed.
-                        try:
-                            with closing(self._connect()) as conn:
-                                conn.execute(
-                                    "UPDATE jobs SET status='failed', error=?, "
-                                    "completed_at=? WHERE job_id=? AND status='running'",
-                                    (str(exc)[:500], _utcnow(), job_id),
-                                )
-                                conn.commit()
-                        except Exception as fallback_exc:
-                            _logger.error(
-                                "Fallback mark-failed also failed for job %s: %s",
-                                job_id,
-                                fallback_exc,
-                                exc_info=True,
-                            )
-            finally:
-                self._queue.task_done()
-
-    def _delete_queued_job(self, job_id: str) -> None:
-        """Remove a queued job that was persisted but never successfully accepted."""
-        with closing(self._connect()) as conn:
-            conn.execute(
-                "DELETE FROM jobs WHERE job_id = ? AND status = 'queued'",
-                (job_id,),
-            )
-            conn.commit()
-
-    def _execute_job(self, job_id: str, task: Callable[[], dict[str, Any]]) -> None:
-        self._assert_queue_usable(require_lease=True, allow_closing=True)
-        self._mark_running(job_id)
-        try:
-            # Execute task with optional timeout
-            if self.job_timeout_seconds is not None:
-                result = self._execute_with_timeout(task, self.job_timeout_seconds)
-            else:
-                result = task()
-            if result is None:
-                raise RuntimeError("Task returned None result")
-            if not isinstance(result, dict):
-                raise RuntimeError("Task returned non-dict result")
-            # Validate persistence while the failure path can still mark the job failed.
-            json.dumps(result)
-        except Exception as exc:
-            # Try to mark the job as failed.  If _mark_failed itself raises
-            # (e.g. DB lock contention), log the secondary failure but always
-            # re-raise the *original* exception so the worker loop and inline
-            # callers see the real error.
-            try:
-                self._mark_failed(job_id, str(exc))
-            except Exception:
-                _logger.warning(
-                    "Failed to mark job %s as failed (original error: %s)",
-                    job_id,
-                    exc,
-                )
-            raise
-        if not self._still_owns_lease():
-            self._lease_lost = True
-            self._closed = True
-            # Job result computed but not yet persisted.
-            # Try to preserve the result while marking as failed so callers can retrieve it.
-            # This is similar to _mark_webhook_failed but for lease loss scenarios.
-            try:
-                self._mark_completed_preserve_result(
-                    job_id, result, "Job queue lease was lost before result persistence"
-                )
-            except Exception as e:
-                # If preservation fails, fall back to marking as failed without result
-                _logger.debug("Failed to preserve job result on lease loss: %s", e)
-                self._mark_failed(job_id, "Job queue lease was lost before result persistence")
-            raise RuntimeError("Job queue lease was lost before result persistence")
-        self._mark_completed(job_id, result)
-        job = self.get(job_id, cleanup_expired=False)
-        if job and job.webhook_url:
-            if not self._still_owns_lease():
-                self._lease_lost = True
-                self._closed = True
-                # Job was already marked completed successfully in the database.
-                # The result is persisted, but webhook delivery cannot proceed.
-                # This is acceptable: callers polling the queue can still retrieve results.
-                # Do NOT mark as failed - the job completed successfully.
-                raise RuntimeError("Job queue lease was lost before webhook delivery")
-            # Re-validate webhook URL at delivery time to prevent DNS rebinding attacks
-            validated_ip: str | None = None
-            if not self.allow_local_webhooks:
-                # BUG FIX: Use proper URL parsing instead of fragile string splitting
-                # to prevent IndexError on malformed URLs
-                try:
-                    parsed = urlparse(job.webhook_url)
-                    hostname = parsed.hostname
-                except Exception as e:
-                    _logger.warning("Failed to parse webhook URL: %s", str(e)[:100])
-                    self._mark_webhook_failed(job_id, f"Invalid webhook URL: {e}")
-                    raise RuntimeError(f"Invalid webhook URL: {e}") from e
-                if hostname is None:
-                    _logger.warning("Webhook URL has no hostname: %s", job.webhook_url[:100])
-                    self._mark_webhook_failed(job_id, "Webhook URL has no hostname")
-                    raise RuntimeError("Webhook URL has no hostname")
-                try:
-                    validated_ip = _resolve_and_validate_ip(hostname)
-                except socket.gaierror as exc:
-                    self._mark_webhook_failed(
-                        job_id, "Webhook URL DNS resolution failed (transient)"
-                    )
-                    raise RuntimeError("Webhook URL DNS resolution failed (transient)") from exc
-                except ValueError as exc:
-                    # Private/blocked IP detected at delivery time (policy rejection)
-                    self._mark_webhook_failed(job_id, f"Webhook URL blocked by SSRF policy: {exc}")
-                    raise RuntimeError(f"Webhook URL blocked by SSRF policy: {exc}") from exc
-            try:
-                # BUG FIX: Pass validated_ip to notifier for DNS pinning
-                # This prevents TOCTOU race where DNS changes between validation and connection
-                self.notifier.notify(
-                    job.webhook_url,
-                    {
-                        "job_id": job.job_id,
-                        "status": job.status,
-                        "completed_at": job.completed_at,
-                        "result": job.result,
-                        "error": job.error,
-                    },
-                    validated_ip=validated_ip,
-                )
-            except Exception as exc:
-                # Webhook failure: preserve result but mark as failed
-                # The job result is preserved so callers can still retrieve it
-                self._mark_webhook_failed(job_id, f"Webhook delivery failed: {exc}")
-                raise
-
-    def _execute_with_timeout(
-        self, task: Callable[[], dict[str, Any]], timeout_seconds: float
-    ) -> dict[str, Any]:
-        """Execute a task and return control to the caller when the timeout expires.
-
-        Timed-out tasks run in a daemon thread and may continue until the task
-        returns; the queue observes the timeout deadline instead of waiting for
-        that background work to finish.
-
-        Args:
-            task: Callable that returns a result dict
-            timeout_seconds: Maximum time to wait for completion
-
-        Returns:
-            The result from task()
-
-        Raises:
-            RuntimeError: If task times out or returns None
-            Exception: Any exception raised by the task
-        """
-        timeout_seconds = _validate_positive_finite_float("timeout_seconds", timeout_seconds)
-        if os.name != "posix":
-            return self._execute_with_timeout_thread_fallback(task, timeout_seconds)
-        return self._execute_with_timeout_process(task, timeout_seconds)
-
-    def _execute_with_timeout_process(
-        self,
-        task: Callable[[], dict[str, Any]],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        # Use the same daemon-thread timeout path on POSIX. ThreadPoolExecutor
-        # shutdown waits for the worker by default, which defeats the timeout.
-        return self._execute_with_timeout_thread_fallback(task, timeout_seconds)
-
-    def _execute_with_timeout_thread_fallback(
-        self,
-        task: Callable[[], dict[str, Any]],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        """Execute a task in a daemon thread with a caller-visible timeout.
-
-        Python cannot hard-cancel worker threads. When the timeout expires the
-        daemon thread continues executing in the background. Each timeout spawns
-        a new thread that persists until the hung task returns, which may be
-        never for infinite loops or blocking I/O. Under high-throughput workloads
-        this causes unbounded thread accumulation.
-
-        For production environments that require hard timeouts, consider using
-        an external process watchdog or multiprocessing.Process instead.
-        """
-        result_container: list[dict[str, Any] | None] = [None]
-        exception_container: list[BaseException | None] = [None]
-
-        def run_task() -> None:
-            try:
-                result_container[0] = task()
-            except BaseException as e:
-                exception_container[0] = e
-
-        thread = threading.Thread(target=run_task, daemon=True)
-        thread.start()
-        thread.join(timeout=timeout_seconds)
-
-        if thread.is_alive():
-            _logger.warning(
-                "Job execution timed out after %s seconds; "
-                "background thread may continue running until the task returns.",
-                timeout_seconds,
-            )
-            raise RuntimeError(f"Job execution timed out after {timeout_seconds} seconds")
-
-        if exception_container[0] is not None:
-            raise exception_container[0]
-
-        if result_container[0] is None:
-            raise RuntimeError("Task returned None result")
-
-        return result_container[0]
 
 
 def check_external_owner_still_owns(
