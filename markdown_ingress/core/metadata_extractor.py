@@ -2,21 +2,21 @@
 Metadata extraction from HTML documents
 """
 
-import json
 import logging
 from typing import Any, cast
 
 from selectolax.parser import HTMLParser
+
+from markdown_ingress.core.metadata_jsonld import (
+    parse_author_from_jsonld_script,
+    parse_date_from_jsonld_script,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class MetadataExtractor:
     """Extract rich metadata from HTML documents"""
-
-    def __init__(self):
-        """Initialize metadata extractor"""
-        pass
 
     def extract(
         self,
@@ -83,42 +83,8 @@ class MetadataExtractor:
         """Extract author from schema.org JSON-LD scripts"""
         scripts = parser.css('script[type="application/ld+json"]')
         for script in scripts:
-            author = self._parse_author_from_script(script)
+            author = parse_author_from_jsonld_script(script)
             if author:
-                return author
-        return None
-
-    def _parse_author_from_script(self, script) -> str | None:
-        """Parse author from a single JSON-LD script tag"""
-        try:
-            data = json.loads(script.text())
-        except (json.JSONDecodeError, AttributeError):
-            return None
-
-        for item in self._iter_jsonld_items(data):
-            author = item.get("author")
-            if not author:
-                continue
-
-            if isinstance(author, list):
-                # JSON-LD often uses arrays: [{"name": "Alice"}, {"name": "Bob"}]
-                names = []
-                for author_item in author:
-                    if isinstance(author_item, dict):
-                        name = author_item.get("name")
-                        if isinstance(name, str) and name:
-                            names.append(name)
-                    elif isinstance(author_item, str) and author_item:
-                        names.append(author_item)
-                if names:
-                    return ", ".join(names)
-                continue
-            if isinstance(author, dict):
-                name = author.get("name")
-                if isinstance(name, str) and name:
-                    return name
-                continue
-            if isinstance(author, str):
                 return author
         return None
 
@@ -178,38 +144,10 @@ class MetadataExtractor:
         """Extract a date field from schema.org JSON-LD scripts"""
         scripts = parser.css('script[type="application/ld+json"]')
         for script in scripts:
-            date_value = self._parse_date_from_script(script, date_field)
+            date_value = parse_date_from_jsonld_script(script, date_field)
             if date_value:
                 return date_value
         return None
-
-    def _parse_date_from_script(self, script, date_field: str) -> str | None:
-        """Parse a date field from a single JSON-LD script tag"""
-        try:
-            data = json.loads(script.text())
-        except (json.JSONDecodeError, AttributeError):
-            return None
-
-        for item in self._iter_jsonld_items(data):
-            date_value = item.get(date_field)
-            if isinstance(date_value, str) and date_value:
-                return date_value
-        return None
-
-    def _iter_jsonld_items(self, data: Any):
-        """Yield JSON-LD object candidates from root lists and @graph containers."""
-        if isinstance(data, dict):
-            yield data
-            graph = data.get("@graph")
-            if isinstance(graph, list):
-                for item in graph:
-                    yield from self._iter_jsonld_items(item)
-            elif isinstance(graph, dict):
-                yield from self._iter_jsonld_items(graph)
-            return
-        if isinstance(data, list):
-            for item in data:
-                yield from self._iter_jsonld_items(item)
 
     def _extract_language_info(
         self,
