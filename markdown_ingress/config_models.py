@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import markdown_ingress.config_output_profiles as output_profiles
 import markdown_ingress.config_validation as config_validation
@@ -19,6 +19,7 @@ from markdown_ingress.config_domain_policy import (
 from markdown_ingress.config_domain_policy import (
     _normalize_domain_policies as _normalize_domain_policies,
 )
+from markdown_ingress.config_ingest_validation import validate_ingest_config
 from markdown_ingress.config_render import RenderConfig as RenderConfig
 
 VALID_WAIT_UNTIL = config_validation.VALID_WAIT_UNTIL
@@ -200,163 +201,7 @@ class IngestConfig:
 
     def validate(self) -> IngestConfig:
         """Validate the current config state after construction or mutation."""
-        valid_modes = ("fast", "render", "auto")
-        if not isinstance(self.mode, str):
-            raise ValueError(f"mode must be a string, got {type(self.mode).__name__}")
-        if self.mode not in valid_modes:
-            raise ValueError(
-                f"Invalid mode '{self.mode}'. Must be one of: {', '.join(valid_modes)}"
-            )
-
-        self.strict = _ensure_bool("strict", self.strict)
-        self.model = _ensure_str("model", self.model)
-        self.timeout = _ensure_finite_float("timeout", self.timeout)
-        self.auto_render_threshold = _ensure_int(
-            "auto_render_threshold", self.auto_render_threshold
-        )
-        self.stealth = _ensure_bool("stealth", self.stealth)
-        self.disable_http2 = _ensure_bool("disable_http2", self.disable_http2)
-        self.extreme_mode = _ensure_bool("extreme_mode", self.extreme_mode)
-        self.screenshot = _ensure_screenshot_value("screenshot", self.screenshot)
-        self.extract_metadata = _ensure_bool("extract_metadata", self.extract_metadata)
-        self.extract_links = _ensure_bool("extract_links", self.extract_links)
-        self.advanced_security = _ensure_bool("advanced_security", self.advanced_security)
-        self.use_llm = _ensure_bool("use_llm", self.use_llm)
-        self.allow_local_urls = _ensure_optional_bool("allow_local_urls", self.allow_local_urls)
-        self.cache_ttl = _ensure_optional_int("cache_ttl", self.cache_ttl)
-        self.policy_name = _ensure_str("policy_name", self.policy_name)
-        self.custom_patterns = _validate_string_list("custom_patterns", self.custom_patterns)
-        _validate_regex_patterns(self.custom_patterns)
-        self.plugin_dirs = _validate_string_list("plugin_dirs", self.plugin_dirs)
-        self.domain_policies = _normalize_domain_policies(self.domain_policies)
-        self.output_profile = _ensure_str("output_profile", self.output_profile)
-        if not isinstance(self.output_format, str):
-            raise ValueError(
-                f"output_format must be a string, got {type(self.output_format).__name__}"
-            )
-        self.extract_blocks = _ensure_bool("extract_blocks", self.extract_blocks)
-        if not isinstance(self.chunking_strategy, str):
-            raise ValueError(
-                f"chunking_strategy must be a string, got {type(self.chunking_strategy).__name__}"
-            )
-        self.chunk_size = _ensure_int("chunk_size", self.chunk_size)
-        self.chunk_overlap = _ensure_int("chunk_overlap", self.chunk_overlap)
-        self.detect_language = _ensure_bool("detect_language", self.detect_language)
-        self.normalize_multilingual = _ensure_bool(
-            "normalize_multilingual", self.normalize_multilingual
-        )
-        self.include_security_explanation = _ensure_bool(
-            "include_security_explanation", self.include_security_explanation
-        )
-        self.include_observability = _ensure_bool(
-            "include_observability", self.include_observability
-        )
-        self.save_reports = _ensure_bool("save_reports", self.save_reports)
-        self.reports_dir = _ensure_str("reports_dir", self.reports_dir)
-        self.domain_request_interval = _ensure_finite_float(
-            "domain_request_interval", self.domain_request_interval
-        )
-        self.circuit_breaker_threshold = _ensure_int(
-            "circuit_breaker_threshold", self.circuit_breaker_threshold
-        )
-        self.circuit_breaker_open_seconds = _ensure_finite_float(
-            "circuit_breaker_open_seconds", self.circuit_breaker_open_seconds
-        )
-        self.render_cost_budget = _ensure_optional_int(
-            "render_cost_budget", self.render_cost_budget
-        )
-        self.fetcher_user_agent = _ensure_str("fetcher_user_agent", self.fetcher_user_agent)
-        self.batch_timeout = _ensure_finite_float("batch_timeout", self.batch_timeout)
-        self.batch_max_concurrent = _ensure_int("batch_max_concurrent", self.batch_max_concurrent)
-
-        if self.fetcher_user_agent and (
-            "\r" in self.fetcher_user_agent or "\n" in self.fetcher_user_agent
-        ):
-            raise ValueError("fetcher_user_agent must not contain CR or LF characters")
-
-        if self.policy_name not in VALID_POLICY_NAMES:
-            raise ValueError(
-                f"Invalid policy_name '{self.policy_name}'. Must be one of: "
-                f"{', '.join(VALID_POLICY_NAMES)}"
-            )
-        # Normalize "moderate" → "normal" here too, not just in __init__,
-        # because resolve_for_url applies overrides via setattr bypassing __init__.
-        if self.policy_name == "moderate":
-            self.policy_name = "normal"
-
-        valid_chunking = ("none", "heading", "size")
-        if self.chunking_strategy not in valid_chunking:
-            raise ValueError(
-                f"Invalid chunking_strategy '{self.chunking_strategy}'. "
-                f"Must be one of: {', '.join(valid_chunking)}"
-            )
-
-        if self.output_format not in VALID_OUTPUT_FORMATS:
-            raise ValueError(
-                f"Invalid output_format '{self.output_format}'. Must be one of: "
-                f"{', '.join(VALID_OUTPUT_FORMATS)}"
-            )
-        _validate_output_profile_name(self.output_profile)
-        self.output_formats = _validate_output_representations(self.output_formats)
-
-        if not self.reports_dir or not self.reports_dir.strip():
-            raise ValueError("reports_dir cannot be empty")
-
-        if self.timeout <= 0.0:
-            raise ValueError(f"timeout must be > 0.0, got {self.timeout}")
-
-        if self.auto_render_threshold < 1:
-            raise ValueError(
-                "auto_render_threshold must be >= 1, " f"got {self.auto_render_threshold}"
-            )
-
-        if self.render_cost_budget is not None and self.render_cost_budget < 1:
-            raise ValueError(
-                "render_cost_budget must be >= 1 when provided, " f"got {self.render_cost_budget}"
-            )
-
-        if self.cache_ttl is not None and self.cache_ttl <= 0:
-            raise ValueError(f"cache_ttl must be positive when provided, got {self.cache_ttl}")
-
-        if isinstance(self.cache, bool):
-            raise ValueError("cache must be a cache backend object or None, got bool")
-
-        if self.chunk_overlap < 0:
-            raise ValueError(f"chunk_overlap must be >= 0, got {self.chunk_overlap}")
-
-        if self.chunk_size < 1:
-            raise ValueError(f"chunk_size must be >= 1, got {self.chunk_size}")
-
-        # chunk_overlap must be strictly less than chunk_size to ensure forward progress
-        if self.chunk_overlap >= self.chunk_size:
-            raise ValueError(
-                f"chunk_overlap ({self.chunk_overlap}) must be less than "
-                f"chunk_size ({self.chunk_size})"
-            )
-
-        if self.domain_request_interval < 0.0:
-            raise ValueError(
-                f"domain_request_interval must be >= 0.0, got {self.domain_request_interval}"
-            )
-
-        if self.circuit_breaker_threshold < 1:
-            raise ValueError(
-                f"circuit_breaker_threshold must be >= 1, got {self.circuit_breaker_threshold}"
-            )
-
-        if self.circuit_breaker_open_seconds <= 0.0:
-            raise ValueError(
-                "circuit_breaker_open_seconds must be > 0.0, "
-                f"got {self.circuit_breaker_open_seconds}"
-            )
-
-        if self.batch_max_concurrent < 1:
-            raise ValueError(f"batch_max_concurrent must be >= 1, got {self.batch_max_concurrent}")
-
-        if self.batch_timeout <= 0.0:
-            raise ValueError(f"batch_timeout must be > 0.0, got {self.batch_timeout}")
-
-        return self
+        return cast(IngestConfig, validate_ingest_config(self))
 
     def clone(self) -> IngestConfig:
         """Return a deep runtime-safe copy."""
