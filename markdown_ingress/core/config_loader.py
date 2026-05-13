@@ -6,7 +6,6 @@ import json
 import logging
 import math
 import os
-from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
 
@@ -24,15 +23,18 @@ from markdown_ingress.core.config import (
     VALID_POLICIES,
     Config,
     _validate_regex_patterns,
-    _validate_string_list,
+)
+from markdown_ingress.core.config_env import (
+    EnvVarMapping,
+    build_env_var_mapping,
+    str_to_bool,
+    str_to_bool_or_string,
+)
+from markdown_ingress.core.config_env import (
+    parse_csv_string_list as _parse_csv_string_list,
 )
 
 _logger = logging.getLogger(__name__)
-
-
-def _parse_csv_string_list(field_name: str, value: str) -> list[str]:
-    parsed = [item.strip() for item in value.split(",") if item.strip()]
-    return _validate_string_list(field_name, parsed)
 
 
 class ConfigLoader:
@@ -128,52 +130,12 @@ class ConfigLoader:
         else:
             explicit.discard(attr_name)
 
-    def _build_env_var_mapping(self) -> dict[str, tuple[str, Callable[[str], object]]]:
+    def _build_env_var_mapping(self) -> EnvVarMapping:
         """Return the mapping of env var name → (config attr, converter)."""
-        return {
-            "MDI_MODE": ("mode", str),
-            "MDI_TIMEOUT": ("timeout", float),
-            "MDI_AUTO_RENDER_THRESHOLD": ("auto_render_threshold", int),
-            "MDI_STRICT": ("strict", self._str_to_bool),
-            "MDI_ALLOW_LOCAL_URLS": ("allow_local_urls", self._str_to_bool),
-            "MDI_MODEL": ("model", str),
-            "MDI_CACHE_ENABLED": ("cache_enabled", self._str_to_bool),
-            "MDI_CACHE_TYPE": ("cache_type", str),
-            "MDI_CACHE_TTL": ("cache_ttl", int),
-            "MDI_CACHE_PATH": ("cache_path", str),
-            "MDI_BATCH_MAX_CONCURRENT": ("batch_max_concurrent", int),
-            "MDI_BATCH_TIMEOUT": ("batch_timeout", float),
-            "MDI_POLICY": ("policy", str),
-            "MDI_POLICY_NAME": ("policy", str),
-            "MDI_OUTPUT_FORMAT": ("output_format", str),
-            "MDI_OUTPUT_PROFILE": ("output_profile", str),
-            "MDI_EXTRACT_BLOCKS": ("extract_blocks", self._str_to_bool),
-            "MDI_EXTRACT_METADATA": ("extract_metadata", self._str_to_bool),
-            "MDI_EXTRACT_LINKS": ("extract_links", self._str_to_bool),
-            "MDI_ADVANCED_SECURITY": ("advanced_security", self._str_to_bool),
-            "MDI_USE_LLM": ("use_llm", self._str_to_bool),
-            "MDI_DETECT_LANGUAGE": ("detect_language", self._str_to_bool),
-            "MDI_NORMALIZE_MULTILINGUAL": ("normalize_multilingual", self._str_to_bool),
-            "MDI_INCLUDE_SECURITY_EXPLANATION": (
-                "include_security_explanation",
-                self._str_to_bool,
-            ),
-            "MDI_CHUNKING_STRATEGY": ("chunking_strategy", str),
-            "MDI_CHUNK_SIZE": ("chunk_size", int),
-            "MDI_CHUNK_OVERLAP": ("chunk_overlap", int),
-            "MDI_SAVE_REPORTS": ("save_reports", self._str_to_bool),
-            "MDI_REPORTS_DIR": ("reports_dir", str),
-            "MDI_RENDER_COST_BUDGET": ("render_cost_budget", int),
-            "MDI_INCLUDE_OBSERVABILITY": ("include_observability", self._str_to_bool),
-            "MDI_STEALTH": ("stealth", self._str_to_bool),
-            "MDI_DISABLE_HTTP2": ("disable_http2", self._str_to_bool),
-            "MDI_EXTREME_MODE": ("extreme_mode", self._str_to_bool),
-            "MDI_SCREENSHOT": ("screenshot", self._str_to_bool_or_string),
-            "MDI_FETCHER_USER_AGENT": ("fetcher_user_agent", str),
-            "MDI_DOMAIN_REQUEST_INTERVAL": ("domain_request_interval", float),
-            "MDI_CIRCUIT_BREAKER_THRESHOLD": ("circuit_breaker_threshold", int),
-            "MDI_CIRCUIT_BREAKER_OPEN_SECONDS": ("circuit_breaker_open_seconds", float),
-        }
+        return build_env_var_mapping(
+            bool_converter=self._str_to_bool,
+            bool_or_string_converter=self._str_to_bool_or_string,
+        )
 
     def _apply_scalar_list_and_custom_overrides(
         self,
@@ -501,26 +463,12 @@ class ConfigLoader:
         Raises ValueError for unrecognized values so callers can preserve the
         previous config value instead of silently degrading behavior.
         """
-        lower = value.strip().lower()
-        if lower in ("true", "1", "yes", "on", "enabled"):
-            return True
-        if lower in ("false", "0", "no", "off", "disabled"):
-            return False
-        raise ValueError(
-            f"invalid boolean {value!r}; expected one of "
-            "true/false/1/0/yes/no/on/off/enabled/disabled"
-        )
+        return str_to_bool(value)
 
     @classmethod
     def _str_to_bool_or_string(cls, value: str) -> bool | str:
         """Convert env values like true/false into bool, otherwise keep explicit paths."""
-        normalized = value.strip()
-        lowered = normalized.lower()
-        if lowered in ("true", "1", "yes", "on", "enabled"):
-            return True
-        if lowered in ("false", "0", "no", "off", "disabled"):
-            return False
-        return normalized
+        return str_to_bool_or_string(value)
 
     def save(self, config: Config, filepath: str):
         """
