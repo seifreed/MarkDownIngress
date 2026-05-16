@@ -88,7 +88,10 @@ from markdown_ingress.api_server_snapshot import (
     build_job_subsystem_snapshot,
 )
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
-from markdown_ingress.api_server_threads import stop_control_thread
+from markdown_ingress.api_server_threads import (
+    previous_or_current_reference,
+    stop_control_thread,
+)
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
@@ -179,26 +182,38 @@ app = FastAPI(
 # This prevents stale references during module reload.
 def _get_previous_watchdog_thread():
     """Get the previous watchdog thread from globals, avoiding stale references."""
-    prev = globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD")
-    return prev if prev is not None else globals().get("_JOB_QUEUE_WATCHDOG_THREAD")
+    return previous_or_current_reference(
+        globals(),
+        "_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD",
+        "_JOB_QUEUE_WATCHDOG_THREAD",
+    )
 
 
 def _get_previous_watchdog_stop():
     """Get the previous watchdog stop event from globals, avoiding stale references."""
-    prev = globals().get("_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP")
-    return prev if prev is not None else globals().get("_JOB_QUEUE_WATCHDOG_STOP")
+    return previous_or_current_reference(
+        globals(),
+        "_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP",
+        "_JOB_QUEUE_WATCHDOG_STOP",
+    )
 
 
 def _get_previous_repair_thread():
     """Get the previous repair thread from globals, avoiding stale references."""
-    prev = globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_THREAD")
-    return prev if prev is not None else globals().get("_JOB_QUEUE_REPAIR_THREAD")
+    return previous_or_current_reference(
+        globals(),
+        "_PREVIOUS_JOB_QUEUE_REPAIR_THREAD",
+        "_JOB_QUEUE_REPAIR_THREAD",
+    )
 
 
 def _get_previous_repair_stop():
     """Get the previous repair stop event from globals, avoiding stale references."""
-    prev = globals().get("_PREVIOUS_JOB_QUEUE_REPAIR_STOP")
-    return prev if prev is not None else globals().get("_JOB_QUEUE_REPAIR_STOP")
+    return previous_or_current_reference(
+        globals(),
+        "_PREVIOUS_JOB_QUEUE_REPAIR_STOP",
+        "_JOB_QUEUE_REPAIR_STOP",
+    )
 
 
 _JOB_QUEUE_LOCK = threading.RLock()

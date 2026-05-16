@@ -3,6 +3,17 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
+
+
+def previous_or_current_reference(
+    module_globals: Mapping[str, object],
+    previous_key: str,
+    current_key: str,
+) -> object | None:
+    """Resolve a previous reload reference, falling back to the active reference."""
+    previous_value = module_globals.get(previous_key)
+    return previous_value if previous_value is not None else module_globals.get(current_key)
 
 
 def stop_control_thread(
