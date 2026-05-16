@@ -15,6 +15,7 @@ import httpx
 
 from markdown_ingress.adapters.fetching.http_support import (
     FOLLOW_REDIRECT_STATUS,
+    MAX_RETRIES,
     SAFE_HEADERS,
     PreparedRequest,
     format_host_header,
@@ -92,6 +93,23 @@ class FetchRequestPolicyMixin:
             sni_hostname,
             logical_host,
         )
+
+    def _prepare_request_url_with_dns_retry(self: Any, url: str) -> PreparedRequest:
+        """Call _prepare_request_url, retrying on transient DNS failures."""
+        last_dns_exc: Exception | None = None
+        for dns_attempt in range(MAX_RETRIES):
+            try:
+                return cast(PreparedRequest, self._prepare_request_url(url))
+            except (ValueError, OSError) as exc:
+                if not self._is_dns_transient_error(exc):
+                    raise
+                last_dns_exc = exc
+                if dns_attempt < MAX_RETRIES - 1:
+                    sleep_for = min(0.5 * (2**dns_attempt), 4.0)
+                    time.sleep(sleep_for)
+        if last_dns_exc is not None:
+            raise last_dns_exc
+        raise RuntimeError(f"DNS validation failed for {url}")
 
     def _prepare_redirect_url(
         self: Any,

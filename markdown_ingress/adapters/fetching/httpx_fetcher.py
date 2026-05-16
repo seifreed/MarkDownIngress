@@ -25,9 +25,6 @@ from markdown_ingress.adapters.fetching.http_support import (
     RETRYABLE_STATUS as _RETRYABLE_STATUS,
 )
 from markdown_ingress.adapters.fetching.http_support import (
-    PreparedRequest as _PreparedRequest,
-)
-from markdown_ingress.adapters.fetching.http_support import (
     ResponseSizeLimitError,
 )
 from markdown_ingress.adapters.fetching.http_support import (
@@ -129,23 +126,6 @@ class Fetcher(
         self._ssl_bypass_lock = Lock()
         self._closing = False
         self._async_close_tasks: set[asyncio.Task[None]] = set()
-
-    def _prepare_request_url_with_dns_retry(self, url: str) -> _PreparedRequest:
-        """Call _prepare_request_url, retrying on transient DNS failures."""
-        last_dns_exc: Exception | None = None
-        for dns_attempt in range(_MAX_RETRIES):
-            try:
-                return self._prepare_request_url(url)
-            except (ValueError, OSError) as exc:
-                if not self._is_dns_transient_error(exc):
-                    raise
-                last_dns_exc = exc
-                if dns_attempt < _MAX_RETRIES - 1:
-                    sleep_for = min(0.5 * (2**dns_attempt), 4.0)
-                    time.sleep(sleep_for)
-        if last_dns_exc is not None:
-            raise last_dns_exc
-        raise RuntimeError(f"DNS validation failed for {url}")
 
     async def fetch(self, url: str) -> FetchResult:
         url, logical_url, host_header, sni_hostname, host = (
