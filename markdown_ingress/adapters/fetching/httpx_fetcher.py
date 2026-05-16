@@ -212,11 +212,9 @@ class Fetcher(
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
                         retry_delay = _retry_delay_seconds(response, attempt)
-                        if response.status_code in {403, 429}:
-                            self._record_soft_throttle(response_host, retry_delay)
-                        else:
-                            self._defer_host(response_host, retry_delay)
-                            self._record_failure(response_host)
+                        self._handle_retryable_status(
+                            response_host, response.status_code, retry_delay
+                        )
                         await self._drain_async_response_for_reuse(
                             response, "Failed to read response body during retry"
                         )
@@ -518,11 +516,9 @@ class Fetcher(
 
                     if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
                         retry_delay = _retry_delay_seconds(response, attempt)
-                        if response.status_code in {403, 429}:
-                            self._record_soft_throttle(response_host, retry_delay)
-                        else:
-                            self._defer_host(response_host, retry_delay)
-                            self._record_failure(response_host)
+                        self._handle_retryable_status(
+                            response_host, response.status_code, retry_delay
+                        )
                         self._drain_sync_response_for_reuse(
                             response, "Failed to read response body during retry"
                         )
