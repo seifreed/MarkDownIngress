@@ -170,6 +170,19 @@ class FetchRequestPolicyMixin:
             return None
         return {"sni_hostname": sni_hostname.encode("ascii")}
 
+    def _open_stream(
+        self: Any,
+        client: Any,
+        url: str,
+        *,
+        headers: dict,
+        sni_hostname: str | None,
+    ) -> Any:
+        extensions = self._stream_extensions(sni_hostname)
+        if extensions is None:
+            return client.stream("GET", url, headers=headers)
+        return client.stream("GET", url, headers=headers, extensions=extensions)
+
     @staticmethod
     def _resolve_allow_local_urls(allow_local_urls: bool | None) -> bool:
         return resolve_allow_local_urls(allow_local_urls)

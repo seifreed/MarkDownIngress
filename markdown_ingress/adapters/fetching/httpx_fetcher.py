@@ -173,11 +173,7 @@ class Fetcher(
 
             try:
                 headers = self._build_headers(ua, host_header=host_header)
-                extensions = self._stream_extensions(sni_hostname)
-                if extensions is None:
-                    stream = client.stream("GET", url, headers=headers)
-                else:
-                    stream = client.stream("GET", url, headers=headers, extensions=extensions)
+                stream = self._open_stream(client, url, headers=headers, sni_hostname=sni_hostname)
                 async with stream as response:
                     response_host = host
 
@@ -319,13 +315,9 @@ class Fetcher(
                             start_time = time.perf_counter()
 
                             headers = self._build_headers(ua, host_header=host_header)
-                            extensions = self._stream_extensions(sni_hostname)
-                            if extensions is None:
-                                stream = client.stream("GET", url, headers=headers)
-                            else:
-                                stream = client.stream(
-                                    "GET", url, headers=headers, extensions=extensions
-                                )
+                            stream = self._open_stream(
+                                client, url, headers=headers, sni_hostname=sni_hostname
+                            )
                             async with stream as response:
                                 response_host = host
 
@@ -478,11 +470,7 @@ class Fetcher(
 
             try:
                 headers = self._build_headers(ua, host_header=host_header)
-                extensions = self._stream_extensions(sni_hostname)
-                if extensions is None:
-                    stream = client.stream("GET", url, headers=headers)
-                else:
-                    stream = client.stream("GET", url, headers=headers, extensions=extensions)
+                stream = self._open_stream(client, url, headers=headers, sni_hostname=sni_hostname)
                 with stream as response:
                     response_host = host
                     if self._should_follow_redirect(response):
@@ -623,13 +611,9 @@ class Fetcher(
                             start_time = time.perf_counter()
 
                             headers = self._build_headers(ua, host_header=host_header)
-                            extensions = self._stream_extensions(sni_hostname)
-                            if extensions is None:
-                                stream = client.stream("GET", url, headers=headers)
-                            else:
-                                stream = client.stream(
-                                    "GET", url, headers=headers, extensions=extensions
-                                )
+                            stream = self._open_stream(
+                                client, url, headers=headers, sni_hostname=sni_hostname
+                            )
                             with stream as response:
                                 response_host = host
 
