@@ -72,9 +72,7 @@ class ConfigLoader:
                     break
 
         # Override with environment variables
-        config = self._apply_env_overrides(config)
-
-        return config
+        return self._apply_env_overrides(config)
 
     def _load_from_file(self, filepath: str) -> Config:
         """Load config from file (JSON or YAML)"""

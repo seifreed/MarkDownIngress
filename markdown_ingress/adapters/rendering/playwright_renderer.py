@@ -150,8 +150,7 @@ class Renderer(IRenderer):
             return await self._render_with_progressive_timeout(validated_url)
 
         try:
-            result = await self._render_with_browser(validated_url)
-            return result
+            return await self._render_with_browser(validated_url)
         except Exception as e:
             error_str = str(e)
             if self._is_retryable_navigation_error(e):

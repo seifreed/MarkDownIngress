@@ -124,8 +124,7 @@ class IngestOrchestrator:
         """Execute a stage and record aggregate timing."""
         started = time.perf_counter()
         try:
-            result = fn()
-            return result
+            return fn()
         finally:
             duration_ms = (time.perf_counter() - started) * 1000.0
             record_stage_timing(stage, duration_ms)

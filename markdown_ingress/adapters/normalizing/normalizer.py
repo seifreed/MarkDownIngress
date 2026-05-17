@@ -87,8 +87,7 @@ class Normalizer:  # implements INormalizer protocol
     def normalize(self, text: str) -> str:
         text = self.normalize_unicode(text)
         text = self.remove_zero_width_chars(text)
-        text = self.normalize_whitespace(text)
-        return text
+        return self.normalize_whitespace(text)
 
     def normalize_unicode(self, text: str) -> str:
         return unicodedata.normalize("NFC", text)

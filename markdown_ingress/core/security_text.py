@@ -41,8 +41,7 @@ def _normalize_to_ascii(text: str) -> str:
     # Then normalize to NFD and filter combining marks (for accented chars)
     normalized = unicodedata.normalize("NFD", compatible)
     # Keep only ASCII characters (removes remaining non-ASCII and combining marks)
-    ascii_text = "".join(c for c in normalized if ord(c) < 128)
-    return ascii_text
+    return "".join(c for c in normalized if ord(c) < 128)
 
 
 def _normalize_security_text(text: str) -> str:

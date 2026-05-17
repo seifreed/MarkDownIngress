@@ -133,7 +133,7 @@ class MetadataExtractor:
             detect_language=detect_language,
             normalize_multilingual=normalize_multilingual,
         )
-        metadata = {
+        return {
             "author": self._extract_author(parser),
             "published_date": self._extract_published_date(parser),
             "modified_date": self._extract_modified_date(parser),
@@ -146,8 +146,6 @@ class MetadataExtractor:
             "site_name": self._extract_site_name(parser),
             "content_type": self._detect_content_type(parser),
         }
-
-        return metadata
 
     def _extract_author(self, parser: HTMLParser) -> str | None:
         """Extract author from meta tags or schema.org"""
