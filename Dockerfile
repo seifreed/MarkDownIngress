@@ -41,16 +41,16 @@ COPY pyproject.toml /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir build && \
     pip install --no-cache-dir \
-    httpx>=0.27.0 \
-    selectolax>=0.3.21 \
-    readability-lxml>=0.8.1 \
-    markdownify>=0.12.1 \
-    tiktoken>=0.7.0 \
-    PyYAML>=6.0 \
-    rich>=14.0 \
-    playwright>=1.43.0 \
+    "httpx>=0.27.0" \
+    "selectolax>=0.3.21" \
+    "readability-lxml>=0.8.1" \
+    "markdownify>=0.12.1" \
+    "tiktoken>=0.7.0" \
+    "PyYAML>=6.0" \
+    "rich>=14.0" \
+    "playwright>=1.43.0" \
     fastapi \
-    uvicorn[standard] \
+    "uvicorn[standard]" \
     pydantic
 
 # Install Playwright browsers (Chromium only for smaller image)

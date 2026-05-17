@@ -26,3 +26,14 @@ def test_public_docs_do_not_contain_local_machine_paths() -> None:
         text = path.read_text(encoding="utf-8")
         assert "/Users/" not in text, path
         assert "file://" not in text, path
+
+
+def test_dockerfile_quotes_versioned_pip_requirements() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    tokens = dockerfile.replace("\\\n", " ").split()
+    bare_version_specs = [
+        token for token in tokens if ">=" in token and not token.startswith(('"', "'"))
+    ]
+
+    assert bare_version_specs == []
