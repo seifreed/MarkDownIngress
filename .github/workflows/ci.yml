@@ -3,16 +3,8 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'examples/**'
   pull_request:
     branches: [ main, develop ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'examples/**'
 
 jobs:
   test:
@@ -45,13 +37,17 @@ jobs:
     - name: Run ruff (linting)
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       run: ruff check .
+
+    - name: Run black (format check)
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      run: black --check .
     
     - name: Run mypy (type checking)
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-      run: mypy markdown_ingress
+      run: mypy markdown_ingress tests
     
     - name: Run pytest with coverage
-      run: pytest --cov=markdown_ingress --cov-report=term-missing --cov-report=xml
+      run: python -m pytest -q -m "not baseline and not campaign" --cov=markdown_ingress --cov-report=term-missing --cov-report=xml
       env:
         PYTEST_TIMEOUT: 300
     

@@ -94,6 +94,15 @@ def test_runtime_text_file_io_uses_explicit_utf8_encoding() -> None:
     assert violations == []
 
 
+def test_ci_workflow_covers_public_docs_examples_and_local_gate() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "paths-ignore" not in workflow
+    assert "black --check ." in workflow
+    assert "mypy markdown_ingress tests" in workflow
+    assert '-m "not baseline and not campaign"' in workflow
+
+
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
