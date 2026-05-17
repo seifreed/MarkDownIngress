@@ -140,5 +140,4 @@ dmypy.json
 .ruff_cache/
 
 # Local project config files (not tracked)
-.dockerignore
 .pre-commit-config.yaml

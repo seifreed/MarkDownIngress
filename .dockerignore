@@ -1,0 +1,91 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+artifacts/
+test_results/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Documentation (not needed in container)
+docs/
+*.md
+!README.md
+EXAMPLES.md
+CHANGELOG.md
+ADVANCED*.md
+HTTP2*.md
+RESOURCE_BLOCKING*.md
+RETRY_DOCUMENTATION.md
+EXTREME_MODE*.md
+
+# Test files
+tests/
+test_*.txt
+test_results/
+
+# Examples
+examples/
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+*.cache
+tmp/
+temp/
+scratch/
+playground/
+
+# Local secrets and environment files
+.env
+.env.*
+secrets.py
+secrets.json
+.secrets/

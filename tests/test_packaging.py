@@ -145,6 +145,41 @@ def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     assert bare_version_specs == []
 
 
+def test_dockerignore_is_tracked_and_excludes_local_artifacts() -> None:
+    dockerignore = Path(".dockerignore")
+    assert dockerignore.exists()
+
+    if Path(".git").exists():
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", ".dockerignore"],
+            capture_output=True,
+            text=True,
+        )
+        ignored = subprocess.run(
+            ["git", "check-ignore", ".dockerignore"],
+            capture_output=True,
+            text=True,
+        )
+        assert tracked.returncode == 0
+        assert ignored.returncode == 1
+
+    patterns = set(dockerignore.read_text(encoding="utf-8").splitlines())
+    required_patterns = {
+        ".git/",
+        "build/",
+        "dist/",
+        "venv/",
+        ".venv",
+        "htmlcov/",
+        "artifacts/",
+        ".env",
+        ".env.*",
+        "secrets.json",
+    }
+
+    assert required_patterns <= patterns
+
+
 def test_distribution_artifacts_are_not_stale() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     current_version = pyproject["project"]["version"]
