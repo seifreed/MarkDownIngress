@@ -27,27 +27,22 @@ class Cache(ABC):  # implements ICacheBackend protocol
     @abstractmethod
     def get(self, key: str) -> SafeDocument | None:
         """Get document from cache"""
-        pass  # pragma: no cover
 
     @abstractmethod
     def set(self, key: str, document: SafeDocument, ttl: int | None = None) -> None:
         """Store document in cache"""
-        pass  # pragma: no cover
 
     @abstractmethod
     def delete(self, key: str) -> None:
         """Delete document from cache"""
-        pass  # pragma: no cover
 
     @abstractmethod
     def clear(self) -> None:
         """Clear entire cache"""
-        pass  # pragma: no cover
 
     @abstractmethod
     def exists(self, key: str) -> bool:
         """Check if key exists in cache"""
-        pass  # pragma: no cover
 
     @staticmethod
     def make_key(

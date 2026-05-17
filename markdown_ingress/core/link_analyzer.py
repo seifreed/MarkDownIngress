@@ -96,7 +96,6 @@ class LinkAnalyzer:
 
     def __init__(self):
         """Initialize link analyzer"""
-        pass
 
     def analyze(self, html: str, base_url: str) -> dict[str, Any]:
         """

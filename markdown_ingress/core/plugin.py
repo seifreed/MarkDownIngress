@@ -40,7 +40,6 @@ class Plugin(ABC):
         Returns:
             List of regex pattern strings, or (pattern, weight) tuples for weighted patterns.
         """
-        pass  # pragma: no cover
 
     def get_config(self) -> dict[str, Any]:
         """
@@ -53,11 +52,9 @@ class Plugin(ABC):
 
     def on_load(self) -> None:
         """Optional: Called when plugin is loaded"""
-        return None
 
     def on_unload(self) -> None:
         """Optional: Called when plugin is unloaded"""
-        return None
 
 
 class PluginLoader:
