@@ -35,8 +35,12 @@ class ClientLifecycleMixin:
         task.add_done_callback(_finalize_close_task)
 
     def _get_sync_client(self: Any) -> httpx.Client:
+        if self._closing:
+            raise RuntimeError("Fetcher is closing")
         if self._sync_client is None:
             with self._client_lock:
+                if self._closing:
+                    raise RuntimeError("Fetcher is closing")
                 if self._sync_client is None:
                     self._sync_client = httpx.Client(
                         timeout=self.timeout,

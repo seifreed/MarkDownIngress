@@ -838,6 +838,22 @@ async def test_fetcher_aclose_closes_existing_sync_client():
     assert fetcher._sync_client is None
 
 
+def test_fetcher_fetch_sync_after_close_is_rejected(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0)
+    monkeypatch.setattr(
+        fetcher,
+        "_prepare_request_url_with_dns_retry",
+        lambda url: (url, url, None, None, "example.com"),
+    )
+
+    fetcher.close()
+
+    with pytest.raises(RuntimeError, match="Fetcher is closing"):
+        fetcher.fetch_sync("https://example.com/")
+
+
 def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
