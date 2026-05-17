@@ -85,82 +85,71 @@ def load_runtime_config(args) -> Config:
     return cast(Config, loader.load())
 
 
-def prepare_ingest_params(args, runtime_config: Config | None = None):
-    """Prepare parameters for ingest call."""
+def _runtime_ingest_config(args, runtime_config: Config | None):
     if runtime_config is None:
         runtime_config = load_runtime_config(args)
-    runtime_ingest_config = (
-        runtime_config.to_ingest_config() if runtime_config is not None else None
-    )
-    # Handle strict flag: distinguish between explicit False, explicit True, and not set
-    # --strict sets strict=True, --permissive sets strict=False
-    # If neither is set, use runtime_config.strict or None (let config resolution handle default)
-    strict = None
+    return runtime_config.to_ingest_config() if runtime_config is not None else None
+
+
+def _resolve_strict_arg(args):
     if getattr(args, "permissive", False):
-        strict = False
-    elif getattr(args, "strict", False):
-        strict = True
+        return False
+    if getattr(args, "strict", False):
+        return True
+    return None
 
-    mode = determine_mode(args)
 
-    # Screenshot: use UNSET sentinel when not provided, otherwise pass the value
-    # This distinguishes "not provided" from "explicitly set to None"
-    screenshot = UNSET
+def _resolve_screenshot_arg(args):
     if hasattr(args, "screenshot") and args.screenshot:
-        # args.screenshot is True (const) or a path string
-        screenshot = args.screenshot
+        return args.screenshot
+    return UNSET
 
-    # Boolean flags: support both positive and negative flags for symmetry
-    # --metadata / --no-metadata: explicit enable/disable, None = use config default
-    # --links / --no-links: explicit enable/disable, None = use config default
-    # --advanced-security / --no-advanced-security: explicit enable/disable.
-    # None = use config default.
-    # --use-llm / --no-llm: explicit enable/disable, None = use config default
-    extract_metadata = None
-    if getattr(args, "metadata", False):
-        extract_metadata = True
-    elif getattr(args, "no_metadata", False):
-        extract_metadata = False
 
-    extract_links = None
-    if getattr(args, "links", False):
-        extract_links = True
-    elif getattr(args, "no_links", False):
-        extract_links = False
+def _resolve_optional_bool_arg(args, enabled_name: str, disabled_name: str):
+    if getattr(args, enabled_name, False):
+        return True
+    if getattr(args, disabled_name, False):
+        return False
+    return None
 
-    advanced_security = None
-    if getattr(args, "advanced_security", False):
-        advanced_security = True
-    elif getattr(args, "no_advanced_security", False):
-        advanced_security = False
 
-    use_llm = None
-    if getattr(args, "use_llm", False):
-        use_llm = True
-    elif getattr(args, "no_llm", False):
-        use_llm = False
-
-    domain_policies = load_domain_policies(args)
-
+def _extract_cli_feature_flags(args):
     return {
-        "url": args.url,
-        "config": runtime_ingest_config,
-        "mode": mode,
-        "strict": strict,
-        "model": args.model,
-        "timeout": args.timeout,
-        "screenshot": screenshot,
-        "extract_metadata": extract_metadata,
-        "extract_links": extract_links,
-        "advanced_security": advanced_security,
-        "use_llm": use_llm,
+        "extract_metadata": _resolve_optional_bool_arg(args, "metadata", "no_metadata"),
+        "extract_links": _resolve_optional_bool_arg(args, "links", "no_links"),
+        "advanced_security": _resolve_optional_bool_arg(
+            args, "advanced_security", "no_advanced_security"
+        ),
+        "use_llm": _resolve_optional_bool_arg(args, "use_llm", "no_llm"),
+    }
+
+
+def _extract_cli_structure_options(args):
+    return {
         "output_profile": getattr(args, "output_profile", None),
-        # BooleanOptionalAction: True (enabled), False (disabled), None (use default)
         "extract_blocks": getattr(args, "extract_blocks", None),
         "chunking_strategy": getattr(args, "chunking_strategy", None),
         "chunk_size": getattr(args, "chunk_size", None),
         "chunk_overlap": getattr(args, "chunk_overlap", None),
         "render_cost_budget": getattr(args, "render_cost_budget", None),
+    }
+
+
+def prepare_ingest_params(args, runtime_config: Config | None = None):
+    """Prepare parameters for ingest call."""
+    runtime_ingest_config = _runtime_ingest_config(args, runtime_config)
+    domain_policies = load_domain_policies(args)
+
+    return {
+        "url": args.url,
+        "config": runtime_ingest_config,
+        "mode": determine_mode(args),
+        "strict": _resolve_strict_arg(args),
+        "model": args.model,
+        "timeout": args.timeout,
+        "screenshot": _resolve_screenshot_arg(args),
+        **_extract_cli_feature_flags(args),
+        **_extract_cli_structure_options(args),
         "domain_policies": domain_policies,
     }
 
