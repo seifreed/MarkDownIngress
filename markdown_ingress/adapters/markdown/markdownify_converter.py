@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
@@ -43,7 +44,12 @@ class MarkdownConverter(IMarkdownConverter):
         """Normalize links and protect complex structures before markdownify."""
         soup = BeautifulSoup(html, "html.parser")
         placeholders: dict[str, str] = {}
+        self._normalize_links(soup)
+        self._protect_code_blocks(soup, placeholders)
+        self._protect_tables(soup, placeholders)
+        return str(soup), placeholders
 
+    def _normalize_links(self, soup: Any) -> None:
         for link in soup.find_all("a", href=True):
             original_href = link.get("href")
             if not isinstance(original_href, str):
@@ -51,30 +57,10 @@ class MarkdownConverter(IMarkdownConverter):
             normalized_href = self.normalizer.normalize_url(original_href)
             link["href"] = normalized_href
 
+    def _protect_code_blocks(self, soup: Any, placeholders: dict[str, str]) -> None:
         for pre in soup.find_all("pre"):
             code = pre.get_text(strip=False)
-            language = None
-            code_tag = pre.find("code")
-
-            # Collect classes from <pre> or <code> — GFM often puts the
-            # language-* class on <pre> itself, not on the inner <code>.
-            raw_classes: list[str] = []
-            for el in (pre, code_tag):
-                if el is None:
-                    continue
-                candidates = el.get("class")
-                if isinstance(candidates, str):
-                    raw_classes.append(candidates)
-                else:
-                    raw_classes.extend(list(candidates or []))
-
-            for _pfx in ("language-", "lang-", "highlight-"):
-                for class_name in raw_classes:
-                    if class_name.startswith(_pfx):
-                        language = class_name[len(_pfx) :]
-                        break
-                if language:
-                    break
+            language = self._detect_code_language(pre)
             token = f"\x00MDI_CODE_{uuid.uuid4().hex}\x00"
             rendered = render_code_fence(code, language)
             if not rendered.endswith("\n"):
@@ -82,21 +68,50 @@ class MarkdownConverter(IMarkdownConverter):
             placeholders[token] = rendered
             pre.replace_with(token)
 
+    def _detect_code_language(self, pre: Any) -> str | None:
+        raw_classes = self._collect_code_classes(pre)
+        for prefix in ("language-", "lang-", "highlight-"):
+            for class_name in raw_classes:
+                if class_name.startswith(prefix):
+                    return class_name[len(prefix) :]
+        return None
+
+    def _collect_code_classes(self, pre: Any) -> list[str]:
+        code_tag = pre.find("code")
+        raw_classes: list[str] = []
+        for element in (pre, code_tag):
+            if element is None:
+                continue
+            candidates = element.get("class")
+            if isinstance(candidates, str):
+                raw_classes.append(candidates)
+            else:
+                raw_classes.extend(
+                    class_name
+                    for class_name in list(candidates or [])
+                    if isinstance(class_name, str)
+                )
+        return raw_classes
+
+    def _protect_tables(self, soup: Any, placeholders: dict[str, str]) -> None:
         for table in soup.find_all("table"):
-            rows = []
-            first_row_has_th = False
-            for i, tr in enumerate(table.find_all("tr")):
-                cells = tr.find_all(["th", "td"])
-                row = [cell.get_text(" ", strip=True) for cell in cells]
-                if row:
-                    if i == 0 and any(cell.name == "th" for cell in cells):
-                        first_row_has_th = True
-                    rows.append(row)
+            rows, first_row_has_th = self._extract_table_rows(table)
             token = f"\x00MDI_TABLE_{uuid.uuid4().hex}\x00"
             placeholders[token] = render_markdown_table(rows, has_header=first_row_has_th).strip()
             table.replace_with(token)
 
-        return str(soup), placeholders
+    def _extract_table_rows(self, table: Any) -> tuple[list[list[str]], bool]:
+        rows: list[list[str]] = []
+        first_row_has_th = False
+        for index, table_row in enumerate(table.find_all("tr")):
+            cells = table_row.find_all(["th", "td"])
+            row = [cell.get_text(" ", strip=True) for cell in cells]
+            if not row:
+                continue
+            if index == 0 and any(cell.name == "th" for cell in cells):
+                first_row_has_th = True
+            rows.append(row)
+        return rows, first_row_has_th
 
     def _restore_placeholders(self, markdown: str, placeholders: dict[str, str]) -> str:
         """Restore protected technical blocks into markdown output."""
