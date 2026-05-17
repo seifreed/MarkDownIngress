@@ -36,6 +36,29 @@ _MIN_CACHE_TTL = 1
 
 def validate_config(config: Any) -> None:
     """Validate and normalize a legacy Config-like object in place."""
+    _coerce_core_config_fields(config)
+    _coerce_fetch_cache_fields(config)
+    _coerce_output_security_fields(config)
+    _coerce_chunk_report_fields(config)
+
+    _validate_literal_fields(config)
+    _validate_numeric_ranges(config)
+
+    config.custom_patterns = _validate_string_list("custom_patterns", config.custom_patterns)
+    config.plugin_dirs = _validate_string_list("plugin_dirs", config.plugin_dirs)
+    config.output_formats = _validate_output_representations(config.output_formats)
+    config.domain_policies = _normalize_domain_policies(config.domain_policies)
+    _validate_output_profile_name(config.output_profile)
+
+    if config.render_cost_budget is not None and config.render_cost_budget < 1:
+        raise ValueError(
+            "render_cost_budget must be >= 1 when provided, " f"got {config.render_cost_budget}"
+        )
+
+    _validate_regex_patterns(config.custom_patterns)
+
+
+def _coerce_core_config_fields(config: Any) -> None:
     if not isinstance(config.mode, str):
         raise ValueError(f"mode must be a string, got {type(config.mode).__name__}")
     config.timeout = _ensure_finite_float("timeout", config.timeout)
@@ -45,6 +68,9 @@ def validate_config(config: Any) -> None:
     config.strict = _ensure_bool("strict", config.strict)
     config.allow_local_urls = _ensure_optional_bool("allow_local_urls", config.allow_local_urls)
     config.model = _ensure_str("model", config.model)
+
+
+def _coerce_fetch_cache_fields(config: Any) -> None:
     config.cache_enabled = _ensure_bool("cache_enabled", config.cache_enabled)
     if not isinstance(config.cache_type, str):
         raise ValueError(f"cache_type must be a string, got {type(config.cache_type).__name__}")
@@ -66,6 +92,9 @@ def validate_config(config: Any) -> None:
     config.circuit_breaker_open_seconds = _ensure_finite_float(
         "circuit_breaker_open_seconds", config.circuit_breaker_open_seconds
     )
+
+
+def _coerce_output_security_fields(config: Any) -> None:
     config.policy = _ensure_str("policy", config.policy)
     if not isinstance(config.output_format, str):
         raise ValueError(
@@ -84,6 +113,9 @@ def validate_config(config: Any) -> None:
     config.include_security_explanation = _ensure_bool(
         "include_security_explanation", config.include_security_explanation
     )
+
+
+def _coerce_chunk_report_fields(config: Any) -> None:
     if not isinstance(config.chunking_strategy, str):
         raise ValueError(
             f"chunking_strategy must be a string, got " f"{type(config.chunking_strategy).__name__}"
@@ -98,22 +130,6 @@ def validate_config(config: Any) -> None:
     config.include_observability = _ensure_bool(
         "include_observability", config.include_observability
     )
-
-    _validate_literal_fields(config)
-    _validate_numeric_ranges(config)
-
-    config.custom_patterns = _validate_string_list("custom_patterns", config.custom_patterns)
-    config.plugin_dirs = _validate_string_list("plugin_dirs", config.plugin_dirs)
-    config.output_formats = _validate_output_representations(config.output_formats)
-    config.domain_policies = _normalize_domain_policies(config.domain_policies)
-    _validate_output_profile_name(config.output_profile)
-
-    if config.render_cost_budget is not None and config.render_cost_budget < 1:
-        raise ValueError(
-            "render_cost_budget must be >= 1 when provided, " f"got {config.render_cost_budget}"
-        )
-
-    _validate_regex_patterns(config.custom_patterns)
 
 
 def _validate_literal_fields(config: Any) -> None:

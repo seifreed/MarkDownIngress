@@ -9,8 +9,8 @@ from markdown_ingress.application.batch_state import _CostBudget
 from markdown_ingress.application.heuristics import (
     _looks_like_auth_interstitial,
     _looks_like_non_html_resource,
-    _should_attempt_fast_degraded_fallback,
     _should_attempt_render_fallback,
+    _should_reuse_fast_result_after_render_failure,
 )
 from markdown_ingress.application.screenshot_files import cleanup_screenshot
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
@@ -123,7 +123,7 @@ class _AutoModeSelector:
                 url, render_config, matched_domain_policy, budget
             )
         except Exception as exc:
-            if not _should_attempt_fast_degraded_fallback(exc):
+            if not _should_reuse_fast_result_after_render_failure(exc):
                 raise
             _logger.warning(
                 "auto mode: render attempt failed, falling back to fast result. Error: %s", exc

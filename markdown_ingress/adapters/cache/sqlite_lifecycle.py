@@ -24,31 +24,24 @@ def close_connection_for_cache(conn: Any, logger: logging.Logger) -> None:
 
 def close_connection_from_del(cache: Any, logger: logging.Logger) -> None:
     """Fallback cleanup for SQLiteCache.__del__ without blocking GC."""
-    if not hasattr(cache, "_closed"):
-        return
-    if not hasattr(cache, "conn"):
-        return
-    if not hasattr(cache, "_db_lock"):
+    if not all(hasattr(cache, attr) for attr in ("_closed", "conn", "_db_lock")):
         return
 
     conn = getattr(cache, "conn", None)
-    if conn is None:
-        return
-
     db_lock = getattr(cache, "_db_lock", None)
-    if db_lock is None:
+    if conn is None or db_lock is None:
         return
 
-    if not db_lock.acquire(blocking=False):
-        logger.debug("SQLiteCache.__del__: could not acquire lock, skipping cleanup")
-        return
-    try:
-        if cache._closed:
-            return
-        cache._closed = True
+    if db_lock.acquire(blocking=False):
         try:
-            conn.close()
-        except Exception as exc:
-            logger.debug("SQLite connection close during __del__ failed: %s", exc)
-    finally:
-        db_lock.release()
+            if cache._closed:
+                return
+            cache._closed = True
+            try:
+                conn.close()
+            except Exception as exc:
+                logger.debug("SQLite connection close during __del__ failed: %s", exc)
+        finally:
+            db_lock.release()
+    else:
+        logger.debug("SQLiteCache.__del__: could not acquire lock, skipping cleanup")

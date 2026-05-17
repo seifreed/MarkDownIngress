@@ -313,22 +313,26 @@ def _job_record_within_api_ttl(job) -> bool:
         return True
     ttl_seconds = cast(object | None, getattr(job, "ttl_seconds", None))
     if ttl_seconds is None:
-        expires_dt = _legacy_unknown_ttl_expires_at(
-            completed_at,
-            getattr(job, "legacy_expires_at", None),
-        )
-        if expires_dt is None:
-            return False
-        return datetime.now(UTC) <= expires_dt
+        return _legacy_job_record_within_api_ttl(job, completed_at)
+    return _completed_job_record_within_api_ttl(completed_at, ttl_seconds)
+
+
+def _legacy_job_record_within_api_ttl(job, completed_at) -> bool:
+    expires_dt = _legacy_unknown_ttl_expires_at(
+        completed_at,
+        getattr(job, "legacy_expires_at", None),
+    )
+    return expires_dt is not None and datetime.now(UTC) <= expires_dt
+
+
+def _completed_job_record_within_api_ttl(completed_at, ttl_seconds: object) -> bool:
     if completed_at is None:
         return False
     completed_dt = _parse_iso_datetime_utc(completed_at)
-    if completed_dt is None:
+    ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+    if completed_dt is None or ttl_value is None:
         return False
     age_seconds = (datetime.now(UTC) - completed_dt).total_seconds()
-    ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
-    if ttl_value is None:
-        return False
     return age_seconds <= ttl_value
 
 

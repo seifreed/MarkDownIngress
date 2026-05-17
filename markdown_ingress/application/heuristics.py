@@ -57,6 +57,25 @@ _AUTH_PATH_TOKENS = (
     "signup",
     "sign-up",
 )
+_RENDER_FALLBACK_BLOCK_TOKENS = (
+    "ssrf protection",
+    "blocked ip",
+    "blocked range",
+    "hostname blocked",
+    "host could not be resolved",
+    "invalid url",
+    "url cannot be empty",
+    "valid network location",
+    "valid host",
+    "invalid url scheme",
+    "invalid url port",
+    "forbidden crlf",
+    "null byte",
+    "name or service not known",
+    "nodename nor servname",
+    "request url has an unsupported protocol",
+    "unsupported content type",
+)
 
 
 def _looks_like_non_html_resource(url: str) -> bool:
@@ -86,35 +105,18 @@ def _should_attempt_render_fallback(exc: Exception) -> bool:
         return False
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code in {403, 429, 503}
-    if isinstance(exc, (httpx.UnsupportedProtocol, httpx.InvalidURL, httpx.ConnectError)):
-        return False
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(
+        exc,
+        (
+            httpx.UnsupportedProtocol,
+            httpx.InvalidURL,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+        ),
+    ):
         return False
     message = str(exc).lower()
-    url_validation_tokens = (
-        "ssrf protection",
-        "blocked ip",
-        "blocked range",
-        "hostname blocked",
-        "host could not be resolved",
-        "invalid url",
-        "url cannot be empty",
-        "valid network location",
-        "valid host",
-        "invalid url scheme",
-        "invalid url port",
-        "forbidden crlf",
-        "null byte",
-    )
-    if any(token in message for token in url_validation_tokens):
-        return False
-    if "name or service not known" in message or "nodename nor servname" in message:
-        return False
-    if "request url has an unsupported protocol" in message:
-        return False
-    if "unsupported content type" in message:
-        return False
-    return True
+    return not any(token in message for token in _RENDER_FALLBACK_BLOCK_TOKENS)
 
 
 def _should_attempt_fast_degraded_fallback(exc: Exception) -> bool:
@@ -126,8 +128,17 @@ def _should_attempt_fast_degraded_fallback(exc: Exception) -> bool:
         "err_failed",
         "err_internet_disconnected",
         "err_network_io_suspended",
-        "timeout",
         "page is navigating",
         "page.content",
     )
     return any(token in message for token in retryable_tokens)
+
+
+def _is_render_timeout_failure(exc: Exception) -> bool:
+    message = f"{type(exc).__name__}: {exc}".lower()
+    return "timeout" in message or "timed out" in message
+
+
+def _should_reuse_fast_result_after_render_failure(exc: Exception) -> bool:
+    """Allow auto mode to keep its already fetched fast document after render timeout."""
+    return _should_attempt_fast_degraded_fallback(exc) or _is_render_timeout_failure(exc)

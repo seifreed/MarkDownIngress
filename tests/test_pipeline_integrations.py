@@ -1417,6 +1417,56 @@ def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
     assert doc.metadata["fetch_metadata"]["degraded_render_fallback"] is True
 
 
+def test_render_mode_does_not_degrade_to_fast_fetch_on_timeout():
+    use_case = IngestUseCase(playwright_available=True)
+    fetch_calls: list[str] = []
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            raise RuntimeError("Page.goto: Timeout 1000ms exceeded")
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            fetch_calls.append(url)
+            return _make_fetch_result(url, "<html><body>fallback</body></html>")
+
+    use_case.renderer_factory = lambda config: FakeRenderer()
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+
+    with pytest.raises(RuntimeError, match="Timeout 1000ms exceeded"):
+        use_case.execute("https://unit.test/slow", IngestConfig(mode="render", timeout=1.0))
+
+    assert fetch_calls == []
+
+
+def test_auto_mode_reuses_fast_result_on_render_timeout():
+    use_case = IngestUseCase(playwright_available=True)
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            raise RuntimeError("Page.goto: Timeout 1000ms exceeded")
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fast</h1>"
+                "<p>Already fetched.</p></article></body></html>",
+            )
+
+    use_case.renderer_factory = lambda config: FakeRenderer()
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+
+    doc = use_case.execute(
+        "https://unit.test/slow",
+        IngestConfig(mode="auto", timeout=1.0, auto_render_threshold=1_000_000),
+    )
+
+    assert doc.metadata["mode"] == "fast"
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert doc.metadata["auto_mode_reason"] == "render_fallback"
+
+
 def test_render_mode_degraded_fallback_closes_fetcher_clients():
     server, base_url, _handler = _start_counting_html_server(
         b"<html><body><article><h1>Fallback</h1>"

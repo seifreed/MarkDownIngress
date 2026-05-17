@@ -3635,6 +3635,31 @@ def test_backend_error_repair_handles_non_runtime_build_failures(monkeypatch, tm
     assert queue.state == "backend_error"
 
 
+def test_repair_attempt_retries_when_rebuild_raises_runtime_error(monkeypatch):
+    class ClosingQueue:
+        state = "closing"
+
+        def close(self):
+            self.state = "closed"
+
+    queue = ClosingQueue()
+    waits: list[str | None] = []
+
+    def failing_rebuild(_queue):
+        raise RuntimeError("Job queue DB is already owned by another active instance")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", queue)
+    monkeypatch.setattr(api_server, "_build_replacement_queue_or_current", failing_rebuild)
+    monkeypatch.setattr(
+        api_server,
+        "_wait_for_next_job_queue_repair_attempt",
+        lambda _stop_event, state: waits.append(state),
+    )
+
+    assert api_server._run_job_queue_repair_attempt(threading.Event()) is True
+    assert waits == ["closing"]
+
+
 def test_stats_reports_unknown_ttl_when_current_queue_is_external_owner(monkeypatch):
     class ExternalOwnerQueue:
         state = "external_owner"

@@ -8,6 +8,12 @@ import math
 from markdown_ingress.models import InjectionAnalysis
 
 _logger = logging.getLogger(__name__)
+_RISK_LEVEL_THRESHOLDS = (
+    (0.8, "critical"),
+    (0.6, "high"),
+    (0.4, "medium"),
+    (0.2, "low"),
+)
 
 
 def _coerce_score(value: object) -> float | None:
@@ -71,15 +77,9 @@ class Scorer:
                 "Clamped out-of-range injection score from %s to %s", original_score, score
             )
 
-        # Handle exact boundary cases explicitly for clarity
-        if score >= 0.8:
-            return "critical"
-        if score >= 0.6:
-            return "high"
-        if score >= 0.4:
-            return "medium"
-        if score >= 0.2:
-            return "low"
+        for threshold, risk_level in _RISK_LEVEL_THRESHOLDS:
+            if score >= threshold:
+                return risk_level
         return "safe"
 
     def should_block(

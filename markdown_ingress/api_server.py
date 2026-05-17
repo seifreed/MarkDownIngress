@@ -284,38 +284,62 @@ def _promote_external_owner_queue(expected_queue):
         return JOB_QUEUE
 
 
+def _current_queue_if_expected_changed(expected_queue):
+    with _JOB_QUEUE_LOCK:
+        if JOB_QUEUE is not expected_queue:
+            return JOB_QUEUE
+    return None
+
+
+def _queue_if_expected_state(expected_queue, states: set[str]):
+    with _JOB_QUEUE_LOCK:
+        if getattr(expected_queue, "state", None) in states:
+            return expected_queue
+    return None
+
+
+def _replacement_for_runtime_build_error(expected_queue, exc: RuntimeError):
+    if _is_active_owner_error(exc):
+        return _promote_external_owner_queue(expected_queue)
+    if getattr(expected_queue, "state", None) == "backend_error":
+        return expected_queue
+    return None
+
+
+def _current_queue_after_superseded_replacement(replacement_queue):
+    try:
+        replacement_queue.close()
+    except Exception as exc:
+        _logger.debug("Failed to close superseded replacement queue: %s", exc, exc_info=True)
+    with _JOB_QUEUE_LOCK:
+        return JOB_QUEUE
+
+
 def _build_replacement_queue_or_current(expected_queue):
     with _JOB_QUEUE_BUILD_LOCK:
-        with _JOB_QUEUE_LOCK:
-            if JOB_QUEUE is not expected_queue:
-                return JOB_QUEUE
+        current_queue = _current_queue_if_expected_changed(expected_queue)
+        if current_queue is not None:
+            return current_queue
         try:
             replacement_queue = _build_job_queue()
         except RuntimeError as exc:
-            if _is_active_owner_error(exc):
-                return _promote_external_owner_queue(expected_queue)
-            if getattr(expected_queue, "state", None) == "backend_error":
-                return expected_queue
+            fallback_queue = _replacement_for_runtime_build_error(expected_queue, exc)
+            if fallback_queue is not None:
+                return fallback_queue
             raise
         # BUG FIX #2: Catch only specific exceptions, not all exceptions.
         # Previously caught all Exception including MemoryError, KeyboardInterrupt, etc.
         # Only catch database/file errors that indicate transient backend issues.
         except (SQLiteError, OSError):
-            with _JOB_QUEUE_LOCK:
-                state = getattr(expected_queue, "state", None)
-                if state == "backend_error":
-                    return expected_queue
-                if state == "external_owner":
-                    return expected_queue
+            fallback_queue = _queue_if_expected_state(
+                expected_queue, {"backend_error", "external_owner"}
+            )
+            if fallback_queue is not None:
+                return fallback_queue
             raise
         if _replace_job_queue_if_current(expected_queue, replacement_queue):
             return replacement_queue
-        try:
-            replacement_queue.close()
-        except Exception as exc:
-            _logger.debug("Failed to close superseded replacement queue: %s", exc, exc_info=True)
-        with _JOB_QUEUE_LOCK:
-            return JOB_QUEUE
+        return _current_queue_after_superseded_replacement(replacement_queue)
 
 
 def _external_owner_backend_still_owned(queue) -> bool:
@@ -399,8 +423,13 @@ def _run_job_queue_repair_attempt(stop_event: threading.Event) -> bool:
         state, retry_later = _maybe_wait_for_external_owner_backend(queue, state, stop_event)
         if retry_later:
             return True
-        if _finish_repair_if_replaced_or_terminal(queue, state):
-            return False
+        try:
+            repair_finished = _finish_repair_if_replaced_or_terminal(queue, state)
+        except (RuntimeError, SQLiteError, OSError) as exc:
+            _logger.debug("Job queue repair rebuild failed: %s", exc, exc_info=True)
+        else:
+            if repair_finished:
+                return False
     _wait_for_next_job_queue_repair_attempt(stop_event, state)
     return True
 
