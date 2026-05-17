@@ -4,7 +4,6 @@ SQLite-backed persistent cache implementation.
 
 import json
 import logging
-import math
 import threading
 import time
 from pathlib import Path
@@ -12,6 +11,18 @@ from pathlib import Path
 from markdown_ingress.adapters.cache.sqlite_document_codec import (
     deserialize_document,
     serialize_document,
+)
+from markdown_ingress.adapters.cache.sqlite_entries import (
+    cache_key_label,
+    coerce_expires_at,
+    delete_cache_key,
+    delete_expired_entries,
+    is_cache_entry_expired,
+)
+from markdown_ingress.adapters.cache.sqlite_lifecycle import (
+    close_connection_after_init_failure,
+    close_connection_for_cache,
+    close_connection_from_del,
 )
 from markdown_ingress.adapters.cache.sqlite_path import validate_db_path
 from markdown_ingress.adapters.cache.utils import _validate_ttl_value
@@ -120,10 +131,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         except Exception:
             # BUG FIX: Clean up connection on failure to prevent resource leak
             if hasattr(self, "conn") and self.conn:
-                try:
-                    self.conn.close()
-                except Exception as exc:
-                    _logger.debug("Cache connection close during init cleanup failed: %s", exc)
+                close_connection_after_init_failure(self.conn, _logger)
             raise
 
     def _init_db(self):
@@ -141,12 +149,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
 
     @staticmethod
     def _coerce_expires_at(value: object) -> float | None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        expires_at = float(value)
-        if not math.isfinite(expires_at):
-            return None
-        return expires_at
+        return coerce_expires_at(value)
 
     def get(self, key: str) -> SafeDocument | None:
         """Get document from cache.
@@ -172,15 +175,15 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             if expires_at_value is None:
                 _logger.warning(
                     "Cache entry for key '%s' has corrupt expires_at value - deleting entry.",
-                    key[:16] if len(key) > 16 else key,
+                    cache_key_label(key),
                 )
-                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                delete_cache_key(self.conn, key)
                 self.conn.commit()
                 return None
 
             # Check expiration — delete within the same lock to avoid TOCTOU
-            if expires_at_value > 0 and time.time() >= expires_at_value:
-                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+            if is_cache_entry_expired(expires_at_value):
+                delete_cache_key(self.conn, key)
                 self.conn.commit()
                 return None
 
@@ -192,11 +195,11 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 _logger.warning(
                     "Cache deserialization failed for key '%s' — deleting corrupt entry. Error: %s",
-                    key[:16] if len(key) > 16 else key,
+                    cache_key_label(key),
                     exc,
                 )
                 # Delete the corrupt entry from database
-                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                delete_cache_key(self.conn, key)
                 self.conn.commit()
                 return None
 
@@ -247,14 +250,11 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         # Cleanup if threshold exceeded
         if count >= self.cleanup_threshold:
             try:
-                cursor = self.conn.execute(
-                    "DELETE FROM cache WHERE expires_at > 0 AND expires_at <= ?",
-                    (time.time(),),
-                )
-                if cursor.rowcount > 0:
+                rowcount = delete_expired_entries(self.conn)
+                if rowcount > 0:
                     _logger.debug(
                         "Periodic cleanup removed %d expired entries from SQLite cache",
-                        cursor.rowcount,
+                        rowcount,
                     )
                 self.conn.commit()
             except Exception as exc:
@@ -291,11 +291,11 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                 return False
             expires_at = self._coerce_expires_at(row[0])
             if expires_at is None:
-                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                delete_cache_key(self.conn, key)
                 self.conn.commit()
                 return False
-            if expires_at > 0 and now >= expires_at:
-                self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+            if is_cache_entry_expired(expires_at, now=now):
+                delete_cache_key(self.conn, key)
                 self.conn.commit()
                 return False
             return True
@@ -309,11 +309,9 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         with self._db_lock:
             if self._closed:
                 raise RuntimeError("Cannot use closed SQLiteCache instance")
-            cursor = self.conn.execute(
-                "DELETE FROM cache WHERE expires_at > 0 AND expires_at <= ?", (time.time(),)
-            )
+            rowcount = delete_expired_entries(self.conn)
             self.conn.commit()
-            return max(0, cursor.rowcount)
+            return rowcount
 
     def close(self) -> None:
         """Close the database connection explicitly.
@@ -336,10 +334,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             self._closed = True
             # Close connection inside the lock to prevent race condition
             # where another thread is using conn.close() while we're closing it
-            try:
-                self.conn.close()
-            except Exception as exc:
-                _logger.warning("Error closing SQLite connection: %s", exc)
+            close_connection_for_cache(self.conn, _logger)
 
     def __enter__(self) -> "SQLiteCache":
         """Context manager entry."""
@@ -351,39 +346,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
 
     def __del__(self):
         """Fallback cleanup - prefer explicit close() or context manager."""
-        # Check if we have the necessary attributes before attempting cleanup
-        # During garbage collection, attributes may be collected in any order
-        if not hasattr(self, "_closed"):
-            return
-        if not hasattr(self, "conn"):
-            return
-        if not hasattr(self, "_db_lock"):
-            return
-
-        # Use a local reference to avoid issues if self.conn is deleted
-        conn = getattr(self, "conn", None)
-        if conn is None:
-            return
-
-        # Use a local reference to the lock as well
-        _db_lock = getattr(self, "_db_lock", None)
-        if _db_lock is None:
-            return
-
-        # Use non-blocking acquire to avoid deadlocking GC against threads holding the lock.
-        if not _db_lock.acquire(blocking=False):
-            _logger.debug("SQLiteCache.__del__: could not acquire lock, skipping cleanup")
-            return
-        try:
-            if self._closed:
-                return
-            self._closed = True
-            try:
-                conn.close()
-            except Exception as e:
-                _logger.debug("SQLite connection close during __del__ failed: %s", e)
-        finally:
-            _db_lock.release()
+        close_connection_from_del(self, _logger)
 
     def _serialize_document(self, doc: SafeDocument) -> str:
         """Serialize SafeDocument to JSON"""
