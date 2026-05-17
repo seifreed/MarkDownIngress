@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -53,3 +54,17 @@ def test_distribution_artifacts_are_not_stale() -> None:
     ]
 
     assert stale_artifacts == []
+
+
+def test_repository_does_not_track_ignored_files() -> None:
+    if not Path(".git").exists():
+        return
+
+    result = subprocess.run(
+        ["git", "ls-files", "-ci", "--exclude-standard"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == []

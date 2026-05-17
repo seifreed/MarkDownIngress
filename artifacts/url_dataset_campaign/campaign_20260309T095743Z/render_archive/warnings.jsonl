@@ -1,1 +1,0 @@
-{"index": 1, "url": "https://www.youtube.com/about/", "scenario": "render_archive", "status": "warning", "reasons": ["nonzero_injection_score"], "injection_score": 0.012, "flags": [], "policy_action": "allow", "mode": "render", "status_code": 200, "fetch_time_ms": 2377.2439580061473, "token_estimate": 48, "removed_elements": {"tags": {}, "hidden_elements": 0}}
