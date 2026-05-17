@@ -25,7 +25,7 @@ class ClientLifecycleMixin:
             self._async_close_tasks.discard(done_task)
             try:
                 done_task.result()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - background cleanup is best effort
                 logger.debug(
                     "Background async HTTP client close failed: %s",
                     exc,
@@ -90,7 +90,7 @@ class ClientLifecycleMixin:
                     loop.run_until_complete(client_to_close.aclose())
                 finally:
                     loop.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 - sync close fallback must not escape
                 logger.warning(
                     "Could not close async HTTP client synchronously; "
                     "use 'async with fetcher:' or 'await fetcher.aclose()' instead."
@@ -104,7 +104,7 @@ class ClientLifecycleMixin:
             try:
                 loop = asyncio.get_running_loop()
                 self._track_async_close_task(loop.create_task(client_to_close.aclose()))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - async close scheduling is best effort
                 logger.debug(
                     "Failed to schedule async client close as background task: %s",
                     exc,
@@ -136,14 +136,14 @@ class ClientLifecycleMixin:
         try:
             with self._client_lock:
                 sync_client_exists = self._sync_client is not None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - finalizers must tolerate partial init
             logger.debug(
                 "Could not inspect sync client during finalization: %s", exc, exc_info=True
             )
         try:
             with self._async_client_lock_guard:
                 async_client_exists = getattr(self, "_async_client", None) is not None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - finalizers must tolerate partial init
             logger.debug(
                 "Could not inspect async client during finalization: %s", exc, exc_info=True
             )
@@ -162,11 +162,11 @@ class ClientLifecycleMixin:
                 if self._sync_client is not None:
                     self._sync_client.close()
                     self._sync_client = None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - finalizer cleanup is best effort
             logger.debug("Could not close sync client during finalization: %s", exc, exc_info=True)
         try:
             with self._async_client_lock_guard:
                 self._async_client = None
                 self._async_client_lock = None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - finalizer cleanup is best effort
             logger.debug("Could not clear async client during finalization: %s", exc, exc_info=True)
