@@ -685,6 +685,20 @@ batch_max_concurrent: 10
         finally:
             os.environ.pop("MDI_CHUNK_SIZE", None)
 
+    def test_env_chunk_size_conflict_restores_valid_previous_config(self):
+        os.environ["MDI_CHUNK_SIZE"] = "100"
+
+        try:
+            config = ConfigLoader().load()
+            ingest_config = config.to_ingest_config()
+
+            assert config.chunk_size == 1200
+            assert config.chunk_overlap == 120
+            assert ingest_config.chunk_size == 1200
+            assert "chunk_size" not in ingest_config.explicit_keys()
+        finally:
+            os.environ.pop("MDI_CHUNK_SIZE", None)
+
     def test_env_allow_local_urls_is_exposed(self):
         os.environ["MDI_ALLOW_LOCAL_URLS"] = "true"
 

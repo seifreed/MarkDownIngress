@@ -304,14 +304,28 @@ def _validate_chunk_fields(context: FieldRestoreContext) -> None:
             context.previous_values["chunk_overlap"],
         )
     if config.chunk_overlap >= config.chunk_size:
+        _restore_conflicting_chunk_fields(context)
+
+
+def _restore_conflicting_chunk_fields(context: FieldRestoreContext) -> None:
+    config = context.config
+    changed_fields = [
+        attr_name
+        for attr_name in ("chunk_size", "chunk_overlap")
+        if getattr(config, attr_name) != context.previous_values[attr_name]
+    ]
+    if not changed_fields:
+        changed_fields = ["chunk_overlap"]
+    for attr_name in changed_fields:
         _restore_numeric_field(
             context,
-            "chunk_overlap",
+            attr_name,
             "chunk_overlap (%s) must be less than chunk_size (%s) after "
-            "env overrides. Keeping previous value %r.",
+            "env overrides. Keeping previous %s value %r.",
             config.chunk_overlap,
             config.chunk_size,
-            context.previous_values["chunk_overlap"],
+            attr_name,
+            context.previous_values[attr_name],
         )
 
 
