@@ -86,6 +86,9 @@ def _detect_content_language_info(
 ) -> dict[str, Any] | None:
     try:
         from langdetect import detect  # type: ignore[import-untyped]
+        from langdetect.lang_detect_exception import (  # type: ignore[import-untyped]
+            LangDetectException,
+        )
 
         body = parser.css_first("body")
         if body:
@@ -99,7 +102,7 @@ def _detect_content_language_info(
                     return _language_info(detected_lang, "langdetect", 0.6)
     except ImportError:
         pass  # langdetect not installed — graceful degradation
-    except Exception as exc:
+    except (AttributeError, LangDetectException, TypeError, ValueError) as exc:
         logger.debug("langdetect failed: %s", exc)
     return None
 

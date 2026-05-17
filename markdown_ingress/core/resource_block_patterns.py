@@ -105,7 +105,7 @@ def extract_resource_url_parts(url: str) -> ResourceUrlParts:
     try:
         parts = urlsplit(_decode_url_fully(url))
         domain = (parts.hostname or "").lower().rstrip(".")
-    except Exception as exc:
+    except ValueError as exc:
         raise ValueError("Malformed resource URL") from exc
 
     if not domain:

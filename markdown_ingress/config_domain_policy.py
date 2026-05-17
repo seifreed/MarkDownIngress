@@ -189,6 +189,6 @@ def _normalize_domain_policies(value: object) -> list[DomainPolicy]:
             )
         try:
             normalized.append(DomainPolicy(**dict(item)))
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
             raise ValueError(f"domain_policies[{index}] is invalid: {exc}") from exc
     return normalized

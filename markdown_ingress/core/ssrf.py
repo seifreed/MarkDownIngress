@@ -294,7 +294,7 @@ def _normalize_http_url_text(url: str) -> str:
 def _split_http_url_for_ssrf(normalized_url: str, original_url: str) -> SplitResult:
     try:
         return urlsplit(normalized_url)
-    except Exception as exc:
+    except ValueError as exc:
         raise ValueError(f"Invalid URL format: {original_url!r}: {exc}") from exc
 
 

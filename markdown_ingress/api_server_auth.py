@@ -51,7 +51,7 @@ def _get_redis_rate_limit_client():
         client = redis.Redis.from_url(_RATE_LIMIT_REDIS_URL, decode_responses=True)
         try:
             client.ping()
-        except Exception as exc:  # pragma: no cover — depends on env
+        except redis.RedisError as exc:  # pragma: no cover — depends on env
             raise RuntimeError(
                 f"Cannot connect to Redis at {_RATE_LIMIT_REDIS_URL!r}: {exc}"
             ) from exc
