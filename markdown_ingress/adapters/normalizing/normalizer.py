@@ -2,7 +2,16 @@
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+
+@dataclass
+class _WhitespaceState:
+    in_fenced_code: bool = False
+    fenced_code_fence: str | None = None
+    in_indented_code: bool = False
+    previous_blank_outside: bool = False
 
 
 class Normalizer:  # implements INormalizer protocol
@@ -113,101 +122,174 @@ class Normalizer:  # implements INormalizer protocol
 
         Also preserves interior whitespace in fenced code blocks (```).
         """
-        # Track fenced code block state
-        in_fenced_code = False
-        fenced_code_fence = None
-        in_indented_code = False
-        previous_blank_outside = False
-
+        state = _WhitespaceState()
         lines = text.split("\n")
         normalized: list[str] = []
         for line in lines:
-            stripped = line.strip()
-            fence_char = None
-            if stripped.startswith("```"):
-                fence_char = "`"
-            elif stripped.startswith("~~~"):
-                fence_char = "~"
-
-            if fence_char is not None:
-                fence_len = 0
-                for ch in stripped:
-                    if ch == fence_char:
-                        fence_len += 1
-                    else:
-                        break
-                current_fence = fence_char * fence_len
-                # CommonMark requires minimum 3 fence characters
-                if len(current_fence) < 3:
-                    normalized.append(line)
-                    continue
-                if not in_fenced_code:
-                    in_fenced_code = True
-                    fenced_code_fence = current_fence
-                    normalized.append(line.rstrip())
-                    previous_blank_outside = False
-                elif (
-                    fenced_code_fence is not None
-                    and fence_char == fenced_code_fence[0]
-                    and len(current_fence) >= len(fenced_code_fence)
-                    # CommonMark: closing fence must be followed only by whitespace
-                    and stripped[len(current_fence) :].strip() == ""
-                ):
-                    in_fenced_code = False
-                    fenced_code_fence = None
-                    normalized.append(line.rstrip())
-                    previous_blank_outside = False
-                else:
-                    normalized.append(line)
+            if self._append_fenced_code_line(line, state, normalized):
                 continue
 
-            if in_fenced_code:
-                normalized.append(line)
-                previous_blank_outside = False
-            elif in_indented_code:
-                if self._INDENTED_CODE_RE.match(line):
-                    normalized.append(line)
-                    previous_blank_outside = False
-                elif not line.strip():
-                    normalized.append("")
-                    previous_blank_outside = True
-                else:
-                    in_indented_code = False
-                    cleaned = re.sub(r"[ \t]+", " ", line).strip()
-                    normalized.append(cleaned)
-                    previous_blank_outside = False
-            elif previous_blank_outside and self._INDENTED_CODE_RE.match(line):
-                in_indented_code = True
-                normalized.append(line)
-                previous_blank_outside = False
-            elif self._MARKDOWN_PREFIX_RE.match(line):
-                stripped = line.lstrip(" \t")
-                leading = line[: len(line) - len(stripped)]
-                normalized.append(leading + re.sub(r"[ \t]+", " ", stripped).rstrip())
-                previous_blank_outside = False
-            else:
-                cleaned = re.sub(r"[ \t]+", " ", line).strip()
-                if not cleaned:
-                    if not previous_blank_outside:
-                        normalized.append("")
-                    previous_blank_outside = True
-                else:
-                    normalized.append(cleaned)
-                    previous_blank_outside = False
+            self._append_non_fenced_line(line, state, normalized)
 
+        self._auto_close_fenced_code(state, normalized)
+        return "\n".join(self._trim_blank_edges(normalized))
+
+    @staticmethod
+    def _fence_for_line(line: str) -> str | None:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            fence_char = "`"
+        elif stripped.startswith("~~~"):
+            fence_char = "~"
+        else:
+            return None
+
+        fence_len = 0
+        for char in stripped:
+            if char == fence_char:
+                fence_len += 1
+            else:
+                break
+        current_fence = fence_char * fence_len
+        if len(current_fence) < 3:
+            return None
+        return current_fence
+
+    def _append_fenced_code_line(
+        self,
+        line: str,
+        state: _WhitespaceState,
+        normalized: list[str],
+    ) -> bool:
+        stripped = line.strip()
+        current_fence = self._fence_for_line(line)
+        if current_fence is None:
+            return False
+
+        if not state.in_fenced_code:
+            state.in_fenced_code = True
+            state.fenced_code_fence = current_fence
+            normalized.append(line.rstrip())
+            state.previous_blank_outside = False
+            return True
+
+        if self._is_closing_fence(stripped, current_fence, state):
+            state.in_fenced_code = False
+            state.fenced_code_fence = None
+            normalized.append(line.rstrip())
+            state.previous_blank_outside = False
+            return True
+
+        normalized.append(line)
+        return True
+
+    @staticmethod
+    def _is_closing_fence(
+        stripped: str,
+        current_fence: str,
+        state: _WhitespaceState,
+    ) -> bool:
+        if state.fenced_code_fence is None:
+            return False
+        return (
+            current_fence[0] == state.fenced_code_fence[0]
+            and len(current_fence) >= len(state.fenced_code_fence)
+            # CommonMark: closing fence must be followed only by whitespace
+            and stripped[len(current_fence) :].strip() == ""
+        )
+
+    def _append_non_fenced_line(
+        self,
+        line: str,
+        state: _WhitespaceState,
+        normalized: list[str],
+    ) -> None:
+        if state.in_fenced_code:
+            normalized.append(line)
+            state.previous_blank_outside = False
+            return
+        if state.in_indented_code:
+            self._append_indented_code_line(line, state, normalized)
+            return
+        if state.previous_blank_outside and self._INDENTED_CODE_RE.match(line):
+            state.in_indented_code = True
+            normalized.append(line)
+            state.previous_blank_outside = False
+            return
+        if self._MARKDOWN_PREFIX_RE.match(line):
+            self._append_markdown_prefix_line(line, state, normalized)
+            return
+        self._append_regular_line(line, state, normalized)
+
+    def _append_indented_code_line(
+        self,
+        line: str,
+        state: _WhitespaceState,
+        normalized: list[str],
+    ) -> None:
+        if self._INDENTED_CODE_RE.match(line):
+            normalized.append(line)
+            state.previous_blank_outside = False
+            return
+        if not line.strip():
+            normalized.append("")
+            state.previous_blank_outside = True
+            return
+        state.in_indented_code = False
+        normalized.append(self._clean_regular_line(line))
+        state.previous_blank_outside = False
+
+    @staticmethod
+    def _append_markdown_prefix_line(
+        line: str,
+        state: _WhitespaceState,
+        normalized: list[str],
+    ) -> None:
+        stripped = line.lstrip(" \t")
+        leading = line[: len(line) - len(stripped)]
+        normalized.append(leading + re.sub(r"[ \t]+", " ", stripped).rstrip())
+        state.previous_blank_outside = False
+
+    def _append_regular_line(
+        self,
+        line: str,
+        state: _WhitespaceState,
+        normalized: list[str],
+    ) -> None:
+        cleaned = self._clean_regular_line(line)
+        if not cleaned:
+            if not state.previous_blank_outside:
+                normalized.append("")
+            state.previous_blank_outside = True
+            return
+        normalized.append(cleaned)
+        state.previous_blank_outside = False
+
+    @staticmethod
+    def _clean_regular_line(line: str) -> str:
+        return re.sub(r"[ \t]+", " ", line).strip()
+
+    @staticmethod
+    def _auto_close_fenced_code(state: _WhitespaceState, normalized: list[str]) -> None:
         # Auto-close unclosed fenced code blocks for consistent output.
         # A warning is logged so operators can detect when the output was
         # altered; the warning level ensures it is visible in production logs.
-        if in_fenced_code and fenced_code_fence:
+        if state.in_fenced_code and state.fenced_code_fence:
             import logging
 
             _logger = logging.getLogger(__name__)
             _logger.warning(
                 "Unclosed fenced code block detected, auto-closing (fence=%s)",
-                fenced_code_fence[:3] + "..." if len(fenced_code_fence) > 3 else fenced_code_fence,
+                (
+                    state.fenced_code_fence[:3] + "..."
+                    if len(state.fenced_code_fence) > 3
+                    else state.fenced_code_fence
+                ),
             )
-            normalized.append(fenced_code_fence)
+            normalized.append(state.fenced_code_fence)
 
+    @staticmethod
+    def _trim_blank_edges(normalized: list[str]) -> list[str]:
         start = 0
         while start < len(normalized) and normalized[start] == "":
             start += 1
@@ -215,8 +297,7 @@ class Normalizer:  # implements INormalizer protocol
             normalized = normalized[start:]
         while normalized and normalized[-1] == "":
             normalized.pop()
-
-        return "\n".join(normalized)
+        return normalized
 
     def normalize_url(self, url: str) -> str:
         """Normalize URL by removing tracking parameters."""
