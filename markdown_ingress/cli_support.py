@@ -154,37 +154,61 @@ def load_domain_policies(args):
 
     policies = []
     if policy_file:
-        try:
-            content = Path(policy_file).read_text()
-            loaded = json.loads(content)
-        except OSError as exc:
-            console.print(f"[red]Error: Could not read domain policy file {policy_file}: {exc}")
-            raise SystemExit(1) from None
-        except json.JSONDecodeError as exc:
-            console.print(f"[red]Error: Invalid JSON in domain policy file {policy_file}: {exc}")
-            raise SystemExit(1) from None
-        if isinstance(loaded, dict):
-            policies.append(loaded)
-        elif isinstance(loaded, list):
-            for index, item in enumerate(loaded):
-                if not isinstance(item, Mapping):
-                    console.print(
-                        "[red]Error: Domain policy file array entries must be JSON objects "
-                        f"(invalid entry at index {index}: {type(item).__name__})"
-                    )
-                    raise SystemExit(1)
-                policies.append(dict(item))
-        else:
-            console.print("[red]Error: Domain policy file must contain a JSON object or array")
-            raise SystemExit(1)
-    for inline in inline_policies:
-        try:
-            loaded_inline = json.loads(inline)
-        except json.JSONDecodeError as exc:
-            console.print(f"[red]Error: Invalid JSON in --domain-policy: {exc}")
-            raise SystemExit(1) from None
-        if not isinstance(loaded_inline, Mapping):
-            console.print("[red]Error: --domain-policy must decode to a JSON object")
-            raise SystemExit(1)
-        policies.append(dict(loaded_inline))
+        policies.extend(_load_domain_policy_file(policy_file))
+    policies.extend(_load_inline_domain_policies(inline_policies))
     return policies
+
+
+def _load_domain_policy_file(policy_file):
+    loaded = _read_domain_policy_json_file(policy_file)
+    return _normalize_domain_policy_file_payload(loaded)
+
+
+def _read_domain_policy_json_file(policy_file):
+    try:
+        content = Path(policy_file).read_text()
+        return json.loads(content)
+    except OSError as exc:
+        console.print(f"[red]Error: Could not read domain policy file {policy_file}: {exc}")
+        raise SystemExit(1) from None
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Error: Invalid JSON in domain policy file {policy_file}: {exc}")
+        raise SystemExit(1) from None
+
+
+def _normalize_domain_policy_file_payload(loaded):
+    if isinstance(loaded, dict):
+        return [loaded]
+    if isinstance(loaded, list):
+        return _normalize_domain_policy_file_array(loaded)
+    console.print("[red]Error: Domain policy file must contain a JSON object or array")
+    raise SystemExit(1)
+
+
+def _normalize_domain_policy_file_array(loaded):
+    policies = []
+    for index, item in enumerate(loaded):
+        if not isinstance(item, Mapping):
+            console.print(
+                "[red]Error: Domain policy file array entries must be JSON objects "
+                f"(invalid entry at index {index}: {type(item).__name__})"
+            )
+            raise SystemExit(1)
+        policies.append(dict(item))
+    return policies
+
+
+def _load_inline_domain_policies(inline_policies):
+    return [_load_inline_domain_policy(inline) for inline in inline_policies]
+
+
+def _load_inline_domain_policy(inline):
+    try:
+        loaded_inline = json.loads(inline)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Error: Invalid JSON in --domain-policy: {exc}")
+        raise SystemExit(1) from None
+    if not isinstance(loaded_inline, Mapping):
+        console.print("[red]Error: --domain-policy must decode to a JSON object")
+        raise SystemExit(1)
+    return dict(loaded_inline)
