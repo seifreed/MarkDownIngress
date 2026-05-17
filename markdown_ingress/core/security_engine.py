@@ -9,6 +9,7 @@ Implements progressive security scanning:
 
 import logging
 import math
+from dataclasses import dataclass
 from typing import Any
 
 from markdown_ingress.core import security as security_module
@@ -28,6 +29,16 @@ logger = logging.getLogger(__name__)
 
 # Score assigned when Nova is disabled (no rules loaded) — basic analysis dominates.
 _NOVA_DISABLED_SCORE: float = 0.0
+
+
+@dataclass(frozen=True)
+class SecurityExplanationContext:
+    final_score: float
+    basic_analysis: Any
+    nova_details: dict
+    scan_method: str
+    block_threshold: float = 0.7
+    warn_threshold: float = 0.4
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -271,12 +282,14 @@ class SecurityEngine:
             "pattern_matches": basic_analysis.pattern_matches,
             "imperative_density": basic_analysis.imperative_density,
             "explanation": self._build_explanation(
-                final_score=final_score,
-                basic_analysis=basic_analysis,
-                nova_details=nova_details,
-                scan_method=scan_method,
-                block_threshold=block_threshold,
-                warn_threshold=warn_threshold,
+                SecurityExplanationContext(
+                    final_score=final_score,
+                    basic_analysis=basic_analysis,
+                    nova_details=nova_details,
+                    scan_method=scan_method,
+                    block_threshold=block_threshold,
+                    warn_threshold=warn_threshold,
+                )
             ),
         }
 
@@ -304,17 +317,11 @@ class SecurityEngine:
 
     def _build_explanation(
         self,
-        *,
-        final_score: float,
-        basic_analysis,
-        nova_details: dict,
-        scan_method: str,
-        block_threshold: float = 0.7,
-        warn_threshold: float = 0.4,
+        context: SecurityExplanationContext,
     ) -> dict:
         """Produce actionable explainability data for downstream consumers."""
         triggers = []
-        for match in basic_analysis.pattern_matches:
+        for match in context.basic_analysis.pattern_matches:
             samples = []
             for sample in match.get("samples", []):
                 if isinstance(sample, tuple):
@@ -331,25 +338,25 @@ class SecurityEngine:
                 }
             )
 
-        for rule in nova_details.get("matched_rules", []):
+        for rule in context.nova_details.get("matched_rules", []):
             triggers.append({"source": "nova", "name": rule})
 
-        if math.isnan(final_score):
+        if math.isnan(context.final_score):
             recommendation = "block"
         else:
             recommendation = "allow"
-            if final_score >= block_threshold:
+            if context.final_score >= context.block_threshold:
                 recommendation = "block"
-            elif final_score >= warn_threshold:
+            elif context.final_score >= context.warn_threshold:
                 recommendation = "warn"
 
         return {
-            "scan_method": scan_method,
+            "scan_method": context.scan_method,
             "recommendation": recommendation,
             "summary": (
-                f"Detected {len(basic_analysis.pattern_matches)} heuristic pattern groups"
-                f" with imperative density {basic_analysis.imperative_density:.3f}."
+                f"Detected {len(context.basic_analysis.pattern_matches)} heuristic pattern groups"
+                f" with imperative density {context.basic_analysis.imperative_density:.3f}."
             ),
             "triggers": triggers,
-            "hidden_content_detected": basic_analysis.hidden_content_detected,
+            "hidden_content_detected": context.basic_analysis.hidden_content_detected,
         }

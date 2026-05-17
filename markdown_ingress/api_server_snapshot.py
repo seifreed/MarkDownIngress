@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypedDict, cast
 
@@ -32,6 +33,16 @@ class JobSubsystemSnapshot(TypedDict):
 
 class RepairThread(Protocol):
     def is_alive(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class JobSubsystemSnapshotInputs:
+    current_queue: object | None
+    history: Sequence[object]
+    repair_thread: RepairThread | None
+    job_db_path: str
+    legacy_unknown_ttl_seconds: int
+    logger: logging.Logger
 
 
 def _optional_int_attr(source: object | None, name: str) -> int | None:
@@ -83,14 +94,9 @@ def _count_unknown_ttl_jobs(queue_obj: Any, logger: logging.Logger) -> int:
 
 
 def build_job_subsystem_snapshot(
-    *,
-    current_queue: object | None,
-    history: Sequence[object],
-    repair_thread: RepairThread | None,
-    job_db_path: str,
-    legacy_unknown_ttl_seconds: int,
-    logger: logging.Logger,
+    inputs: JobSubsystemSnapshotInputs,
 ) -> JobSubsystemSnapshot:
+    current_queue = inputs.current_queue
     current_ttl_seconds = _optional_int_attr(current_queue, "ttl_seconds")
     current_max_queued_jobs = _optional_int_attr(current_queue, "max_queued_jobs")
     current_state = str(getattr(current_queue, "state", "uninitialized"))
@@ -101,10 +107,10 @@ def build_job_subsystem_snapshot(
     legacy_db_paths: list[str] = []
     seen_db_paths: set[str] = set()
     if current_queue is not None:
-        seen_db_paths.add(str(getattr(current_queue, "db_path", job_db_path)))
+        seen_db_paths.add(str(getattr(current_queue, "db_path", inputs.job_db_path)))
     pending_unknown = current_pending is None
-    current_unknown_ttl_jobs = _count_unknown_ttl_jobs(current_queue, logger)
-    for legacy_queue in history:
+    current_unknown_ttl_jobs = _count_unknown_ttl_jobs(current_queue, inputs.logger)
+    for legacy_queue in inputs.history:
         raw_legacy_db_path = getattr(legacy_queue, "db_path", None)
         legacy_db_path = str(raw_legacy_db_path) if raw_legacy_db_path is not None else None
         if legacy_db_path is not None:
@@ -116,7 +122,7 @@ def build_job_subsystem_snapshot(
             pending_unknown = True
             continue
         legacy_pending += legacy_value
-        legacy_unknown_ttl_jobs += _count_unknown_ttl_jobs(legacy_queue, logger)
+        legacy_unknown_ttl_jobs += _count_unknown_ttl_jobs(legacy_queue, inputs.logger)
         legacy_visible_queues += 1
         if legacy_db_path is not None:
             legacy_db_paths.append(legacy_db_path)
@@ -124,7 +130,7 @@ def build_job_subsystem_snapshot(
     return {
         "status": "healthy" if current_state == "open" and not pending_unknown else "degraded",
         "current_state": current_state,
-        "current_db_path": str(getattr(current_queue, "db_path", job_db_path)),
+        "current_db_path": str(getattr(current_queue, "db_path", inputs.job_db_path)),
         "current_ttl_seconds": current_ttl_seconds,
         "current_max_queued_jobs": current_max_queued_jobs,
         "current_pending": current_pending,
@@ -137,6 +143,8 @@ def build_job_subsystem_snapshot(
         "pending_unknown": pending_unknown,
         "current_unknown_ttl_jobs": current_unknown_ttl_jobs,
         "legacy_unknown_ttl_jobs": legacy_unknown_ttl_jobs,
-        "legacy_unknown_ttl_seconds": legacy_unknown_ttl_seconds,
-        "repair_in_progress": bool(repair_thread is not None and repair_thread.is_alive()),
+        "legacy_unknown_ttl_seconds": inputs.legacy_unknown_ttl_seconds,
+        "repair_in_progress": bool(
+            inputs.repair_thread is not None and inputs.repair_thread.is_alive()
+        ),
     }

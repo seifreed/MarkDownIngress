@@ -65,7 +65,12 @@ from markdown_ingress.api_server_queue import (
     _read_job_from_queue,
     _TransientLegacyQueueReadError,
 )
-from markdown_ingress.api_server_rate_limit import RequestWindow, check_memory_rate_limit
+from markdown_ingress.api_server_rate_limit import (
+    MemoryRateLimitPolicy,
+    MemoryRateLimitState,
+    RequestWindow,
+    check_memory_rate_limit,
+)
 from markdown_ingress.api_server_responses import (
     build_detailed_health_payload,
     build_health_payload,
@@ -77,6 +82,7 @@ from markdown_ingress.api_server_snapshot import (
     JobSubsystemSnapshot as _JobSubsystemSnapshot,
 )
 from markdown_ingress.api_server_snapshot import (
+    JobSubsystemSnapshotInputs,
     build_job_subsystem_snapshot,
 )
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
@@ -134,15 +140,20 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         return _check_rate_limit_redis(client_id)
 
     global _rate_limit_cleanup_counter
-    allowed, retry_after, _rate_limit_cleanup_counter = check_memory_rate_limit(
-        client_id,
+    rate_limit_state = MemoryRateLimitState(
         request_counts=_request_counts,
         lock=_rate_limit_lock,
         cleanup_counter=_rate_limit_cleanup_counter,
-        cleanup_threshold=_RATE_LIMIT_CLEANUP_THRESHOLD,
-        max_clients=_RATE_LIMIT_MAX_CLIENTS,
-        rate_limit_requests=RATE_LIMIT_REQUESTS,
-        rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+    )
+    allowed, retry_after, _rate_limit_cleanup_counter = check_memory_rate_limit(
+        client_id,
+        rate_limit_state,
+        MemoryRateLimitPolicy(
+            cleanup_threshold=_RATE_LIMIT_CLEANUP_THRESHOLD,
+            max_clients=_RATE_LIMIT_MAX_CLIENTS,
+            rate_limit_requests=RATE_LIMIT_REQUESTS,
+            rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+        ),
     )
     return allowed, retry_after
 
@@ -649,12 +660,14 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapsh
         history = list(_JOB_QUEUE_HISTORY)
         repair_thread = _JOB_QUEUE_REPAIR_THREAD
     return build_job_subsystem_snapshot(
-        current_queue=current_queue,
-        history=history,
-        repair_thread=repair_thread,
-        job_db_path=JOB_DB_PATH,
-        legacy_unknown_ttl_seconds=LEGACY_UNKNOWN_TTL_SECONDS,
-        logger=_logger,
+        JobSubsystemSnapshotInputs(
+            current_queue=current_queue,
+            history=history,
+            repair_thread=repair_thread,
+            job_db_path=JOB_DB_PATH,
+            legacy_unknown_ttl_seconds=LEGACY_UNKNOWN_TTL_SECONDS,
+            logger=_logger,
+        )
     )
 
 

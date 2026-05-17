@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.policy import PolicyEngine
-from markdown_ingress.core.security_engine import SecurityEngine
+from markdown_ingress.core.security_engine import SecurityEngine, SecurityExplanationContext
 from markdown_ingress.models import ExtractionResult, InjectionAnalysis
 
 PatternSpec = str | tuple[str, float]
@@ -131,18 +131,20 @@ def _run_and_merge_custom_analysis(
         strict=context.config.strict,
     )
     security_result["explanation"] = context.security_engine._build_explanation(
-        final_score=security_result["injection_score"],
-        basic_analysis=InjectionAnalysis(
-            score=security_result["injection_score"],
-            flags=list(security_result["flags"]),
-            pattern_matches=list(security_result["pattern_matches"]),
-            hidden_content_detected=context.security_metadata["hidden_elements_count"] > 0,
-            imperative_density=security_result["imperative_density"],
-        ),
-        nova_details=security_result.get("nova_details") or {},
-        scan_method=security_result["scan_method"],
-        block_threshold=block_threshold,
-        warn_threshold=warn_threshold,
+        SecurityExplanationContext(
+            final_score=security_result["injection_score"],
+            basic_analysis=InjectionAnalysis(
+                score=security_result["injection_score"],
+                flags=list(security_result["flags"]),
+                pattern_matches=list(security_result["pattern_matches"]),
+                hidden_content_detected=context.security_metadata["hidden_elements_count"] > 0,
+                imperative_density=security_result["imperative_density"],
+            ),
+            nova_details=security_result.get("nova_details") or {},
+            scan_method=security_result["scan_method"],
+            block_threshold=block_threshold,
+            warn_threshold=warn_threshold,
+        )
     )
     return security_result
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
@@ -21,6 +22,16 @@ from markdown_ingress.core.metadata_keys import (
 from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CacheResolutionRequest:
+    url: str
+    resolved_config: IngestConfig
+    matched_domain_policy: DomainPolicy | None
+    cache_backend: Cache | None
+    request_key: str
+    requested_mode: str
 
 
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
@@ -115,18 +126,22 @@ class _CacheResolutionHelper:
 
     def resolve(
         self,
-        url: str,
-        resolved_config: IngestConfig,
-        matched_domain_policy: DomainPolicy | None,
-        cache_backend: Cache | None,
-        request_key: str,
-        requested_mode: str,
+        request: CacheResolutionRequest,
     ) -> tuple[SafeDocument | None, str | None]:
         """Return a cached or in-flight-shared document and the cache key, or (None, key)."""
-        request_identity = build_request_identity(url, resolved_config, matched_domain_policy)
-        cache_key = self.make_cache_key(url, resolved_config, request_identity, cache_backend)
-        hit = self.try_cache_hit(cache_backend, cache_key, requested_mode)
+        request_identity = build_request_identity(
+            request.url,
+            request.resolved_config,
+            request.matched_domain_policy,
+        )
+        cache_key = self.make_cache_key(
+            request.url,
+            request.resolved_config,
+            request_identity,
+            request.cache_backend,
+        )
+        hit = self.try_cache_hit(request.cache_backend, cache_key, request.requested_mode)
         if hit is not None:
             return hit, cache_key
-        shared = self.try_inflight_follower(request_key, requested_mode)
+        shared = self.try_inflight_follower(request.request_key, request.requested_mode)
         return shared, cache_key

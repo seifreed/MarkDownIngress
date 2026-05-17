@@ -15,6 +15,7 @@ from markdown_ingress.application.bootstrap import (
     register_all_factories as _register_all_factories,
 )
 from markdown_ingress.application.cache_resolution import (
+    CacheResolutionRequest,
     _CacheResolutionHelper,
 )
 from markdown_ingress.application.cache_resolution import (
@@ -201,12 +202,14 @@ class IngestUseCase:
                     url, resolved_config, matched_domain_policy
                 )
                 early_return, cache_key = self._cache_resolver.resolve(
-                    url,
-                    resolved_config,
-                    matched_domain_policy,
-                    cache_backend,
-                    request_key,
-                    requested_mode,
+                    CacheResolutionRequest(
+                        url=url,
+                        resolved_config=resolved_config,
+                        matched_domain_policy=matched_domain_policy,
+                        cache_backend=cache_backend,
+                        request_key=request_key,
+                        requested_mode=requested_mode,
+                    )
                 )
                 if early_return is not None:
                     return early_return
