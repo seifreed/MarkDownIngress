@@ -273,3 +273,54 @@ def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
     progress = json.loads((Path(summary["run_dir"]) / "progress.json").read_text(encoding="utf-8"))
     assert progress["current_scenario"] == "fast_default"
     assert progress["availability_checked"] == 4
+
+
+def test_run_campaign_resume_skips_completed_scenario(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("tests.url_dataset_campaign.output_dir", lambda: tmp_path)
+    run_dir = tmp_path / "campaign_existing"
+    scenario_dir = run_dir / "fast_default"
+    scenario_dir.mkdir(parents=True)
+    (scenario_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "scenario": "fast_default",
+                "description": "already complete",
+                "assigned_urls": 3,
+                "counts": {"processed": 3, "ok": 3, "errors": 0, "warnings": 0},
+                "warning_types": {},
+                "error_types": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def fake_collect_available_urls(
+        *, total_limit, concurrency, progress_callback=None, timeout=5.0
+    ):
+        return [f"https://good.example/{idx}" for idx in range(total_limit)], {}, {}, total_limit
+
+    async def fail_if_ingested(url: str, config):
+        raise AssertionError(f"already-completed scenario was reprocessed: {url}")
+
+    monkeypatch.setattr(
+        "tests.url_dataset_campaign.collect_available_urls", fake_collect_available_urls
+    )
+    monkeypatch.setattr("tests.url_dataset_campaign.ingest_async", fail_if_ingested)
+
+    summary = run_campaign(
+        total_limit=3,
+        scenarios=[
+            CampaignScenario(
+                name="fast_default",
+                description="x",
+                weight=1,
+                config=IngestConfig(mode="fast", timeout=1.0),
+                max_concurrency=1,
+            )
+        ],
+        concurrency=2,
+        batch_size=2,
+        resume_run_dir=str(run_dir),
+    )
+
+    assert summary["counts"] == {"processed": 3, "ok": 3, "errors": 0, "warnings": 0}

@@ -747,6 +747,18 @@ def _load_existing_scenario_summary(
     return None
 
 
+def _scenario_summary_is_complete(
+    existing_summary: dict[str, Any], assigned_url_count: int
+) -> bool:
+    counts = existing_summary.get("counts", {})
+    try:
+        processed = int(counts.get("processed", -1))
+        assigned = int(existing_summary.get("assigned_urls", -1))
+    except (TypeError, ValueError):
+        return False
+    return assigned == assigned_url_count and processed >= assigned_url_count
+
+
 def _apply_existing_scenario_summary(
     existing_summary: dict[str, Any] | None,
     completed_count: int,
@@ -1045,6 +1057,11 @@ async def _run_campaign_async(
         if existing_summary is not None:
             state.scenario_summaries[scenario.name] = existing_summary
         _rebuild_campaign_counters(state)
+        if existing_summary is not None and _scenario_summary_is_complete(
+            existing_summary,
+            len(allocation[scenario.name]),
+        ):
+            continue
         await _run_campaign_scenario(state, scenario, allocation[scenario.name])
 
 
