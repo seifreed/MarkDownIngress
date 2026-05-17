@@ -4,6 +4,7 @@ SQLite-backed persistent cache implementation.
 
 import json
 import logging
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -104,8 +105,6 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                 path traversal is detected, or an absolute path is provided when
                 allow_absolute_paths=False
         """
-        import sqlite3
-
         # Validate and resolve the database path
         self.db_path = self._validate_db_path(db_path, allow_absolute_paths)
         self.default_ttl = _validate_ttl_value(default_ttl, field_name="default_ttl")
@@ -128,7 +127,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             self.db_path = self._validate_db_path(str(self.db_path), allow_absolute_paths)
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._init_db()
-        except Exception:
+        except sqlite3.Error:
             # BUG FIX: Clean up connection on failure to prevent resource leak
             if hasattr(self, "conn") and self.conn:
                 close_connection_after_init_failure(self.conn, _logger)
@@ -257,7 +256,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
                         rowcount,
                     )
                 self.conn.commit()
-            except Exception as exc:
+            except sqlite3.Error as exc:
                 _logger.warning("Periodic cleanup failed: %s", exc)
 
     def delete(self, key: str) -> None:

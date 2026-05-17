@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any
 
 
@@ -10,7 +11,7 @@ def close_connection_after_init_failure(conn: Any, logger: logging.Logger) -> No
     """Best-effort close for partially initialized cache connections."""
     try:
         conn.close()
-    except Exception as exc:
+    except sqlite3.Error as exc:
         logger.debug("Cache connection close during init cleanup failed: %s", exc)
 
 
@@ -18,7 +19,7 @@ def close_connection_for_cache(conn: Any, logger: logging.Logger) -> None:
     """Close an active SQLite connection for explicit cache shutdown."""
     try:
         conn.close()
-    except Exception as exc:
+    except sqlite3.Error as exc:
         logger.warning("Error closing SQLite connection: %s", exc)
 
 
@@ -39,7 +40,7 @@ def close_connection_from_del(cache: Any, logger: logging.Logger) -> None:
             cache._closed = True
             try:
                 conn.close()
-            except Exception as exc:
+            except sqlite3.Error as exc:
                 logger.debug("SQLite connection close during __del__ failed: %s", exc)
         finally:
             db_lock.release()
