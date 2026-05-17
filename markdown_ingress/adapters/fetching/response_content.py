@@ -80,7 +80,7 @@ class ResponseContentMixin:
                 self._enforce_streamed_response_size(total_size)
         except ResponseSizeLimitError:
             raise
-        except Exception:
+        except httpx.HTTPError:
             logger.debug(log_message, exc_info=True)
 
     def _read_sync_response_content(self, response: httpx.Response) -> bytes:
@@ -100,7 +100,7 @@ class ResponseContentMixin:
                 self._enforce_streamed_response_size(total_size)
         except ResponseSizeLimitError:
             raise
-        except Exception:
+        except httpx.HTTPError:
             logger.debug(log_message, exc_info=True)
 
     def _make_fetch_result(
