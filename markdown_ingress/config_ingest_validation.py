@@ -134,55 +134,59 @@ def _validate_ingest_output_constraints(config: Any) -> None:
 
 
 def _validate_ingest_numeric_constraints(config: Any) -> None:
-    if config.timeout <= 0.0:
-        raise ValueError(f"timeout must be > 0.0, got {config.timeout}")
+    _validate_ingest_timeout_constraints(config)
+    _validate_ingest_threshold_constraints(config)
+    _validate_ingest_cache_constraints(config)
+    _validate_ingest_chunk_constraints(config)
+    _validate_ingest_batch_constraints(config)
 
-    if config.auto_render_threshold < 1:
-        raise ValueError(
-            "auto_render_threshold must be >= 1, " f"got {config.auto_render_threshold}"
-        )
 
+def _validate_positive_float(field_name: str, value: float) -> None:
+    if value <= 0.0:
+        raise ValueError(f"{field_name} must be > 0.0, got {value}")
+
+
+def _validate_minimum_int(field_name: str, value: int, minimum: int) -> None:
+    if value < minimum:
+        raise ValueError(f"{field_name} must be >= {minimum}, got {value}")
+
+
+def _validate_ingest_timeout_constraints(config: Any) -> None:
+    _validate_positive_float("timeout", config.timeout)
+    _validate_positive_float("circuit_breaker_open_seconds", config.circuit_breaker_open_seconds)
+
+
+def _validate_ingest_threshold_constraints(config: Any) -> None:
+    _validate_minimum_int("auto_render_threshold", config.auto_render_threshold, 1)
     if config.render_cost_budget is not None and config.render_cost_budget < 1:
         raise ValueError(
             "render_cost_budget must be >= 1 when provided, " f"got {config.render_cost_budget}"
         )
+    if config.domain_request_interval < 0.0:
+        raise ValueError(
+            f"domain_request_interval must be >= 0.0, got " f"{config.domain_request_interval}"
+        )
+    _validate_minimum_int("circuit_breaker_threshold", config.circuit_breaker_threshold, 1)
 
+
+def _validate_ingest_cache_constraints(config: Any) -> None:
     if config.cache_ttl is not None and config.cache_ttl <= 0:
         raise ValueError(f"cache_ttl must be positive when provided, got {config.cache_ttl}")
-
     if isinstance(config.cache, bool):
         raise ValueError("cache must be a cache backend object or None, got bool")
 
+
+def _validate_ingest_chunk_constraints(config: Any) -> None:
     if config.chunk_overlap < 0:
         raise ValueError(f"chunk_overlap must be >= 0, got {config.chunk_overlap}")
-
-    if config.chunk_size < 1:
-        raise ValueError(f"chunk_size must be >= 1, got {config.chunk_size}")
-
+    _validate_minimum_int("chunk_size", config.chunk_size, 1)
     if config.chunk_overlap >= config.chunk_size:
         raise ValueError(
             f"chunk_overlap ({config.chunk_overlap}) must be less than "
             f"chunk_size ({config.chunk_size})"
         )
 
-    if config.domain_request_interval < 0.0:
-        raise ValueError(
-            f"domain_request_interval must be >= 0.0, got " f"{config.domain_request_interval}"
-        )
 
-    if config.circuit_breaker_threshold < 1:
-        raise ValueError(
-            f"circuit_breaker_threshold must be >= 1, " f"got {config.circuit_breaker_threshold}"
-        )
-
-    if config.circuit_breaker_open_seconds <= 0.0:
-        raise ValueError(
-            "circuit_breaker_open_seconds must be > 0.0, "
-            f"got {config.circuit_breaker_open_seconds}"
-        )
-
-    if config.batch_max_concurrent < 1:
-        raise ValueError(f"batch_max_concurrent must be >= 1, got {config.batch_max_concurrent}")
-
-    if config.batch_timeout <= 0.0:
-        raise ValueError(f"batch_timeout must be > 0.0, got {config.batch_timeout}")
+def _validate_ingest_batch_constraints(config: Any) -> None:
+    _validate_minimum_int("batch_max_concurrent", config.batch_max_concurrent, 1)
+    _validate_positive_float("batch_timeout", config.batch_timeout)
