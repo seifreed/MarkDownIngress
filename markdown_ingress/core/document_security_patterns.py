@@ -4,14 +4,27 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.policy import PolicyEngine
 from markdown_ingress.core.security_engine import SecurityEngine
-from markdown_ingress.models import InjectionAnalysis
+from markdown_ingress.models import ExtractionResult, InjectionAnalysis
 
 PatternSpec = str | tuple[str, float]
+
+
+@dataclass(frozen=True)
+class CustomPatternAnalysisContext:
+    """Dependencies and mutable result used by custom security pattern analysis."""
+
+    security_result: dict
+    extraction_result: ExtractionResult
+    security_metadata: dict
+    security_engine: SecurityEngine
+    policy_engine: PolicyEngine
+    config: IngestConfig
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -86,20 +99,16 @@ def _create_custom_patterns(
 
 def _run_and_merge_custom_analysis(
     custom_defs: list[security_module.InjectionPattern],
-    security_result: dict,
-    extraction_result,
-    security_metadata: dict,
-    security_engine: SecurityEngine,
-    policy_engine: PolicyEngine,
-    config: IngestConfig,
+    context: CustomPatternAnalysisContext,
 ) -> dict:
     """Run custom-pattern-only analysis and merge results into the base security result."""
     # Only include custom patterns: default patterns are already in security_result.
-    extended_analyzer = security_module.SecurityAnalyzer(strict=config.strict)
+    security_result = context.security_result
+    extended_analyzer = security_module.SecurityAnalyzer(strict=context.config.strict)
     extended_analyzer.INJECTION_PATTERNS = tuple(custom_defs)
     extended_analysis = extended_analyzer.analyze(
-        extraction_result.text_content,
-        hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
+        context.extraction_result.text_content,
+        hidden_content_detected=context.security_metadata["hidden_elements_count"] > 0,
     )
     security_result["injection_score"] = max(
         security_result["injection_score"], extended_analysis.score
@@ -116,18 +125,18 @@ def _run_and_merge_custom_analysis(
             [*list(security_result["flags"]), "multiple_injection_attempts"]
         )
     # Do NOT override imperative_density: it duplicates base computation on same text.
-    block_threshold, warn_threshold = security_engine.effective_thresholds(
-        policy_engine.policy.block_threshold,
-        policy_engine.policy.warn_threshold,
-        strict=config.strict,
+    block_threshold, warn_threshold = context.security_engine.effective_thresholds(
+        context.policy_engine.policy.block_threshold,
+        context.policy_engine.policy.warn_threshold,
+        strict=context.config.strict,
     )
-    security_result["explanation"] = security_engine._build_explanation(
+    security_result["explanation"] = context.security_engine._build_explanation(
         final_score=security_result["injection_score"],
         basic_analysis=InjectionAnalysis(
             score=security_result["injection_score"],
             flags=list(security_result["flags"]),
             pattern_matches=list(security_result["pattern_matches"]),
-            hidden_content_detected=security_metadata["hidden_elements_count"] > 0,
+            hidden_content_detected=context.security_metadata["hidden_elements_count"] > 0,
             imperative_density=security_result["imperative_density"],
         ),
         nova_details=security_result.get("nova_details") or {},
@@ -140,21 +149,8 @@ def _run_and_merge_custom_analysis(
 
 def _apply_custom_pattern_analysis(
     extra_patterns: Sequence[PatternSpec],
-    security_result: dict,
-    extraction_result,
-    security_metadata: dict,
-    security_engine: SecurityEngine,
-    policy_engine: PolicyEngine,
-    config: IngestConfig,
+    context: CustomPatternAnalysisContext,
 ) -> dict:
     """Extend security_result with custom/plugin patterns and rebuild explanation."""
     custom_defs = _create_custom_patterns(extra_patterns)
-    return _run_and_merge_custom_analysis(
-        custom_defs,
-        security_result,
-        extraction_result,
-        security_metadata,
-        security_engine,
-        policy_engine,
-        config,
-    )
+    return _run_and_merge_custom_analysis(custom_defs, context)

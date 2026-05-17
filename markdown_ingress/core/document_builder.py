@@ -20,6 +20,7 @@ from markdown_ingress.core.document_plugins import (
 )
 from markdown_ingress.core.document_policy import build_policy_engine
 from markdown_ingress.core.document_security_patterns import (
+    CustomPatternAnalysisContext,
     _apply_custom_pattern_analysis,
 )
 from markdown_ingress.core.document_security_patterns import (
@@ -328,12 +329,14 @@ def process_fetched_content(
         if plugin_context.extra_patterns:
             security_result = _apply_custom_pattern_analysis(
                 plugin_context.extra_patterns,
-                security_result,
-                extraction_result,
-                security_metadata,
-                security_engine,
-                policy_engine,
-                config,
+                CustomPatternAnalysisContext(
+                    security_result=security_result,
+                    extraction_result=extraction_result,
+                    security_metadata=security_metadata,
+                    security_engine=security_engine,
+                    policy_engine=policy_engine,
+                    config=config,
+                ),
             )
 
         try:

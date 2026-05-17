@@ -16,6 +16,7 @@ from markdown_ingress.core.config_env import (
     str_to_bool_or_string,
 )
 from markdown_ingress.core.config_env_overrides import (
+    FieldRestoreContext,
     apply_env_overrides,
     apply_scalar_list_and_custom_overrides,
     restore_field,
@@ -101,18 +102,13 @@ class ConfigLoader:
 
     def _restore_field(
         self,
-        config: Config,
+        context: FieldRestoreContext,
         attr_name: str,
-        previous_values: dict,
-        previous_explicit: dict,
-        explicit: set,
         message: str,
         *args: object,
     ) -> None:
         """Revert a field to its pre-env-override value and update explicit tracking."""
-        restore_field(
-            config, attr_name, previous_values, previous_explicit, explicit, message, *args
-        )
+        restore_field(context, attr_name, message, *args)
 
     def _build_env_var_mapping(self) -> EnvVarMapping:
         """Return the mapping of env var name → (config attr, converter)."""
