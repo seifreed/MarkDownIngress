@@ -14,6 +14,12 @@ from markdown_ingress.core.nova_rules import (
     read_rules_file_atomically,
     reject_unsafe_rules_path,
 )
+from markdown_ingress.core.security_validation import (
+    ensure_bool as _ensure_bool,
+)
+from markdown_ingress.core.security_validation import (
+    ensure_severity_threshold as _ensure_threshold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,31 +35,6 @@ _BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection
 # Default severity thresholds (can be overridden via constructor)
 DEFAULT_HIGH_THRESHOLD = 0.7
 DEFAULT_MEDIUM_THRESHOLD = 0.3
-
-
-def _ensure_bool(field_name: str, value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
-
-
-def _ensure_threshold(field_name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(
-            "Invalid severity thresholds: "
-            f"{field_name} must be a finite number, got {type(value).__name__}"
-        )
-    threshold = float(value)
-    if threshold != threshold or threshold in (float("inf"), float("-inf")):
-        raise ValueError(
-            f"Invalid severity thresholds: {field_name} must be a finite number, got {value!r}"
-        )
-    if not 0.0 <= threshold <= 1.0:
-        raise ValueError(
-            f"Invalid severity thresholds: {field_name} must be between 0.0 and 1.0, "
-            f"got {threshold}"
-        )
-    return threshold
 
 
 def _coerce_rule_score(raw_score: object, rule_name: str) -> float:

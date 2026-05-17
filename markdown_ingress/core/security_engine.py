@@ -13,23 +13,21 @@ from typing import Any
 
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+from markdown_ingress.core.security_validation import (
+    effective_security_thresholds,
+    resolve_exception_fallback_score,
+)
+from markdown_ingress.core.security_validation import (
+    ensure_bool as _ensure_bool,
+)
+from markdown_ingress.core.security_validation import (
+    ensure_numeric_score_input as _ensure_numeric_score_input,
+)
 
 logger = logging.getLogger(__name__)
 
 # Score assigned when Nova is disabled (no rules loaded) — basic analysis dominates.
 _NOVA_DISABLED_SCORE: float = 0.0
-
-
-def _ensure_bool(field_name: str, value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
-
-
-def _ensure_numeric_score_input(field_name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a number, got {type(value).__name__}")
-    return float(value)
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -62,42 +60,12 @@ class SecurityEngine:
         self.strict = _ensure_bool("strict", strict)
         self.advanced_security = _ensure_bool("advanced_security", advanced_security)
         self.use_llm = _ensure_bool("use_llm", use_llm)
-        # Score to use when Nova scan throws an exception (malicious payloads shouldn't bypass)
-        # Validate score is within valid range [0.0, 1.0]
-        # BUG FIX: Enforce minimum of 0.5 to prevent complete security bypass
-        min_fallback_score = 0.5
-        if exception_fallback_score is not None:
-            try:
-                fallback_score = _ensure_numeric_score_input(
-                    "exception_fallback_score", exception_fallback_score
-                )
-            except ValueError:
-                logger.warning(
-                    "Invalid exception_fallback_score '%s', must be 0.0-1.0. Using default 0.75.",
-                    exception_fallback_score,
-                )
-                self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
-            else:
-                if math.isnan(fallback_score) or not (0.0 <= fallback_score <= 1.0):
-                    logger.warning(
-                        "Invalid exception_fallback_score '%s', must be 0.0-1.0. "
-                        "Using default 0.75.",
-                        exception_fallback_score,
-                    )
-                    self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
-                elif fallback_score < min_fallback_score:
-                    logger.warning(
-                        "exception_fallback_score '%s' is below safe minimum %.1f. "
-                        "Setting to %.1f to prevent security bypass.",
-                        fallback_score,
-                        min_fallback_score,
-                        min_fallback_score,
-                    )
-                    self.exception_fallback_score = min_fallback_score
-                else:
-                    self.exception_fallback_score = fallback_score
-        else:
-            self.exception_fallback_score = self.DEFAULT_EXCEPTION_FALLBACK_SCORE
+        self.exception_fallback_score = resolve_exception_fallback_score(
+            exception_fallback_score,
+            default=self.DEFAULT_EXCEPTION_FALLBACK_SCORE,
+            minimum=0.5,
+            logger=logger,
+        )
 
         # Initialize basic security analyzer
         self.basic_analyzer = security_module.SecurityAnalyzer(strict=self.strict)
@@ -210,49 +178,12 @@ class SecurityEngine:
         strict: bool = False,
     ) -> tuple[float, float]:
         """Return policy thresholds after applying strict-mode tightening."""
-        strict = _ensure_bool("strict", strict)
-        block_threshold = _ensure_numeric_score_input("block_threshold", block_threshold)
-        warn_threshold = _ensure_numeric_score_input("warn_threshold", warn_threshold)
-        if math.isnan(block_threshold) or not 0.0 <= block_threshold <= 1.0:
-            if math.isnan(block_threshold):
-                logger.warning(
-                    "block_threshold is NaN, using safe default 1.0",
-                )
-                block_threshold = 1.0
-            else:
-                logger.warning(
-                    "block_threshold %s out of range [0.0, 1.0], clamping",
-                    block_threshold,
-                )
-                block_threshold = max(0.0, min(1.0, block_threshold))
-        if math.isnan(warn_threshold) or not 0.0 <= warn_threshold <= 1.0:
-            if math.isnan(warn_threshold):
-                logger.warning(
-                    "warn_threshold is NaN, using safe default 0.5",
-                )
-                warn_threshold = 0.5
-            else:
-                logger.warning(
-                    "warn_threshold %s out of range [0.0, 1.0], clamping",
-                    warn_threshold,
-                )
-                warn_threshold = max(0.0, min(1.0, warn_threshold))
-        if strict:
-            block_threshold = min(block_threshold, 0.5)
-            warn_threshold = min(warn_threshold, 0.3)
-        # Maintain invariant: warn_threshold must be strictly below block_threshold
-        # so the warning band does not collapse.
-        if warn_threshold >= block_threshold:
-            if block_threshold > 0.0:
-                adjusted = block_threshold - 0.01
-                if adjusted < 0.0:
-                    adjusted = block_threshold * 0.9
-                if adjusted < 0.0:
-                    adjusted = 0.0
-                warn_threshold = adjusted
-            else:
-                warn_threshold = 0.0
-        return block_threshold, warn_threshold
+        return effective_security_thresholds(
+            block_threshold,
+            warn_threshold,
+            strict=strict,
+            logger=logger,
+        )
 
     def analyze(
         self,
