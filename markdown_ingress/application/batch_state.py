@@ -82,7 +82,7 @@ class _BatchContext:
             current = self.completed
             try:
                 self.on_progress(current, self.total, url)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - progress callbacks are optional
                 _logger.warning(
                     "Batch progress callback failed for %s (%d/%d): %s",
                     url,

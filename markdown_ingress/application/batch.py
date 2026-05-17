@@ -196,7 +196,7 @@ class BatchProcessor:
                 await self._report_custom_batch_completion(state, url)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - per-URL batch errors are collected
                 await _record_custom_batch_error(state, index, url, exc)
                 await self._report_custom_batch_completion(state, url)
                 return False
@@ -210,7 +210,7 @@ class BatchProcessor:
             state.completed += 1
             try:
                 self.on_progress(state.completed, state.total, url)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - progress callbacks are optional
                 _logger.warning(
                     "Batch progress callback failed for %s (%d/%d): %s",
                     url,

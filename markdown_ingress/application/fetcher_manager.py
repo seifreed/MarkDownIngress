@@ -64,7 +64,7 @@ def _close_fetcher(fetcher: object) -> None:
         return
     try:
         close()
-    except Exception as exc:  # pragma: no cover - defensive cleanup path
+    except Exception as exc:  # noqa: BLE001 - fetcher cleanup is best effort
         _logger.warning("Failed to close fetcher cleanly: %s", exc, exc_info=True)
 
 

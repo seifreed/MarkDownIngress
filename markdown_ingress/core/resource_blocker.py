@@ -168,7 +168,7 @@ class ResourceBlocker:
             else:
                 await route.continue_()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - route handler fails closed on any error
             # Security: On exception, default to blocking to prevent bypass attacks
             # where attacker crafts malformed URL to trigger exception and bypass blocking
             logger.warning(f"Error in route handler (defaulting to block): {e}")
@@ -179,7 +179,7 @@ class ResourceBlocker:
                     self.blocked_count += 1
             try:
                 await route.abort()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - abort may race with handled route
                 # Route may already be handled
                 logger.debug("Route abort already handled: %s", exc)
 

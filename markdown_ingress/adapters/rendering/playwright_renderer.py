@@ -318,7 +318,7 @@ class Renderer(IRenderer):
                 result.metadata["timeout_used_ms"] = timeout_ms
                 logger.info(f"[Extreme Mode] Success with {wait_state} strategy")
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - progressive render tries next strategy
                 last_exception = e
                 error_msg = str(e)
                 logger.warning(f"[Extreme Mode] {wait_state} strategy failed: {error_msg[:100]}")

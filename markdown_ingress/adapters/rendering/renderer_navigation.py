@@ -90,7 +90,7 @@ async def wait_for_content(
             timeout=timeout_ms,
         )
         logger.info("[Smart Wait] Content verification passed")
-    except Exception as exc:
+    except PlaywrightError as exc:
         logger.warning("[Smart Wait] Content verification timed out: %s", exc)
 
 
@@ -103,7 +103,7 @@ async def navigate_page(page: Any, url: str, timeout_ms: int, *, wait_until: str
     if wait_until != "networkidle":
         try:
             await page.wait_for_load_state("domcontentloaded", timeout=min(1500, timeout_ms))
-        except Exception as exc:
+        except PlaywrightError as exc:
             logger.debug("DOMContentLoaded wait skipped: %s", exc)
     return response
 
@@ -129,6 +129,6 @@ async def extract_page_content(page: Any) -> str:
             """)
         if isinstance(html, str) and html.strip():
             return html
-    except Exception as exc:
+    except PlaywrightError as exc:
         logger.debug("Page evaluate fallback failed: %s", exc)
     raise RuntimeError("Unable to retrieve page content after navigation churn")

@@ -36,7 +36,7 @@ async def _close_async_resource(resource: Any | None, label: str) -> None:
         return
     try:
         await resource.close()
-    except Exception as exc:  # pragma: no cover - defensive cleanup path
+    except Exception as exc:  # noqa: BLE001 - cleanup must not mask prior failures
         logger.warning("Failed to close %s cleanly: %s", label, exc)
 
 
@@ -212,7 +212,7 @@ async def execute_render_session(
             html = await renderer._extract_page_content(page)
             try:
                 screenshot_path = await renderer._capture_screenshot(page)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - screenshots are optional metadata
                 logger.warning("Screenshot capture failed, continuing without: %s", e)
                 screenshot_path = None
 

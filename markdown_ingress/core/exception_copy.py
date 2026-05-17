@@ -64,15 +64,15 @@ def copy_exception_for_transfer(exc: Exception) -> Exception:
     """Copy an exception for cross-task/process transfer, preserving useful debug state."""
     try:
         return _prepare_exception_copy(exc, copy.deepcopy(exc))
-    except Exception:
+    except Exception:  # noqa: BLE001 - exception copying falls back by design
         try:
             new_exc = type(exc)(str(exc))
             return _prepare_exception_copy(exc, new_exc)
-        except Exception:
+        except Exception:  # noqa: BLE001 - exception copying falls back by design
             try:
                 new_exc = type(exc)()
                 fallback_args = exc.args or (str(exc),)
                 return _prepare_exception_copy(exc, new_exc, args=fallback_args)
-            except Exception:
+            except Exception:  # noqa: BLE001 - exception copying falls back by design
                 runtime_exc = RuntimeError(f"{type(exc).__name__}: {exc}")
                 return _prepare_exception_copy(exc, runtime_exc, args=runtime_exc.args)
