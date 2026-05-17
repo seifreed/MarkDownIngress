@@ -7,10 +7,16 @@ import logging
 import os
 import tempfile
 import threading
-import time
-from typing import Literal, cast
 
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
+from markdown_ingress.adapters.rendering.renderer_navigation import (
+    CONTENT_SELECTORS as DEFAULT_CONTENT_SELECTORS,
+)
+from markdown_ingress.adapters.rendering.renderer_navigation import (
+    extract_page_content,
+    navigate_page,
+    wait_for_content,
+)
 from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
     build_renderer_config,
@@ -48,7 +54,6 @@ def _cleanup_pending_screenshots() -> None:
 atexit.register(_cleanup_pending_screenshots)
 
 PLAYWRIGHT_INSTALLED = importlib.util.find_spec("playwright") is not None
-WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 _RETRYABLE_NAVIGATION_ERRORS = (
     "err_internet_disconnected",
     "err_network_io_suspended",
@@ -65,17 +70,6 @@ try:
 except ImportError:  # pragma: no cover
     STEALTH_AVAILABLE = False  # pragma: no cover
 
-try:
-    from playwright.async_api import (
-        Error as PlaywrightError,
-    )
-    from playwright.async_api import (
-        TimeoutError as PlaywrightTimeoutError,
-    )
-except ImportError:  # pragma: no cover
-    PlaywrightError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
-    PlaywrightTimeoutError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
-
 
 class Renderer(IRenderer):
     """Headless browser renderer using Playwright for JavaScript-heavy sites."""
@@ -89,14 +83,7 @@ class Renderer(IRenderer):
         ("networkidle", 120000),
     )
 
-    CONTENT_SELECTORS = (
-        "article",
-        "main",
-        '[role="main"]',
-        ".content",
-        "#content",
-        "body",
-    )
+    CONTENT_SELECTORS = DEFAULT_CONTENT_SELECTORS
 
     def __init__(
         self,
@@ -394,100 +381,13 @@ class Renderer(IRenderer):
         return await execute_render_session(self, url, timeout_ms, smart_wait=True)
 
     async def _wait_for_content(self, page, max_wait: int = 30):
-        wait_start = time.time()
-        max_wait_ms = max_wait * 1000
-
-        for selector in self.CONTENT_SELECTORS:
-            elapsed_ms = (time.time() - wait_start) * 1000
-            remaining_ms = max(0, max_wait_ms - elapsed_ms)
-            if remaining_ms <= 0:
-                break
-            try:
-                selector_timeout = min(2500, remaining_ms)
-                await page.wait_for_selector(selector, timeout=selector_timeout)
-                logger.info(f"[Smart Wait] Found content selector: {selector}")
-                break
-            except (PlaywrightTimeoutError, PlaywrightError):
-                continue
-
-        elapsed = time.time() - wait_start
-        remaining_ms = max(0, (max_wait - elapsed)) * 1000
-        if remaining_ms <= 0:
-            logger.warning("[Smart Wait] No time remaining for content verification")
-            return
-        timeout_ms = min(3000, int(remaining_ms))
-
-        try:
-            await page.wait_for_function(
-                """
-                () => {
-                    const body = document.body;
-                    if (!body) return false;
-
-                    const text = body.innerText || '';
-                    if (text.trim().length < 50) return false;
-
-                    const hasContent = document.querySelector('p, article, main, [role="main"]');
-                    if (!hasContent) return false;
-
-                    const loadingIndicators = document.querySelectorAll(
-                        '[class*="loading"], [class*="spinner"], [id*="loading"]'
-                    );
-                    for (const indicator of loadingIndicators) {
-                        const style = window.getComputedStyle(indicator);
-                        if (style.display !== 'none' && style.visibility !== 'hidden') {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }
-                """,
-                timeout=timeout_ms,
-            )
-            logger.info("[Smart Wait] Content verification passed")
-        except Exception as e:
-            logger.warning(f"[Smart Wait] Content verification timed out: {e}")
-            pass
+        await wait_for_content(page, max_wait=max_wait, selectors=self.CONTENT_SELECTORS)
 
     async def _navigate_page(self, page, url: str, timeout_ms: int):
-        response = await page.goto(
-            url,
-            timeout=timeout_ms,
-            wait_until=cast(WaitUntil, self.wait_until),
-        )
-        if self.wait_until != "networkidle":
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=min(1500, timeout_ms))
-            except Exception as e:
-                logger.debug("DOMContentLoaded wait skipped: %s", e)
-        return response
+        return await navigate_page(page, url, timeout_ms, wait_until=self.wait_until)
 
     async def _extract_page_content(self, page) -> str:
-        for attempt in range(3):
-            try:
-                return cast(str, await page.content())
-            except Exception as exc:
-                if "page is navigating" not in str(exc).lower():
-                    raise
-                if attempt == 2:
-                    break
-                await asyncio.sleep(0.2 * (attempt + 1))
-
-        html = None
-        try:
-            html = await page.evaluate("""
-                () => {
-                    const root = document.documentElement;
-                    return root ? root.outerHTML : '';
-                }
-                """)
-            if isinstance(html, str) and html.strip():
-                return html
-        except Exception as e:
-            logger.debug("Page evaluate fallback failed: %s", e)
-            pass
-        raise RuntimeError("Unable to retrieve page content after navigation churn")
+        return await extract_page_content(page)
 
     def render_sync(self, url: str) -> FetchResult:
         try:
