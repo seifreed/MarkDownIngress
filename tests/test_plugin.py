@@ -172,6 +172,38 @@ class RealPlugin(Plugin):
             assert sorted(loader.plugins) == ["ImportedPlugin", "RealPlugin"]
             assert [p for p, _ in loader.get_all_patterns()] == ["imported-pattern", "real-pattern"]
 
+    def test_load_from_directory_rolls_back_partial_file_load(self, tmp_path):
+        plugin_file = tmp_path / "partial_plugin.py"
+        rollback_marker = tmp_path / "rolled-back.txt"
+        plugin_file.write_text(f"""
+from pathlib import Path
+
+from markdown_ingress.core.plugin import Plugin
+
+
+class AGoodPlugin(Plugin):
+    def on_unload(self):
+        Path({str(rollback_marker)!r}).write_text("rolled back")
+
+    def get_patterns(self):
+        return ["good-pattern"]
+
+
+class ZBrokenPlugin(Plugin):
+    def on_load(self):
+        raise RuntimeError("broken plugin")
+
+    def get_patterns(self):
+        return ["broken-pattern"]
+""".strip())
+
+        loader = PluginLoader()
+        count = loader.load_from_directory(str(tmp_path))
+
+        assert count == 0
+        assert loader.plugins == {}
+        assert rollback_marker.read_text() == "rolled back"
+
     def test_plugin_already_loaded_error(self):
         """Loading same plugin twice raises error"""
         loader = PluginLoader()

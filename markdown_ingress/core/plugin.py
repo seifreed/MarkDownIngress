@@ -6,12 +6,15 @@ import hashlib
 import importlib
 import importlib.util
 import inspect
+import logging
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -92,6 +95,31 @@ class PluginLoader:
         plugin.on_unload()
         del self.plugins[name]
 
+    @staticmethod
+    def _module_name_for_file(py_file: Path) -> str:
+        """Return a stable synthetic module name for a plugin file."""
+        digest = hashlib.sha256(str(py_file.resolve(strict=False)).encode()).hexdigest()[:12]
+        return f"_mdi_plugin_{py_file.stem}_{digest}"
+
+    def _rollback_file_plugins(self, py_file: Path, plugin_names: list[str]) -> int:
+        """Remove plugins loaded from a file that later failed to finish loading."""
+        removed = 0
+        for plugin_name in reversed(plugin_names):
+            plugin = self.plugins.pop(plugin_name, None)
+            if plugin is None:
+                continue
+            removed += 1
+            try:
+                plugin.on_unload()
+            except Exception as exc:  # noqa: BLE001 - rollback must remove partial plugin state
+                _logger.warning(
+                    "Failed to unload partially loaded plugin %s from %s: %s",
+                    plugin_name,
+                    py_file,
+                    exc,
+                )
+        return removed
+
     def load_from_directory(self, directory: str) -> int:
         """
         Discover and load plugins from a directory.
@@ -117,9 +145,10 @@ class PluginLoader:
             if py_file.name.startswith("_"):
                 continue  # Skip __init__.py and _private.py
 
+            module_name = self._module_name_for_file(py_file)
+            loaded_from_file: list[str] = []
             try:
                 # Import module
-                module_name = f"_mdi_plugin_{py_file.stem}_{hash(str(py_file)) & 0xFFFF:04x}"
                 spec = importlib.util.spec_from_file_location(module_name, py_file)
                 if spec is None or spec.loader is None:
                     continue
@@ -137,15 +166,13 @@ class PluginLoader:
                         # Instantiate and load
                         plugin_instance = obj()
                         self.load_plugin(plugin_instance)
+                        loaded_from_file.append(plugin_instance.info.name)
                         loaded_count += 1
 
             except Exception as exc:  # noqa: BLE001 - bad external plugins are skipped
                 sys.modules.pop(module_name, None)
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "Failed to load plugin from %s: %s", py_file, exc
-                )
+                loaded_count -= self._rollback_file_plugins(py_file, loaded_from_file)
+                _logger.warning("Failed to load plugin from %s: %s", py_file, exc)
 
         return loaded_count
 
