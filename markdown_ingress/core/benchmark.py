@@ -99,7 +99,7 @@ class Benchmark:
                 timings.append((end - start) * 1000)  # Convert to ms
                 last_doc = doc
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - benchmark records failed iterations
                 errors += 1
                 _logger.debug("Benchmark iteration failed: %s", e)
 
@@ -149,7 +149,7 @@ class Benchmark:
                         if callable(close):
                             close()
                     extractor_comparison = self._compare_fn(fetch_result.html, self.model)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - extractor comparison is optional
                     _logger.debug("Extractor comparison failed: %s", e)
 
         return BenchmarkResult(
@@ -202,7 +202,7 @@ class Benchmark:
                     compare_extractors_enabled=compare_extractors_enabled,
                 )
                 results.append(result)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - batch benchmarks skip failed URLs
                 # Skip failed URLs but log for debugging
                 _logger.debug("Benchmark failed for URL %s: %s", url, e)
 
@@ -224,13 +224,13 @@ class Benchmark:
         # Benchmark fast mode
         try:
             results["fast"] = self.run_single(url, mode="fast", iterations=iterations)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - mode comparison should keep partial results
             _logger.debug("Fast mode benchmark failed: %s", e)
 
         # Benchmark render mode (if available)
         try:
             results["render"] = self.run_single(url, mode="render", iterations=iterations)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - mode comparison should keep partial results
             _logger.debug("Render mode benchmark failed: %s", e)
 
         return results
