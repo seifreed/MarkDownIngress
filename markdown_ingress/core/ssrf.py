@@ -6,7 +6,7 @@ import ipaddress
 import logging
 import re
 import socket
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from markdown_ingress.core.ssrf_normalization import (
     normalize_domain_pattern as normalize_domain_pattern,
@@ -24,6 +24,7 @@ from markdown_ingress.core.ssrf_normalization import (
 logger = logging.getLogger(__name__)
 
 _UNSPECIFIED_IPV4_HOST = ".".join(("0", "0", "0", "0"))
+_NUMERIC_IP_LITERAL_RE = re.compile(r"0x[0-9a-fA-F]+|0[0-7]+|\d+")
 
 _EXTRA_BLOCKED_NETWORKS = (
     ipaddress.ip_network("100.64.0.0/10"),
@@ -163,6 +164,84 @@ def dns_pin_matches_hostname(
     )
 
 
+def _parse_ip_literal_for_ssrf(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return normalize_ip_for_ssrf(ipaddress.ip_address(hostname))
+    except ValueError:
+        return None
+
+
+def _validate_ip_literal_for_ssrf(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> str:
+    if is_blocked_ip_address(ip):
+        raise ValueError(f"URL IP in blocked range (SSRF protection): {ip}")
+    return str(ip)
+
+
+def _raise_for_numeric_ip_literal_hostname(hostname: str) -> None:
+    if _NUMERIC_IP_LITERAL_RE.fullmatch(hostname):
+        raise ValueError(
+            "URL hostname looks like a numeric IP literal and is blocked "
+            f"(SSRF protection): {hostname}"
+        )
+
+
+def _validate_compressed_ipv4_hostname(hostname: str) -> str | None:
+    if "." not in hostname or hostname.endswith("."):
+        return None
+
+    try:
+        raw = socket.inet_aton(hostname)
+    except OSError:
+        return None
+
+    packed_ip = normalize_ip_for_ssrf(ipaddress.ip_address(int.from_bytes(raw, "big")))
+    if is_blocked_ip_address(packed_ip):
+        raise ValueError(
+            f"URL hostname is a compressed IPv4 blocked by SSRF protection: "
+            f"{hostname} -> {packed_ip}"
+        )
+    return str(packed_ip)
+
+
+def _validate_unresolved_hostname_for_ssrf(hostname: str) -> str:
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
+        raise ValueError(f"URL hostname blocked (SSRF protection): {hostname}") from None
+    return hostname
+
+
+def _validate_dns_hostname_for_ssrf(hostname: str, *, allow_local: bool) -> str:
+    resolved_ips = validate_hostname_dns_ips_for_ssrf(hostname, allow_local=allow_local)
+    # Return the first resolved IP to pin DNS and prevent rebinding
+    if resolved_ips:
+        return resolved_ips[0]
+    return hostname
+
+
+def _validate_non_ip_hostname_for_ssrf(
+    hostname: str,
+    *,
+    allow_local: bool,
+    resolve_dns: bool,
+) -> str:
+    # Reject numeric-looking hostnames that some HTTP clients resolve as IPs
+    # (decimal IPv4 like 2130706433, hex like 0x7f000001, octal like 017700000001)
+    _raise_for_numeric_ip_literal_hostname(hostname)
+
+    # Catch compressed IPv4 like "127.1" or "10.0.1" that inet_aton accepts
+    # but ipaddress.ip_address() rejects (2- or 3-part dotted decimal).
+    compressed_ip = _validate_compressed_ipv4_hostname(hostname)
+    if compressed_ip is not None:
+        return compressed_ip
+
+    if not resolve_dns:
+        return _validate_unresolved_hostname_for_ssrf(hostname)
+    return _validate_dns_hostname_for_ssrf(hostname, allow_local=allow_local)
+
+
 def validate_hostname_for_ssrf(
     hostname: str,
     *,
@@ -187,46 +266,89 @@ def validate_hostname_for_ssrf(
     if is_blocked_hostname(normalized):
         raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
 
+    ip = _parse_ip_literal_for_ssrf(normalized)
+    if ip is not None:
+        return _validate_ip_literal_for_ssrf(ip)
+    return _validate_non_ip_hostname_for_ssrf(
+        normalized,
+        allow_local=allow_local,
+        resolve_dns=resolve_dns,
+    )
+
+
+def _normalize_http_url_text(url: str) -> str:
+    normalized_url = str(url).strip()
+    if not normalized_url:
+        raise ValueError("URL cannot be empty")
+
+    # BUG FIX: Check for CRLF injection characters that could be used for header injection
+    if "\r" in normalized_url or "\n" in normalized_url:
+        raise ValueError(f"URL contains forbidden CRLF characters: {url!r}")
+
+    # BUG FIX: Check for null bytes that could be used to bypass validation
+    if "\x00" in normalized_url:
+        raise ValueError(f"URL contains null byte: {url!r}")
+    return normalized_url
+
+
+def _split_http_url_for_ssrf(normalized_url: str, original_url: str) -> SplitResult:
     try:
-        ip = normalize_ip_for_ssrf(ipaddress.ip_address(normalized))
-    except ValueError:
-        # Reject numeric-looking hostnames that some HTTP clients resolve as IPs
-        # (decimal IPv4 like 2130706433, hex like 0x7f000001, octal like 017700000001)
-        if re.fullmatch(r"0x[0-9a-fA-F]+|0[0-7]+|\d+", normalized):
-            raise ValueError(
-                "URL hostname looks like a numeric IP literal and is blocked "
-                f"(SSRF protection): {normalized}"
-            ) from None
-        # Catch compressed IPv4 like "127.1" or "10.0.1" that inet_aton accepts
-        # but ipaddress.ip_address() rejects (2- or 3-part dotted decimal).
-        if "." in normalized and not normalized.endswith("."):
-            import socket
+        return urlsplit(normalized_url)
+    except Exception as exc:
+        raise ValueError(f"Invalid URL format: {original_url!r}: {exc}") from exc
 
-            try:
-                raw = socket.inet_aton(normalized)
-                packed_ip = normalize_ip_for_ssrf(ipaddress.ip_address(int.from_bytes(raw, "big")))
-                if is_blocked_ip_address(packed_ip):
-                    raise ValueError(
-                        f"URL hostname is a compressed IPv4 blocked by SSRF protection: "
-                        f"{normalized} -> {packed_ip}"
-                    )
-                return str(packed_ip)
-            except OSError:
-                pass
-        if not resolve_dns:
-            if normalized.lower() in _BLOCKED_HOSTNAMES:
-                raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}") from None
-            return normalized
-        resolved_ips = validate_hostname_dns_ips_for_ssrf(normalized, allow_local=allow_local)
-        # Return the first resolved IP to pin DNS and prevent rebinding
-        if resolved_ips:
-            return resolved_ips[0]
-        return normalized
 
-    if is_blocked_ip_address(ip):
-        raise ValueError(f"URL IP in blocked range (SSRF protection): {ip}")
+def _validate_http_url_authority(parsed: SplitResult, original_url: str) -> int | None:
+    # BUG FIX: Validate that URL has a network location (netloc)
+    # URLs like "http:///example.com" (triple slash) have empty netloc
+    if not parsed.netloc:
+        raise ValueError(f"URL must have a valid network location: {original_url!r}")
 
-    return str(ip)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(
+            f"Invalid URL scheme: {scheme!r}. Only http and https are allowed. "
+            f"URL: {original_url!r}"
+        )
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid URL port: {original_url!r}: {exc}") from exc
+    if port is not None and (port < 1 or port > 65535):
+        raise ValueError(f"Invalid URL port: {original_url!r}. Port must be between 1 and 65535")
+    return port
+
+
+def _build_pinned_url_netloc(
+    parsed: SplitResult,
+    validated_target: str,
+    port: int | None,
+) -> str:
+    if ":" in validated_target:
+        new_netloc = f"[{validated_target}]"
+    else:
+        new_netloc = validated_target
+
+    if port is not None:
+        new_netloc = f"{new_netloc}:{port}"
+
+    if parsed.username:
+        auth = parsed.username
+        if parsed.password:
+            auth = f"{auth}:{parsed.password}"
+        new_netloc = f"{auth}@{new_netloc}"
+    return new_netloc
+
+
+def _reconstruct_url_with_pinned_target(
+    parsed: SplitResult,
+    *,
+    validated_target: str,
+    port: int | None,
+) -> str:
+    new_netloc = _build_pinned_url_netloc(parsed, validated_target, port)
+    return urlunsplit((parsed.scheme, new_netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def validate_http_url_no_ssrf(
@@ -240,41 +362,9 @@ def validate_http_url_no_ssrf(
     BUG FIX: Also validates URL for CRLF injection and null bytes to prevent
     header injection attacks via malformed URLs.
     """
-    normalized_url = str(url).strip()
-    if not normalized_url:
-        raise ValueError("URL cannot be empty")
-
-    # BUG FIX: Check for CRLF injection characters that could be used for header injection
-    if "\r" in normalized_url or "\n" in normalized_url:
-        raise ValueError(f"URL contains forbidden CRLF characters: {url!r}")
-
-    # BUG FIX: Check for null bytes that could be used to bypass validation
-    if "\x00" in normalized_url:
-        raise ValueError(f"URL contains null byte: {url!r}")
-
-    try:
-        parsed = urlsplit(normalized_url)
-    except Exception as exc:
-        raise ValueError(f"Invalid URL format: {url!r}: {exc}") from exc
-
-    # BUG FIX: Validate that URL has a network location (netloc)
-    # URLs like "http:///example.com" (triple slash) have empty netloc
-    if not parsed.netloc:
-        raise ValueError(f"URL must have a valid network location: {url!r}")
-
-    scheme = parsed.scheme.lower()
-    if scheme not in ("http", "https"):
-        raise ValueError(
-            f"Invalid URL scheme: {scheme!r}. Only http and https are allowed. URL: {url!r}"
-        )
-
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError(f"Invalid URL port: {url!r}: {exc}") from exc
-    if port is not None and (port < 1 or port > 65535):
-        raise ValueError(f"Invalid URL port: {url!r}. Port must be between 1 and 65535")
-
+    normalized_url = _normalize_http_url_text(url)
+    parsed = _split_http_url_for_ssrf(normalized_url, url)
+    port = _validate_http_url_authority(parsed, url)
     original_hostname = parsed.hostname or ""
     validated_target = validate_hostname_for_ssrf(
         original_hostname,
@@ -286,24 +376,11 @@ def validate_http_url_no_ssrf(
     # IP-pinned target to prevent DNS rebinding attacks. The original hostname
     # is preserved as the Host header hint for the caller.
     if validated_target != original_hostname and resolve_dns:
-        # Replace the hostname in the URL with the validated IP
-        if ":" in validated_target:
-            # IPv6 address — bracket it in the URL
-            new_netloc = f"[{validated_target}]"
-        else:
-            new_netloc = validated_target
-        # Preserve port and auth info in netloc
-        if parsed.port:
-            new_netloc = f"{new_netloc}:{parsed.port}"
-        if parsed.username:
-            auth = parsed.username
-            if parsed.password:
-                auth = f"{auth}:{parsed.password}"
-            new_netloc = f"{auth}@{new_netloc}"
-        reconstructed = urlunsplit(
-            (parsed.scheme, new_netloc, parsed.path, parsed.query, parsed.fragment)
+        return _reconstruct_url_with_pinned_target(
+            parsed,
+            validated_target=validated_target,
+            port=port,
         )
-        return reconstructed
 
     return normalized_url
 
