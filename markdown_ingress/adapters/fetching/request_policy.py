@@ -19,6 +19,7 @@ from markdown_ingress.adapters.fetching.http_support import (
     SAFE_HEADERS,
     PreparedRequest,
     format_host_header,
+    hostname_to_ascii,
 )
 from markdown_ingress.core.ssrf import (
     normalize_hostname,
@@ -186,7 +187,7 @@ class FetchRequestPolicyMixin:
     def _stream_extensions(sni_hostname: str | None) -> dict[str, Any] | None:
         if sni_hostname is None:
             return None
-        return {"sni_hostname": sni_hostname.encode("ascii")}
+        return {"sni_hostname": hostname_to_ascii(sni_hostname).encode("ascii")}
 
     def _open_stream(
         self: Any,

@@ -67,6 +67,51 @@ def test_https_dns_pinning_uses_original_hostname_for_sni(monkeypatch):
     assert captured["socket_closed"] is True
 
 
+def test_https_dns_pinning_idna_encodes_original_hostname_for_sni(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeSocket:
+        def close(self):
+            captured["socket_closed"] = True
+
+    class FakeContext:
+        def wrap_socket(self, sock, server_hostname=None):
+            captured["server_hostname"] = server_hostname
+            return sock
+
+    class FakeResponse:
+        status = 204
+
+    def fake_create_connection(address, timeout=None, source_address=None):
+        captured["address"] = address
+        return FakeSocket()
+
+    def fake_send(self, data):
+        if self.sock is None:
+            self.connect()
+        captured["sent"] = True
+
+    def fake_getresponse(self):
+        return FakeResponse()
+
+    monkeypatch.setattr(http_notifier_module.socket, "create_connection", fake_create_connection)
+    monkeypatch.setattr(http_notifier_module.ssl, "create_default_context", lambda: FakeContext())
+    monkeypatch.setattr(http_notifier_module.HTTPSConnection, "send", fake_send)
+    monkeypatch.setattr(http_notifier_module.HTTPSConnection, "getresponse", fake_getresponse)
+
+    notifier = HTTPWebhookNotifier(max_retries=0, retry_delay_seconds=0.0, timeout_seconds=3.0)
+    notifier.notify(
+        "https://b\u00fccher.example/hook",
+        {"ok": True},
+        validated_ip="93.184.216.34",
+    )
+
+    assert captured["address"] == ("93.184.216.34", 443)
+    assert captured["server_hostname"] == "xn--bcher-kva.example"
+    assert captured["sent"] is True
+    assert captured["socket_closed"] is True
+
+
 def test_https_dns_pinning_rejects_invalid_port_zero():
     notifier = HTTPWebhookNotifier(max_retries=1, retry_delay_seconds=0.0, timeout_seconds=3.0)
 

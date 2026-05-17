@@ -680,6 +680,53 @@ def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch
     assert reserved_hosts == ["example.com"]
 
 
+def test_fetch_sync_idna_encodes_hostname_for_sni_after_dns_pinning(monkeypatch):
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    captured: dict[str, object] = {}
+
+    class StreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        url = "https://93.184.216.34:8443/pinned"
+        charset_encoding = "utf-8"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_bytes(self):
+            yield b"<html><body><article><p>ok</p></article></body></html>"
+
+    class SyncClient:
+        def stream(self, method: str, url: str, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return StreamResponse()
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(
+        fetcher,
+        "_validate_url",
+        lambda url, allow_local_urls=False: "https://93.184.216.34:8443/pinned",
+    )
+
+    result = fetcher.fetch_sync("https://b\u00fccher.example:8443/pinned")
+
+    kwargs = captured["kwargs"]
+    assert result.status_code == 200
+    assert captured["url"] == "https://93.184.216.34:8443/pinned"
+    assert kwargs["headers"]["Host"] == "xn--bcher-kva.example:8443"
+    assert kwargs["extensions"]["sni_hostname"] == b"xn--bcher-kva.example"
+
+
 def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 

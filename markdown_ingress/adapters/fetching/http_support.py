@@ -56,8 +56,26 @@ class PreparedRequest(NamedTuple):
     logical_host: str
 
 
+def hostname_to_ascii(hostname: str) -> str:
+    """Return a hostname safe for HTTP Host headers and TLS SNI."""
+    host = hostname.strip().rstrip(".").lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host or ":" in host:
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError(f"hostname cannot be encoded with IDNA: {hostname!r}") from exc
+
+
 def format_host_header(hostname: str, port: int | None, scheme: str) -> str:
-    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    ascii_hostname = hostname_to_ascii(hostname)
+    host = (
+        f"[{ascii_hostname}]"
+        if ":" in ascii_hostname and not ascii_hostname.startswith("[")
+        else ascii_hostname
+    )
     default_port = 443 if scheme.lower() == "https" else 80
     return f"{host}:{port}" if port is not None and port != default_port else host
 

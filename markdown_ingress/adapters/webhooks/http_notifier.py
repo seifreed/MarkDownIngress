@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from markdown_ingress.adapters.fetching.http_support import hostname_to_ascii
 from markdown_ingress.core.ssrf import (
     is_blocked_ip_address,
     normalize_hostname,
@@ -93,7 +94,12 @@ def _validate_finite_float(field_name: str, value: object, *, minimum: float) ->
 
 def _format_host_header(hostname: str, port: int, scheme: str) -> str:
     """Format the HTTP Host header, preserving IPv6 brackets and non-default ports."""
-    host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    ascii_hostname = hostname_to_ascii(hostname)
+    host = (
+        f"[{ascii_hostname}]"
+        if ":" in ascii_hostname and not ascii_hostname.startswith("[")
+        else ascii_hostname
+    )
     default_port = 443 if scheme == "https" else 80
     return f"{host}:{port}" if port != default_port else host
 
@@ -123,7 +129,7 @@ def _parse_webhook_url(webhook_url: str):
 
 def _parse_pinned_webhook_target(webhook_url: str) -> _PinnedWebhookTarget:
     parsed = _parse_webhook_url(webhook_url)
-    hostname = normalize_hostname(parsed.hostname or "")
+    hostname = hostname_to_ascii(normalize_hostname(parsed.hostname or ""))
     if parsed.scheme not in {"http", "https"}:
         raise ValueError(
             f"Invalid webhook URL scheme: {parsed.scheme!r}. Only http and https are allowed."
