@@ -181,6 +181,78 @@ class ResourceBlocker:
                 # Route may already be handled
                 logger.debug("Route abort already handled: %s", exc)
 
+    def _should_block_resource_type(self, resource_type: str) -> tuple[bool, str | None] | None:
+        if self.block_images and resource_type == "image":
+            return True, None
+        if self.block_fonts and resource_type == "font":
+            return True, None
+        if self.block_media and resource_type == "media":
+            return True, None
+        if self.block_css and resource_type == "stylesheet":
+            return True, None
+        return None
+
+    def _should_check_domain_patterns(self) -> bool:
+        return self.block_ads or self.block_trackers or bool(self._custom_blocked_domains)
+
+    def _should_block_by_domain_patterns(self, url: str) -> tuple[bool, str | None] | None:
+        if not self._should_check_domain_patterns():
+            return None
+        try:
+            url_parts = extract_resource_url_parts(url)
+        except ValueError:
+            return True, None
+
+        matched = self._match_host_patterns(url_parts.domain, self._custom_blocked_domains)
+        if matched is not None:
+            return True, matched
+
+        tracker_decision = self._should_block_tracker_url(url_parts)
+        if tracker_decision is not None:
+            return tracker_decision
+        return self._should_block_ad_url(url_parts)
+
+    def _should_block_tracker_url(self, url_parts) -> tuple[bool, str | None] | None:
+        if not self.block_trackers:
+            return None
+        matched = self._match_host_patterns(url_parts.domain, _TRACKER_DOMAINS)
+        if matched is not None:
+            return True, matched
+        matched = self._match_host_path_patterns(
+            url_parts.domain,
+            url_parts.path,
+            _TRACKER_HOST_PATH_PATTERNS,
+        )
+        if matched is not None:
+            return True, matched
+        matched = self._match_domain_only_patterns(
+            url_parts.domain,
+            _TRACKER_DOMAIN_ONLY_PATTERNS,
+        )
+        if matched is not None:
+            return True, matched
+        matched = self._match_path_patterns(
+            url_parts.path_with_query,
+            _TRACKER_PATH_PATTERNS,
+        )
+        if matched is not None:
+            return True, matched
+        return None
+
+    def _should_block_ad_url(self, url_parts) -> tuple[bool, str | None] | None:
+        if not self.block_ads:
+            return None
+        matched = self._match_host_patterns(url_parts.domain, _AD_DOMAINS)
+        if matched is not None:
+            return True, matched
+        matched = self._match_domain_only_patterns(
+            url_parts.domain,
+            _AD_DOMAIN_ONLY_PATTERNS,
+        )
+        if matched is not None:
+            return True, matched
+        return None
+
     def _should_block(self, resource_type: str, url: str) -> tuple[bool, str | None]:
         """
         Determine if a request should be blocked based on type and URL.
@@ -197,66 +269,13 @@ class ResourceBlocker:
         if scheme_decision is not None:
             return scheme_decision
 
-        # Block by resource type
-        if self.block_images and resource_type == "image":
-            return True, None
+        resource_type_decision = self._should_block_resource_type(resource_type)
+        if resource_type_decision is not None:
+            return resource_type_decision
 
-        if self.block_fonts and resource_type == "font":
-            return True, None
-
-        if self.block_media and resource_type == "media":
-            return True, None
-
-        if self.block_css and resource_type == "stylesheet":
-            return True, None
-
-        # Block by domain patterns (for ads, trackers, and custom blocklists).
-        if self.block_ads or self.block_trackers or self._custom_blocked_domains:
-            try:
-                url_parts = extract_resource_url_parts(url)
-            except ValueError:
-                return True, None
-
-            # Custom domains should be enforced independently of the built-in
-            # ad/tracker toggles so callers can define their own blocklist.
-            matched = self._match_host_patterns(url_parts.domain, self._custom_blocked_domains)
-            if matched is not None:
-                return True, matched
-
-            if self.block_trackers:
-                matched = self._match_host_patterns(url_parts.domain, _TRACKER_DOMAINS)
-                if matched is not None:
-                    return True, matched
-                matched = self._match_host_path_patterns(
-                    url_parts.domain,
-                    url_parts.path,
-                    _TRACKER_HOST_PATH_PATTERNS,
-                )
-                if matched is not None:
-                    return True, matched
-                matched = self._match_domain_only_patterns(
-                    url_parts.domain,
-                    _TRACKER_DOMAIN_ONLY_PATTERNS,
-                )
-                if matched is not None:
-                    return True, matched
-                matched = self._match_path_patterns(
-                    url_parts.path_with_query,
-                    _TRACKER_PATH_PATTERNS,
-                )
-                if matched is not None:
-                    return True, matched
-
-            if self.block_ads:
-                matched = self._match_host_patterns(url_parts.domain, _AD_DOMAINS)
-                if matched is not None:
-                    return True, matched
-                matched = self._match_domain_only_patterns(
-                    url_parts.domain,
-                    _AD_DOMAIN_ONLY_PATTERNS,
-                )
-                if matched is not None:
-                    return True, matched
+        domain_decision = self._should_block_by_domain_patterns(url)
+        if domain_decision is not None:
+            return domain_decision
 
         ssrf_decision = self._should_block_http_for_ssrf(url)
         if ssrf_decision is not None:
