@@ -326,65 +326,100 @@ def _external_owner_backend_still_owned(queue) -> bool:
     return check_external_owner_still_owns(db_path, _is_stale_heartbeat, _set_backend_error)
 
 
+def _clear_job_queue_repair_state_locked() -> None:
+    global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
+    _JOB_QUEUE_REPAIR_THREAD = None
+    _JOB_QUEUE_REPAIR_STOP = None
+
+
+def _clear_job_queue_repair_state() -> None:
+    with _JOB_QUEUE_LOCK:
+        _clear_job_queue_repair_state_locked()
+
+
+def _current_recoverable_job_queue() -> tuple[Any, str | None] | None:
+    with _JOB_QUEUE_LOCK:
+        queue = JOB_QUEUE
+        if queue is None:
+            _clear_job_queue_repair_state_locked()
+            return None
+        state = getattr(queue, "state", None)
+        if state not in _RECOVERABLE_QUEUE_STATES:
+            _clear_job_queue_repair_state_locked()
+            return None
+        return queue, state
+
+
+def _wait_for_next_job_queue_repair_attempt(stop_event: threading.Event, state: str | None) -> None:
+    if state == "external_owner":
+        stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
+    elif state == "backend_error":
+        stop_event.wait(_BACKEND_ERROR_REPAIR_RETRY_SECONDS)
+    else:
+        stop_event.wait(0.25)
+
+
+def _maybe_wait_for_external_owner_backend(
+    queue: Any, state: str | None, stop_event: threading.Event
+) -> tuple[str | None, bool]:
+    if state != "external_owner":
+        return state, False
+    try:
+        backend_still_owned = _external_owner_backend_still_owned(queue)
+    except RuntimeError:
+        return getattr(queue, "state", None), False
+    if backend_still_owned:
+        stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
+        return state, True
+    return state, False
+
+
+def _finish_repair_if_replaced_or_terminal(queue: Any, state: str | None) -> bool:
+    replacement_queue = _build_replacement_queue_or_current(queue)
+    if replacement_queue is not queue:
+        _clear_job_queue_repair_state()
+        return True
+    if state == "backend_error":
+        _clear_job_queue_repair_state()
+        return True
+    return False
+
+
+def _run_job_queue_repair_attempt(stop_event: threading.Event) -> bool:
+    candidate = _current_recoverable_job_queue()
+    if candidate is None:
+        return False
+    queue, state = candidate
+    try:
+        _close_queue_for_repair(queue)
+    except RuntimeError as e:
+        _logger.debug("Failed to close queue for repair: %s", e)
+    else:
+        state, retry_later = _maybe_wait_for_external_owner_backend(queue, state, stop_event)
+        if retry_later:
+            return True
+        if _finish_repair_if_replaced_or_terminal(queue, state):
+            return False
+    _wait_for_next_job_queue_repair_attempt(stop_event, state)
+    return True
+
+
+def _job_queue_repair_loop(stop_event: threading.Event) -> None:
+    while not stop_event.wait(0.0):
+        if not _run_job_queue_repair_attempt(stop_event):
+            return
+
+
 def _start_job_queue_repair_loop() -> None:
     global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-
-    def repair_loop() -> None:
-        global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-        if stop_event is None:
-            return
-        while not stop_event.wait(0.0):
-            with _JOB_QUEUE_LOCK:
-                queue = JOB_QUEUE
-                if queue is None:
-                    _JOB_QUEUE_REPAIR_THREAD = None
-                    _JOB_QUEUE_REPAIR_STOP = None
-                    return
-                state = getattr(queue, "state", None)
-                if state not in _RECOVERABLE_QUEUE_STATES:
-                    _JOB_QUEUE_REPAIR_THREAD = None
-                    _JOB_QUEUE_REPAIR_STOP = None
-                    return
-            try:
-                _close_queue_for_repair(queue)
-            except RuntimeError as e:
-                _logger.debug("Failed to close queue for repair: %s", e)
-            else:
-                # Queue closed successfully — attempt recovery based on state.
-                if state == "external_owner":
-                    try:
-                        backend_still_owned = _external_owner_backend_still_owned(queue)
-                    except RuntimeError:
-                        state = getattr(queue, "state", None)
-                    else:
-                        if backend_still_owned:
-                            stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
-                            continue
-                # Try building a replacement queue.
-                replacement_queue = _build_replacement_queue_or_current(queue)
-                if replacement_queue is not queue:
-                    with _JOB_QUEUE_LOCK:
-                        _JOB_QUEUE_REPAIR_THREAD = None
-                        _JOB_QUEUE_REPAIR_STOP = None
-                    return
-                # Backend error with no replacement possible — give up.
-                if state == "backend_error":
-                    with _JOB_QUEUE_LOCK:
-                        _JOB_QUEUE_REPAIR_THREAD = None
-                        _JOB_QUEUE_REPAIR_STOP = None
-                    return
-            # Wait before retrying based on the current state.
-            if state == "external_owner":
-                stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
-            elif state == "backend_error":
-                stop_event.wait(_BACKEND_ERROR_REPAIR_RETRY_SECONDS)
-            else:
-                stop_event.wait(0.25)
 
     # Assign stop_event BEFORE defining repair_loop so the closure captures
     # a fully initialised Event — eliminates the race where the thread starts
     # before the variable is bound.
     stop_event = threading.Event()
+
+    def repair_loop() -> None:
+        _job_queue_repair_loop(stop_event)
 
     with _JOB_QUEUE_LOCK:
         if _JOB_QUEUE_REPAIR_THREAD is not None and _JOB_QUEUE_REPAIR_THREAD.is_alive():
