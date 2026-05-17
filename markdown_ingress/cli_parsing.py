@@ -191,7 +191,7 @@ def _is_valid_url(url_string: str) -> bool:
         result = urlparse(url_string)
         # Must have a scheme (http/https) and a network location (hostname)
         return result.scheme in ("http", "https") and bool(result.hostname)
-    except Exception:
+    except ValueError:
         return False
 
 

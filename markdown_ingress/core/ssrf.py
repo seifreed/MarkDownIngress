@@ -407,7 +407,7 @@ def dns_pin_for_validated_http_url(
     try:
         original_hostname = normalize_hostname(urlsplit(str(original_url).strip()).hostname or "")
         validated_hostname = normalize_hostname(urlsplit(str(validated_url).strip()).hostname or "")
-    except Exception:
+    except ValueError:
         return None
     if not original_hostname or not validated_hostname:
         return None
@@ -421,7 +421,7 @@ def validated_http_url_requires_dns_pinning(original_url: str, validated_url: st
     try:
         original_hostname = normalize_hostname(urlsplit(str(original_url).strip()).hostname or "")
         validated_hostname = normalize_hostname(urlsplit(str(validated_url).strip()).hostname or "")
-    except Exception:
+    except ValueError:
         return True
     if not original_hostname or not validated_hostname:
         return True

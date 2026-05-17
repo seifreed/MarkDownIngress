@@ -72,7 +72,7 @@ def normalize_url_for_identity(url: str) -> str:
     normalized_url = str(url).strip()
     try:
         parsed = urlsplit(normalized_url)
-    except Exception:
+    except ValueError:
         logger.warning(
             "URL normalization failed for %r, skipping SSRF checks", normalized_url, exc_info=True
         )

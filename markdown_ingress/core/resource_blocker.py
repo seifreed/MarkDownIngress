@@ -291,7 +291,7 @@ class ResourceBlocker:
             return None
         try:
             scheme = urlsplit(url).scheme.lower()
-        except Exception:
+        except ValueError:
             return True, _SSRF_BLOCK_REASON
         if scheme in _BROWSER_INTERNAL_SCHEMES:
             return False, None

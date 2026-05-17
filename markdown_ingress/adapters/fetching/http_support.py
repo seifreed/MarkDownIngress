@@ -96,7 +96,7 @@ def parse_retry_after(value: str | None) -> float | None:
         retry_at = parsedate_to_datetime(raw)
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     return max(0.25, (retry_at - datetime.now(UTC)).total_seconds())
 
