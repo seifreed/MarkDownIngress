@@ -63,6 +63,42 @@ _UNSET_EXPLICIT_RUNTIME_KEYS = (
     "render_cost_budget",
 )
 
+_DEFAULT_NONE_RUNTIME_VALUES: dict[str, object] = {
+    "mode": "auto",
+    "strict": True,
+    "model": "gpt-4",
+    "timeout": 30.0,
+    "auto_render_threshold": 50,
+    "stealth": False,
+    "disable_http2": False,
+    "extreme_mode": False,
+    "extract_metadata": True,
+    "extract_links": True,
+    "advanced_security": False,
+    "use_llm": False,
+    "policy_name": "normal",
+    "output_format": "text",
+    "output_formats": ["markdown"],
+    "extract_blocks": False,
+    "chunking_strategy": "none",
+    "chunk_size": 1200,
+    "chunk_overlap": 120,
+    "detect_language": True,
+    "normalize_multilingual": True,
+    "include_security_explanation": True,
+    "include_observability": True,
+    "save_reports": False,
+    "reports_dir": "reports",
+    "fetcher_user_agent": "",
+    "domain_request_interval": 0.25,
+    "circuit_breaker_threshold": 3,
+    "circuit_breaker_open_seconds": 30.0,
+}
+
+_VALIDATED_RUNTIME_KEYS = frozenset(
+    {"custom_patterns", "plugin_dirs", "output_profile", "domain_policies"}
+)
+
 
 class _IsolatedCacheBackend:
     """Per-clone cache handle that preserves behavior without sharing object identity."""
@@ -146,6 +182,92 @@ def _collect_explicit_runtime_keys(values: Mapping[str, object]) -> set[str]:
     return explicit_keys
 
 
+def _copy_runtime_default(value: object) -> object:
+    if isinstance(value, list):
+        return list(value)
+    return value
+
+
+def _validate_runtime_override_values(values: Mapping[str, object]) -> dict[str, object]:
+    custom_patterns = values["custom_patterns"]
+    plugin_dirs = values["plugin_dirs"]
+    domain_policies = values["domain_policies"]
+
+    validated_custom_patterns = (
+        [] if custom_patterns is None else _validate_string_list("custom_patterns", custom_patterns)
+    )
+    if custom_patterns is not None:
+        _validate_regex_patterns(validated_custom_patterns)
+
+    return {
+        "custom_patterns": validated_custom_patterns,
+        "plugin_dirs": (
+            [] if plugin_dirs is None else _validate_string_list("plugin_dirs", plugin_dirs)
+        ),
+        "output_profile": _validate_output_profile_name(cast(str | None, values["output_profile"])),
+        "domain_policies": (
+            [] if domain_policies is None else _normalize_domain_policies(domain_policies)
+        ),
+    }
+
+
+def _runtime_value(
+    key: str,
+    value: object,
+    validated_values: Mapping[str, object],
+) -> object:
+    if key == "output_profile":
+        return validated_values[key] or "default"
+    if key in _VALIDATED_RUNTIME_KEYS:
+        return validated_values[key]
+    return value
+
+
+def _build_default_runtime_kwargs(
+    values: Mapping[str, object],
+    validated_values: Mapping[str, object],
+) -> dict[str, object]:
+    kwargs = {
+        key: values[key] if values[key] is not None else _copy_runtime_default(default)
+        for key, default in _DEFAULT_NONE_RUNTIME_VALUES.items()
+    }
+    kwargs.update(
+        {key: None if values[key] is UNSET else values[key] for key in _UNSET_EXPLICIT_RUNTIME_KEYS}
+    )
+    kwargs.update(
+        {
+            "custom_patterns": validated_values["custom_patterns"],
+            "plugin_dirs": validated_values["plugin_dirs"],
+            "output_profile": validated_values["output_profile"] or "default",
+            "domain_policies": validated_values["domain_policies"],
+        }
+    )
+    return kwargs
+
+
+def _iter_explicit_runtime_overrides(
+    values: Mapping[str, object],
+    validated_values: Mapping[str, object],
+):
+    for key in _NONE_EXPLICIT_RUNTIME_KEYS:
+        value = values[key]
+        if value is not None:
+            yield key, _runtime_value(key, value, validated_values)
+    for key in _UNSET_EXPLICIT_RUNTIME_KEYS:
+        value = values[key]
+        if value is not UNSET:
+            yield key, value
+
+
+def _apply_explicit_runtime_overrides(
+    runtime_config: IngestConfig,
+    values: Mapping[str, object],
+    validated_values: Mapping[str, object],
+) -> None:
+    for key, value in _iter_explicit_runtime_overrides(values, validated_values):
+        setattr(runtime_config, key, value)
+
+
 def build_runtime_config(
     config: IngestConfig | FileConfig | None = None,
     mode: Literal["fast", "render", "auto"] | None = None,
@@ -188,160 +310,20 @@ def build_runtime_config(
     domain_policies: list[dict] | list[DomainPolicy] | None = None,
 ) -> IngestConfig:
     """Build an isolated runtime config from file/runtime config plus overrides."""
+    values = dict(locals())
     normalized = normalize_runtime_config(config)
-    validated_custom_patterns = (
-        [] if custom_patterns is None else _validate_string_list("custom_patterns", custom_patterns)
-    )
-    if custom_patterns is not None:
-        _validate_regex_patterns(validated_custom_patterns)
-    validated_plugin_dirs = (
-        [] if plugin_dirs is None else _validate_string_list("plugin_dirs", plugin_dirs)
-    )
-    validated_domain_policies = (
-        [] if domain_policies is None else _normalize_domain_policies(domain_policies)
-    )
-    validated_output_profile = _validate_output_profile_name(output_profile)
+    validated_values = _validate_runtime_override_values(values)
 
     if normalized is None:
-        runtime_config = IngestConfig(
-            mode=mode if mode is not None else "auto",
-            strict=strict if strict is not None else True,
-            allow_local_urls=None if allow_local_urls is UNSET else allow_local_urls,
-            model=model if model is not None else "gpt-4",
-            timeout=timeout if timeout is not None else 30.0,
-            auto_render_threshold=(
-                auto_render_threshold if auto_render_threshold is not None else 50
-            ),
-            stealth=stealth if stealth is not None else False,
-            disable_http2=disable_http2 if disable_http2 is not None else False,
-            extreme_mode=extreme_mode if extreme_mode is not None else False,
-            screenshot=None if screenshot is UNSET else screenshot,
-            extract_metadata=extract_metadata if extract_metadata is not None else True,
-            extract_links=extract_links if extract_links is not None else True,
-            advanced_security=advanced_security if advanced_security is not None else False,
-            use_llm=use_llm if use_llm is not None else False,
-            cache=None if cache is UNSET else cache,
-            cache_ttl=None if cache_ttl is UNSET else cache_ttl,
-            policy_name=policy_name if policy_name is not None else "normal",
-            custom_patterns=validated_custom_patterns,
-            plugin_dirs=validated_plugin_dirs,
-            output_format=output_format if output_format is not None else "text",
-            output_profile=(
-                validated_output_profile if validated_output_profile is not None else "default"
-            ),
-            output_formats=["markdown"] if output_formats is None else output_formats,
-            extract_blocks=extract_blocks if extract_blocks is not None else False,
-            chunking_strategy=chunking_strategy if chunking_strategy is not None else "none",
-            chunk_size=chunk_size if chunk_size is not None else 1200,
-            chunk_overlap=chunk_overlap if chunk_overlap is not None else 120,
-            detect_language=detect_language if detect_language is not None else True,
-            normalize_multilingual=(
-                normalize_multilingual if normalize_multilingual is not None else True
-            ),
-            include_security_explanation=(
-                include_security_explanation if include_security_explanation is not None else True
-            ),
-            include_observability=(
-                include_observability if include_observability is not None else True
-            ),
-            save_reports=save_reports if save_reports is not None else False,
-            reports_dir=reports_dir if reports_dir is not None else "reports",
-            fetcher_user_agent=fetcher_user_agent if fetcher_user_agent is not None else "",
-            domain_request_interval=(
-                domain_request_interval if domain_request_interval is not None else 0.25
-            ),
-            circuit_breaker_threshold=(
-                circuit_breaker_threshold if circuit_breaker_threshold is not None else 3
-            ),
-            circuit_breaker_open_seconds=(
-                circuit_breaker_open_seconds if circuit_breaker_open_seconds is not None else 30.0
-            ),
-            render_cost_budget=None if render_cost_budget is UNSET else render_cost_budget,
-            domain_policies=validated_domain_policies,
-        )
-        explicit_build_keys = _collect_explicit_runtime_keys(locals())
+        runtime_config = IngestConfig(**_build_default_runtime_kwargs(values, validated_values))
+        explicit_build_keys = _collect_explicit_runtime_keys(values)
         object.__setattr__(runtime_config, "_explicit_keys", frozenset(explicit_build_keys))
         return runtime_config.validate()
 
     runtime_config = clone_ingest_config(normalized)
     explicit_keys: set[str] = set(runtime_config.explicit_keys())
-    explicit_keys.update(_collect_explicit_runtime_keys(locals()))
-    if mode is not None:
-        runtime_config.mode = mode
-    if strict is not None:
-        runtime_config.strict = strict
-    if allow_local_urls is not UNSET:
-        runtime_config.allow_local_urls = allow_local_urls
-    if model is not None:
-        runtime_config.model = model
-    if timeout is not None:
-        runtime_config.timeout = timeout
-    if auto_render_threshold is not None:
-        runtime_config.auto_render_threshold = auto_render_threshold
-    if stealth is not None:
-        runtime_config.stealth = stealth
-    if disable_http2 is not None:
-        runtime_config.disable_http2 = disable_http2
-    if extreme_mode is not None:
-        runtime_config.extreme_mode = extreme_mode
-    if screenshot is not UNSET:
-        runtime_config.screenshot = screenshot
-    if extract_metadata is not None:
-        runtime_config.extract_metadata = extract_metadata
-    if extract_links is not None:
-        runtime_config.extract_links = extract_links
-    if advanced_security is not None:
-        runtime_config.advanced_security = advanced_security
-    if use_llm is not None:
-        runtime_config.use_llm = use_llm
-    if cache is not UNSET:
-        runtime_config.cache = cache
-    if cache_ttl is not UNSET:
-        runtime_config.cache_ttl = cache_ttl
-    if policy_name is not None:
-        runtime_config.policy_name = policy_name
-    if custom_patterns is not None:
-        runtime_config.custom_patterns = validated_custom_patterns
-    if plugin_dirs is not None:
-        runtime_config.plugin_dirs = validated_plugin_dirs
-    if output_format is not None:
-        runtime_config.output_format = output_format
-    if output_profile is not None:
-        runtime_config.output_profile = validated_output_profile or "default"
-    if output_formats is not None:
-        runtime_config.output_formats = output_formats
-    if extract_blocks is not None:
-        runtime_config.extract_blocks = extract_blocks
-    if chunking_strategy is not None:
-        runtime_config.chunking_strategy = chunking_strategy
-    if chunk_size is not None:
-        runtime_config.chunk_size = chunk_size
-    if chunk_overlap is not None:
-        runtime_config.chunk_overlap = chunk_overlap
-    if detect_language is not None:
-        runtime_config.detect_language = detect_language
-    if normalize_multilingual is not None:
-        runtime_config.normalize_multilingual = normalize_multilingual
-    if include_security_explanation is not None:
-        runtime_config.include_security_explanation = include_security_explanation
-    if include_observability is not None:
-        runtime_config.include_observability = include_observability
-    if save_reports is not None:
-        runtime_config.save_reports = save_reports
-    if reports_dir is not None:
-        runtime_config.reports_dir = reports_dir
-    if fetcher_user_agent is not None:
-        runtime_config.fetcher_user_agent = fetcher_user_agent
-    if domain_request_interval is not None:
-        runtime_config.domain_request_interval = domain_request_interval
-    if circuit_breaker_threshold is not None:
-        runtime_config.circuit_breaker_threshold = circuit_breaker_threshold
-    if circuit_breaker_open_seconds is not None:
-        runtime_config.circuit_breaker_open_seconds = circuit_breaker_open_seconds
-    if render_cost_budget is not UNSET:
-        runtime_config.render_cost_budget = render_cost_budget
-    if domain_policies is not None:
-        runtime_config.domain_policies = validated_domain_policies
+    explicit_keys.update(_collect_explicit_runtime_keys(values))
+    _apply_explicit_runtime_overrides(runtime_config, values, validated_values)
 
     object.__setattr__(runtime_config, "_explicit_keys", frozenset(explicit_keys))
     return runtime_config.validate()
