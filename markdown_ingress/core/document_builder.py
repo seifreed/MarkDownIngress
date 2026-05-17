@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
-from markdown_ingress.core.document_assembly import _build_safe_document
+from markdown_ingress.core.document_assembly import (
+    _build_safe_document,
+    _SafeDocumentAssemblyContext,
+)
 from markdown_ingress.core.document_plugins import (
     DocumentPluginContext,
     create_document_plugin_context,
@@ -38,6 +43,21 @@ from markdown_ingress.models import FetchResult, SafeDocument
 _extractor_factory: Callable[[bool], IExtractor] | None = None
 _md_converter_factory: Callable[[], IMarkdownConverter] | None = None
 _token_estimator_factory: Callable[[str], ITokenEstimator] | None = None
+
+
+@dataclass(frozen=True)
+class _ContentPipelineContext:
+    extractor: IExtractor
+    md_converter: IMarkdownConverter
+    structure_extractor: Any
+    chunk_builder: Any
+    orchestrator: Any
+    fetch_result: FetchResult
+    config: IngestConfig
+    matched_domain_policy: DomainPolicy | None
+    operational_flags: list[str]
+    stage_timings: dict[str, float]
+    document_url: str
 
 
 def register_document_builder_factories(
@@ -112,35 +132,29 @@ def _extract_and_apply_domain_rules(
     return extraction_result, domain_rule_stats
 
 
-def _enrich_metadata_and_links(
-    orchestrator,
-    config: IngestConfig,
-    fetch_result: FetchResult,
-    extraction_result,
-    document_url: str,
-    stage_timings: dict[str, float],
-):
+def _enrich_metadata_and_links(context: _ContentPipelineContext, extraction_result):
     """Optionally extract enriched page metadata and outbound links."""
+    config = context.config
     enriched_metadata = None
     if config.extract_metadata:
-        metadata_extractor = orchestrator.metadata_extractor or MetadataExtractor()
+        metadata_extractor = context.orchestrator.metadata_extractor or MetadataExtractor()
         enriched_metadata = timed_stage_with_snapshot(
-            stage_timings,
+            context.stage_timings,
             "metadata",
             lambda: metadata_extractor.extract(
-                fetch_result.html,
-                document_url,
+                context.fetch_result.html,
+                context.document_url,
                 detect_language=config.detect_language,
                 normalize_multilingual=config.normalize_multilingual,
             ),
         )
     links = None
     if config.extract_links:
-        link_analyzer = orchestrator.link_analyzer or LinkAnalyzer()
+        link_analyzer = context.orchestrator.link_analyzer or LinkAnalyzer()
         links = timed_stage_with_snapshot(
-            stage_timings,
+            context.stage_timings,
             "links",
-            lambda: link_analyzer.analyze(extraction_result.html, document_url),
+            lambda: link_analyzer.analyze(extraction_result.html, context.document_url),
         )
     return enriched_metadata, links
 
@@ -180,31 +194,27 @@ def _extract_structure(
     return structured_blocks, chunks, chunks_requested
 
 
-def _run_content_pipeline(
-    extractor: IExtractor,
-    md_converter: IMarkdownConverter,
-    structure_extractor,
-    chunk_builder,
-    orchestrator,
-    fetch_result: FetchResult,
-    config: IngestConfig,
-    matched_domain_policy: DomainPolicy | None,
-    operational_flags: list[str],
-    stage_timings: dict[str, float],
-    document_url: str,
-):
+def _run_content_pipeline(context: _ContentPipelineContext):
     """Extract, normalise, and structure the fetched HTML. Returns pipeline outputs."""
     extraction_result, domain_rule_stats = _extract_and_apply_domain_rules(
-        extractor, fetch_result, matched_domain_policy, operational_flags, stage_timings
+        context.extractor,
+        context.fetch_result,
+        context.matched_domain_policy,
+        context.operational_flags,
+        context.stage_timings,
     )
-    enriched_metadata, links = _enrich_metadata_and_links(
-        orchestrator, config, fetch_result, extraction_result, document_url, stage_timings
-    )
+    enriched_metadata, links = _enrich_metadata_and_links(context, extraction_result)
     markdown = timed_stage_with_snapshot(
-        stage_timings, "markdown", lambda: md_converter.convert(extraction_result.html)
+        context.stage_timings,
+        "markdown",
+        lambda: context.md_converter.convert(extraction_result.html),
     )
     structured_blocks, chunks, chunks_requested = _extract_structure(
-        structure_extractor, chunk_builder, config, extraction_result, stage_timings
+        context.structure_extractor,
+        context.chunk_builder,
+        context.config,
+        extraction_result,
+        context.stage_timings,
     )
     return (
         extraction_result,
@@ -213,7 +223,7 @@ def _run_content_pipeline(
         chunks,
         enriched_metadata,
         links,
-        operational_flags,
+        context.operational_flags,
         domain_rule_stats,
         chunks_requested,
     )
@@ -291,17 +301,19 @@ def process_fetched_content(
         domain_rule_stats,
         chunks_requested,
     ) = _run_content_pipeline(
-        extractor,
-        md_converter,
-        structure_extractor,
-        chunk_builder,
-        orchestrator,
-        fetch_result,
-        config,
-        matched_domain_policy,
-        operational_flags,
-        stage_timings,
-        document_url,
+        _ContentPipelineContext(
+            extractor=extractor,
+            md_converter=md_converter,
+            structure_extractor=structure_extractor,
+            chunk_builder=chunk_builder,
+            orchestrator=orchestrator,
+            fetch_result=fetch_result,
+            config=config,
+            matched_domain_policy=matched_domain_policy,
+            operational_flags=operational_flags,
+            stage_timings=stage_timings,
+            document_url=document_url,
+        )
     )
 
     security_metadata = {"hidden_elements_count": extraction_result.removed_hidden}
@@ -326,26 +338,28 @@ def process_fetched_content(
 
         try:
             document = _build_safe_document(
-                config=config,
-                fetch_result=fetch_result,
-                extraction_result=extraction_result,
-                markdown=markdown,
-                structured_blocks=structured_blocks,
-                chunks=chunks,
-                chunks_requested=chunks_requested,
-                enriched_metadata=enriched_metadata,
-                links=links,
-                security_result=security_result,
-                token_estimator=token_estimator,
-                hasher=hasher,
-                scorer=scorer,
-                matched_domain_policy=matched_domain_policy,
-                operational_flags=operational_flags,
-                domain_rule_stats=domain_rule_stats,
-                extra_patterns=plugin_context.extra_patterns,
-                plugins_loaded=plugin_context.plugins_loaded,
-                stage_timings=stage_timings,
-                policy_engine=policy_engine,
+                _SafeDocumentAssemblyContext(
+                    config=config,
+                    fetch_result=fetch_result,
+                    extraction_result=extraction_result,
+                    markdown=markdown,
+                    structured_blocks=structured_blocks,
+                    chunks=chunks,
+                    chunks_requested=chunks_requested,
+                    enriched_metadata=enriched_metadata,
+                    links=links,
+                    security_result=security_result,
+                    token_estimator=token_estimator,
+                    hasher=hasher,
+                    scorer=scorer,
+                    matched_domain_policy=matched_domain_policy,
+                    operational_flags=operational_flags,
+                    domain_rule_stats=domain_rule_stats,
+                    extra_patterns=plugin_context.extra_patterns,
+                    plugins_loaded=plugin_context.plugins_loaded,
+                    stage_timings=stage_timings,
+                    policy_engine=policy_engine,
+                )
             )
         except PolicyBlockedError as exc:
             if exc.document is not None:
