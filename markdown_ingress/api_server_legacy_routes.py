@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI
@@ -15,51 +16,55 @@ from markdown_ingress.api_server_models import (
 )
 
 
+@dataclass(frozen=True)
+class LegacyRouteHandlers:
+    ingest_endpoint: Callable[..., Any]
+    retry_ingest_endpoint: Callable[..., Any]
+    batch_ingest_endpoint: Callable[..., Any]
+    security_report_endpoint: Callable[..., Any]
+    extractor_comparison_endpoint: Callable[..., Any]
+    health_endpoint: Callable[..., Any]
+
+
 def register_legacy_routes(
     app: FastAPI,
-    *,
     dependencies: Sequence[Any],
-    ingest_endpoint: Callable[..., Any],
-    retry_ingest_endpoint: Callable[..., Any],
-    batch_ingest_endpoint: Callable[..., Any],
-    security_report_endpoint: Callable[..., Any],
-    extractor_comparison_endpoint: Callable[..., Any],
-    health_endpoint: Callable[..., Any],
+    handlers: LegacyRouteHandlers,
 ) -> None:
     """Register pre-v1 compatibility aliases for existing clients."""
     app.add_api_route(
         "/ingest",
-        ingest_endpoint,
+        handlers.ingest_endpoint,
         methods=["POST"],
         response_model=IngestResponse,
         dependencies=list(dependencies),
     )
     app.add_api_route(
         "/ingest/retry",
-        retry_ingest_endpoint,
+        handlers.retry_ingest_endpoint,
         methods=["POST"],
         response_model=IngestResponse,
         dependencies=list(dependencies),
     )
     app.add_api_route(
         "/ingest/batch",
-        batch_ingest_endpoint,
+        handlers.batch_ingest_endpoint,
         methods=["POST"],
         response_model=BatchIngestResponse,
         dependencies=list(dependencies),
     )
     app.add_api_route(
         "/security/report",
-        security_report_endpoint,
+        handlers.security_report_endpoint,
         methods=["POST"],
         response_model=SecurityReportResponse,
         dependencies=list(dependencies),
     )
     app.add_api_route(
         "/evaluate/extractors",
-        extractor_comparison_endpoint,
+        handlers.extractor_comparison_endpoint,
         methods=["POST"],
         response_model=ExtractorComparisonResponse,
         dependencies=list(dependencies),
     )
-    app.add_api_route("/health", health_endpoint, methods=["GET"])
+    app.add_api_route("/health", handlers.health_endpoint, methods=["GET"])

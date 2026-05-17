@@ -7,6 +7,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 from markdown_ingress.adapters.rendering.playwright_renderer import (
@@ -32,6 +33,19 @@ from markdown_ingress.shared_results import BatchResult
 logger = logging.getLogger(__name__)
 
 _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
+
+
+@dataclass(frozen=True)
+class RetryIngestRequest:
+    url: str
+    mode: Literal["fast", "render", "auto"] = "auto"
+    strict: bool = True
+    allow_local_urls: object = UNSET
+    model: str = "gpt-4"
+    max_retries: int = 3
+    enable_stealth: bool = True
+    initial_timeout: float = 60.0
+    max_timeout: float | None = None
 
 
 def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> None:
@@ -224,22 +238,14 @@ def _is_retryable_error(exc: Exception) -> bool:
     return type(exc).__name__ in retryable_names
 
 
-def retry_ingest_impl(
-    url: str,
-    mode: Literal["fast", "render", "auto"] = "auto",
-    strict: bool = True,
-    allow_local_urls=UNSET,
-    model: str = "gpt-4",
-    max_retries: int = 3,
-    enable_stealth: bool = True,
-    initial_timeout: float = 60.0,
-    max_timeout: float | None = None,
-) -> SafeDocument:
+def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
     """Implementation for retrying ingestion with escalating timeout and stealth."""
-    validated_max_retries = _validate_retry_max_retries(max_retries)
-    validated_initial_timeout = _validate_retry_timeout("initial_timeout", initial_timeout)
+    validated_max_retries = _validate_retry_max_retries(request.max_retries)
+    validated_initial_timeout = _validate_retry_timeout("initial_timeout", request.initial_timeout)
     validated_max_timeout = (
-        None if max_timeout is None else _validate_retry_timeout("max_timeout", max_timeout)
+        None
+        if request.max_timeout is None
+        else _validate_retry_timeout("max_timeout", request.max_timeout)
     )
     if validated_max_timeout is not None and validated_max_timeout < validated_initial_timeout:
         raise ValueError("max_timeout must be greater than or equal to initial_timeout")
@@ -254,20 +260,25 @@ def retry_ingest_impl(
                 validated_max_retries,
                 validated_initial_timeout,
                 validated_max_timeout,
-                enable_stealth,
+                request.enable_stealth,
             )
             if attempt > 0:
-                logger.info("Retry attempt %d/%d for %s", attempt + 1, validated_max_retries, url)
+                logger.info(
+                    "Retry attempt %d/%d for %s",
+                    attempt + 1,
+                    validated_max_retries,
+                    request.url,
+                )
                 logger.info(
                     "Timeout: %ss, Stealth: %s, Extreme: %s", timeout, use_stealth, use_extreme
                 )
 
             doc = public_ingest(
-                url,
-                mode=mode,
-                strict=strict,
-                allow_local_urls=allow_local_urls,
-                model=model,
+                request.url,
+                mode=request.mode,
+                strict=request.strict,
+                allow_local_urls=request.allow_local_urls,
+                model=request.model,
                 timeout=timeout,
                 stealth=use_stealth,
                 extreme_mode=use_extreme,
@@ -299,7 +310,7 @@ def retry_ingest_impl(
                     logger.error("Non-retryable error %s: %s", error_type, exc)
                     raise exc
             else:
-                logger.error("All %d attempts failed for %s", validated_max_retries, url)
+                logger.error("All %d attempts failed for %s", validated_max_retries, request.url)
                 logger.error("Final error: %s: %s", error_type, exc)
 
     if last_exception is not None:

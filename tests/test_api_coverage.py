@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from markdown_ingress.adapters.cache.memory import MemoryCache
 from markdown_ingress.api import ingest, ingest_many, retry_ingest
+from markdown_ingress.api_facade import RetryIngestRequest
 from markdown_ingress.api_runtime import build_runtime_config
 from markdown_ingress.api_server import app, main
 from markdown_ingress.api_server_models import BatchIngestRequest
@@ -571,7 +572,9 @@ def test_retry_ingest_accepts_allow_local_urls_override(mock_retry_ingest_impl):
     result = retry_ingest("https://example.com", allow_local_urls=True)
 
     assert result.markdown == "ok"
-    assert mock_retry_ingest_impl.call_args.kwargs["allow_local_urls"] is True
+    request = mock_retry_ingest_impl.call_args.args[0]
+    assert isinstance(request, RetryIngestRequest)
+    assert request.allow_local_urls is True
 
 
 def test_ingest_persists_security_report_when_requested(tmp_path):

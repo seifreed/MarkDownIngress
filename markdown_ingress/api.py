@@ -7,6 +7,7 @@ from markdown_ingress.adapters.rendering.playwright_renderer import (
 )
 from markdown_ingress.api_facade import (
     UNSET,
+    RetryIngestRequest,
     generate_security_report_impl,
     ingest_async_impl,
     ingest_impl,
@@ -211,15 +212,17 @@ def retry_ingest(
         >>> print(f"Final timeout: {doc.metadata['final_timeout']}s")
     """
     return retry_ingest_impl(
-        url=url,
-        mode=mode,
-        strict=strict,
-        allow_local_urls=allow_local_urls,
-        model=model,
-        max_retries=max_retries,
-        enable_stealth=enable_stealth,
-        initial_timeout=initial_timeout,
-        max_timeout=max_timeout,
+        RetryIngestRequest(
+            url=url,
+            mode=mode,
+            strict=strict,
+            allow_local_urls=allow_local_urls,
+            model=model,
+            max_retries=max_retries,
+            enable_stealth=enable_stealth,
+            initial_timeout=initial_timeout,
+            max_timeout=max_timeout,
+        )
     )
 
 

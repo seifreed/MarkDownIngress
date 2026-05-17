@@ -53,7 +53,7 @@ from markdown_ingress.api_server_job_history import (
     prune_job_queue_history,
     remember_job_queue,
 )
-from markdown_ingress.api_server_legacy_routes import register_legacy_routes
+from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
     _close_queue_for_repair,
@@ -722,13 +722,15 @@ root = _api_routes.root
 # Compatibility aliases for existing clients/tests.
 register_legacy_routes(
     app,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-    ingest_endpoint=ingest_endpoint,
-    retry_ingest_endpoint=retry_ingest_endpoint,
-    batch_ingest_endpoint=batch_ingest_endpoint,
-    security_report_endpoint=security_report_endpoint,
-    extractor_comparison_endpoint=extractor_comparison_endpoint,
-    health_endpoint=health,
+    [Depends(_require_api_key), Depends(_require_rate_limit)],
+    LegacyRouteHandlers(
+        ingest_endpoint=ingest_endpoint,
+        retry_ingest_endpoint=retry_ingest_endpoint,
+        batch_ingest_endpoint=batch_ingest_endpoint,
+        security_report_endpoint=security_report_endpoint,
+        extractor_comparison_endpoint=extractor_comparison_endpoint,
+        health_endpoint=health,
+    ),
 )
 
 
