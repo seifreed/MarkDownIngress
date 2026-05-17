@@ -9,7 +9,10 @@ from typing import Any, cast
 
 import httpx
 
-from markdown_ingress.adapters.fetching.http_fetch_state import HttpFetchState
+from markdown_ingress.adapters.fetching.http_fetch_state import (
+    HttpFetchAttemptContext,
+    HttpFetchState,
+)
 from markdown_ingress.adapters.fetching.http_support import (
     MAX_RETRIES,
     RETRYABLE_STATUS,
@@ -18,6 +21,7 @@ from markdown_ingress.adapters.fetching.http_support import (
     should_retry_with_ssl_bypass,
     validate_content_type,
 )
+from markdown_ingress.adapters.fetching.response_content import FetchResultParts
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.models import FetchResult
 
@@ -67,6 +71,7 @@ class AsyncHttpxFetchMixin:
         self: Any, client: Any, state: HttpFetchState
     ) -> FetchResult | None:
         ua, start_time = await self._prepare_async_fetch_attempt(state)
+        attempt = HttpFetchAttemptContext(state=state, start_time=start_time, user_agent=ua)
         try:
             headers = self._build_headers(ua, host_header=state.host_header)
             stream = self._open_stream(
@@ -76,7 +81,7 @@ class AsyncHttpxFetchMixin:
                 sni_hostname=state.sni_hostname,
             )
             async with stream as response:
-                result = await self._handle_async_fetch_response(response, state, start_time, ua)
+                result = await self._handle_async_fetch_response(response, attempt)
                 return cast(FetchResult | None, result)
         except (UnsupportedContentTypeError, ResponseSizeLimitError):
             raise
@@ -93,10 +98,9 @@ class AsyncHttpxFetchMixin:
     async def _handle_async_fetch_response(
         self: Any,
         response: Any,
-        state: HttpFetchState,
-        start_time: float,
-        ua: str,
+        attempt: HttpFetchAttemptContext,
     ) -> FetchResult | None:
+        state = attempt.state
         response_host = state.host
         if self._should_follow_redirect(response):
             await self._follow_async_redirect(response, state)
@@ -106,9 +110,7 @@ class AsyncHttpxFetchMixin:
             content = await self._read_async_response_content(response)
             return cast(
                 FetchResult,
-                self._finish_async_fetch_result(
-                    response, state, response_host, start_time, ua, content
-                ),
+                self._finish_async_fetch_result(response, attempt, content),
             )
         if response.status_code in RETRYABLE_STATUS and state.attempt < MAX_RETRIES - 1:
             await self._retry_async_response_status(response, state, response_host)
@@ -118,9 +120,7 @@ class AsyncHttpxFetchMixin:
         content = await self._read_async_response_content(response)
         return cast(
             FetchResult,
-            self._finish_async_fetch_result(
-                response, state, response_host, start_time, ua, content
-            ),
+            self._finish_async_fetch_result(response, attempt, content),
         )
 
     async def _follow_async_redirect(self: Any, response: Any, state: HttpFetchState) -> None:
@@ -150,24 +150,24 @@ class AsyncHttpxFetchMixin:
     def _finish_async_fetch_result(
         self: Any,
         response: Any,
-        state: HttpFetchState,
-        response_host: str,
-        start_time: float,
-        ua: str,
+        attempt: HttpFetchAttemptContext,
         content: bytes,
     ) -> FetchResult:
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        self._record_success(response_host)
+        elapsed_ms = (time.perf_counter() - attempt.start_time) * 1000
+        state = attempt.state
+        self._record_success(state.host)
         return cast(
             FetchResult,
             self._make_fetch_result(
-                content,
-                state.requested_logical_url,
-                state.logical_url,
-                response,
-                elapsed_ms,
-                ua,
-                state.attempt,
+                FetchResultParts(
+                    content=content,
+                    requested_url=state.requested_logical_url,
+                    final_url=state.logical_url,
+                    response=response,
+                    elapsed_ms=elapsed_ms,
+                    user_agent=attempt.user_agent,
+                    attempt=state.attempt,
+                )
             ),
         )
 

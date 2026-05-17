@@ -1,6 +1,7 @@
 """Response reading and result assembly for the HTTPX fetcher."""
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -12,6 +13,21 @@ from markdown_ingress.adapters.fetching.http_support import (
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FetchResultParts:
+    """Inputs required to assemble a FetchResult from an HTTP response."""
+
+    content: bytes
+    requested_url: str
+    final_url: str
+    response: Any
+    elapsed_ms: float
+    user_agent: str
+    attempt: int
+    ssl_bypass: bool = False
+    total_attempt: int | None = None
 
 
 class ResponseContentMixin:
@@ -98,31 +114,22 @@ class ResponseContentMixin:
 
     def _make_fetch_result(
         self,
-        content: bytes,
-        requested_url: str,
-        final_url: str,
-        response: Any,
-        elapsed_ms: float,
-        ua: str,
-        attempt: int,
-        *,
-        ssl_bypass: bool = False,
-        total_attempt: int | None = None,
+        parts: FetchResultParts,
     ) -> FetchResult:
-        html = self._decode_content(content, response.charset_encoding)
+        html = self._decode_content(parts.content, parts.response.charset_encoding)
         metadata: dict[str, object] = {
             "fetcher": "httpx",
-            "user_agent": ua,
-            "attempt": total_attempt or attempt + 1,
+            "user_agent": parts.user_agent,
+            "attempt": parts.total_attempt or parts.attempt + 1,
         }
-        if ssl_bypass:
+        if parts.ssl_bypass:
             metadata["ssl_bypass"] = True
         return FetchResult(
             html=html,
-            url=requested_url,
-            status_code=response.status_code,
-            final_url=final_url,
-            headers=response.headers,
-            timing_ms=elapsed_ms,
+            url=parts.requested_url,
+            status_code=parts.response.status_code,
+            final_url=parts.final_url,
+            headers=parts.response.headers,
+            timing_ms=parts.elapsed_ms,
             metadata=metadata,
         )

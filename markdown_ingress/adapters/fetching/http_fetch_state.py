@@ -66,3 +66,12 @@ class HttpFetchState:
             redirect_count=self.redirect_count,
             previous_ua=self.previous_ua,
         )
+
+
+@dataclass(frozen=True)
+class HttpFetchAttemptContext:
+    """Immutable timing and request metadata for one regular HTTP fetch attempt."""
+
+    state: HttpFetchState
+    start_time: float
+    user_agent: str

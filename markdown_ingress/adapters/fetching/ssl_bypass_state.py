@@ -29,6 +29,17 @@ class SslBypassFetchState:
         self.redirect_count += 1
 
 
+@dataclass(frozen=True)
+class SslBypassAttemptContext:
+    """Immutable timing and retry metadata for one SSL-bypass fetch attempt."""
+
+    state: SslBypassFetchState
+    start_time: float
+    user_agent: str
+    ssl_attempt: int
+    total_attempt: int
+
+
 def raise_ssl_bypass_exhausted(url: str, last_exc: Exception | None) -> NoReturn:
     if last_exc is not None:
         raise last_exc
