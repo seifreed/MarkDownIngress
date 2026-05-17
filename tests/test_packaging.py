@@ -37,3 +37,19 @@ def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     ]
 
     assert bare_version_specs == []
+
+
+def test_distribution_artifacts_are_not_stale() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    current_version = pyproject["project"]["version"]
+
+    distribution_dirs = [Path("dist_final"), Path("dist_fresh")]
+    stale_artifacts = [
+        path
+        for directory in distribution_dirs
+        if directory.exists()
+        for path in directory.iterdir()
+        if path.is_file() and current_version not in path.name
+    ]
+
+    assert stale_artifacts == []
