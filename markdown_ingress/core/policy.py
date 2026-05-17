@@ -207,10 +207,11 @@ def policy_engine_from_name(name: str) -> "PolicyEngine":
 def policy_engine_from_dict(config: dict[str, Any]) -> "PolicyEngine":
     """Create a PolicyEngine from a configuration dictionary."""
     config_copy = copy.deepcopy(config)
-    custom_patterns = []
+    custom_patterns: list[InjectionPattern] = []
     if "custom_patterns" in config_copy:
-        for pattern_dict in config_copy["custom_patterns"]:
-            custom_patterns.append(InjectionPattern(**pattern_dict))
+        custom_patterns.extend(
+            InjectionPattern(**pattern_dict) for pattern_dict in config_copy["custom_patterns"]
+        )
         config_copy["custom_patterns"] = custom_patterns
     return PolicyEngine(policy=Policy(**config_copy))
 

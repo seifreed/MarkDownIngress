@@ -302,12 +302,10 @@ class SecurityEngine:
 
         # Nova flags
         if nova_details.get("matched_rules"):
-            for rule in nova_details["matched_rules"]:
-                flags.append(f"nova:{rule}")
+            flags.extend(f"nova:{rule}" for rule in nova_details["matched_rules"])
 
         if nova_details.get("categories"):
-            for category in nova_details["categories"]:
-                flags.append(f"category:{category}")
+            flags.extend(f"category:{category}" for category in nova_details["categories"])
 
         # Severity flag
         if nova_details.get("severity"):
@@ -338,8 +336,10 @@ class SecurityEngine:
                 }
             )
 
-        for rule in context.nova_details.get("matched_rules", []):
-            triggers.append({"source": "nova", "name": rule})
+        triggers.extend(
+            {"source": "nova", "name": rule}
+            for rule in context.nova_details.get("matched_rules", [])
+        )
 
         if math.isnan(context.final_score):
             recommendation = "block"
