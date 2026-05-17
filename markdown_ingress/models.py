@@ -371,11 +371,11 @@ class SecurityReport:
 
     def save(self, filepath: str):
         """Save report to JSON file"""
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(self.to_json())
 
     @classmethod
     def load(cls, filepath: str) -> "SecurityReport":
         """Load report from JSON file"""
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             return cls.from_json(f.read())

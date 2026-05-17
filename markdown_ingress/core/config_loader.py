@@ -80,7 +80,7 @@ class ConfigLoader:
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {filepath}")
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         # Determine format from extension
         if filepath.endswith(".json"):
@@ -171,4 +171,4 @@ class ConfigLoader:
         else:
             raise ValueError("Config file must be .json, .yaml, or .yml")
 
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")

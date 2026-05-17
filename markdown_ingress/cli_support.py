@@ -132,7 +132,7 @@ def display_rich_output(doc, args, version: str) -> None:
 def save_json_output(output_data, args) -> None:
     output = json.dumps(output_data, indent=2)
     if args.save:
-        Path(args.save).write_text(output)
+        Path(args.save).write_text(output, encoding="utf-8")
         console.print(f"[green]JSON saved to {args.save}")
     else:
         print(output)
@@ -140,7 +140,7 @@ def save_json_output(output_data, args) -> None:
 
 def save_markdown_output(doc, args) -> None:
     if args.save:
-        Path(args.save).write_text(doc.markdown)
+        Path(args.save).write_text(doc.markdown, encoding="utf-8")
         console.print()
         console.print(f"[green]Markdown saved to {args.save}")
 
@@ -166,7 +166,7 @@ def _load_domain_policy_file(policy_file):
 
 def _read_domain_policy_json_file(policy_file):
     try:
-        content = Path(policy_file).read_text()
+        content = Path(policy_file).read_text(encoding="utf-8")
         return json.loads(content)
     except OSError as exc:
         console.print(f"[red]Error: Could not read domain policy file {policy_file}: {exc}")

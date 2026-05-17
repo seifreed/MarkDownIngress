@@ -317,7 +317,7 @@ def cmd_batch(args):
 
 def cmd_compare(args):
     """Compare extractor quality/security on a local HTML file."""
-    html = Path(args.file).read_text()
+    html = Path(args.file).read_text(encoding="utf-8")
     result = compare_extractors(html, model=args.model or "gpt-4")
     if args.json:
         print(json.dumps(result, indent=2))
@@ -358,6 +358,6 @@ def cmd_benchmark(args):
     )
     report = bench.generate_report(results)
     if args.output:
-        Path(args.output).write_text(report)
+        Path(args.output).write_text(report, encoding="utf-8")
     else:
         console.print(report)

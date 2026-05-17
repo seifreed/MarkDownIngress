@@ -56,6 +56,44 @@ def test_public_examples_do_not_index_batch_errors_by_url() -> None:
         assert ".errors[" not in text, path
 
 
+def test_runtime_text_file_io_uses_explicit_utf8_encoding() -> None:
+    runtime_files = sorted(Path("markdown_ingress").rglob("*.py"))
+    violations: list[str] = []
+
+    def has_encoding(call: ast.Call) -> bool:
+        return any(keyword.arg == "encoding" for keyword in call.keywords)
+
+    def call_mode(call: ast.Call, mode_arg_index: int) -> str:
+        for keyword in call.keywords:
+            if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
+                return str(keyword.value.value)
+        if len(call.args) > mode_arg_index:
+            mode_arg = call.args[mode_arg_index]
+            if isinstance(mode_arg, ast.Constant):
+                return str(mode_arg.value)
+        return "r"
+
+    for path in runtime_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {
+                "read_text",
+                "write_text",
+            }:
+                if not has_encoding(node):
+                    violations.append(f"{path}:{node.lineno}: {node.func.attr} missing encoding")
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "open":
+                if "b" not in call_mode(node, 0) and not has_encoding(node):
+                    violations.append(f"{path}:{node.lineno}: open missing encoding")
+            elif isinstance(node.func, ast.Name) and node.func.id == "open":
+                if "b" not in call_mode(node, 1) and not has_encoding(node):
+                    violations.append(f"{path}:{node.lineno}: open missing encoding")
+
+    assert violations == []
+
+
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 

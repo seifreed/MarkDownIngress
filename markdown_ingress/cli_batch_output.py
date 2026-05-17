@@ -101,7 +101,7 @@ def load_urls_from_file(filepath: str) -> list[str]:
         raise SystemExit(1)
     urls = [
         line.strip()
-        for line in urls_file.read_text().splitlines()
+        for line in urls_file.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
     if not urls:
@@ -218,7 +218,7 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
                 and hasattr(error_item, "error")
             ],
         }
-        output_path.write_text(json.dumps(output_data, indent=2))
+        output_path.write_text(json.dumps(output_data, indent=2), encoding="utf-8")
     else:
         output_path.mkdir(parents=True, exist_ok=True)
         if urls:
@@ -231,5 +231,8 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
         for row in rows:
             doc = row["document"]
             if doc and not getattr(args, "no_content", False):
-                (output_path / f"doc_{row['index'] + 1:03d}.md").write_text(doc.markdown)
+                (output_path / f"doc_{row['index'] + 1:03d}.md").write_text(
+                    doc.markdown,
+                    encoding="utf-8",
+                )
     console.print(f"[green]Results saved to {output_path}")
