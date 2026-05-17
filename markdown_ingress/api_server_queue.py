@@ -32,6 +32,7 @@ from markdown_ingress.api_server_env import _parse_iso_datetime_utc
 
 _QUEUE_LEASE_TIMEOUT_SECONDS = 30.0
 _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD = 3
+_ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 # ---------------------------------------------------------------------------
 # Exception types
@@ -85,6 +86,84 @@ def _coerce_positive_ttl_seconds(value: object) -> int | None:
     return ttl_value
 
 
+def _parse_optional_datetime_utc(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return _parse_iso_datetime_utc(value)
+
+
+def _optional_text(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _completed_row_with_ttl_is_expired(
+    completed_at: str | None,
+    ttl_seconds: object,
+    now: datetime,
+) -> bool:
+    ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+    if ttl_value is None:
+        return True
+    completed_dt = _parse_optional_datetime_utc(completed_at)
+    if completed_dt is None:
+        return True
+    return completed_dt + timedelta(seconds=ttl_value) <= now
+
+
+def _completed_row_without_ttl_is_expired(
+    completed_at: str | None,
+    legacy_expires_at: str | None,
+    now: datetime,
+) -> bool:
+    legacy_expires_dt = _parse_optional_datetime_utc(legacy_expires_at)
+    if legacy_expires_dt is not None:
+        return legacy_expires_dt <= now
+    expires_dt = _legacy_unknown_ttl_expires_at(completed_at, None)
+    if expires_dt is None:
+        return True
+    return expires_dt <= now
+
+
+def _job_visibility_fields(row: object) -> tuple[object, object, object, object]:
+    if isinstance(row, sqlite3.Row):
+        return row["status"], row["completed_at"], row["ttl_seconds"], row["legacy_expires_at"]
+    row_values = cast(tuple[object, object, object, object], row)
+    return row_values[0], row_values[1], row_values[2], row_values[3]
+
+
+def _completed_job_is_visible(
+    completed_at: object,
+    ttl_seconds: object,
+    legacy_expires_at: object,
+    now: datetime,
+) -> bool:
+    if ttl_seconds is None:
+        expires_dt = _legacy_unknown_ttl_expires_at(
+            _optional_text(completed_at),
+            _optional_text(legacy_expires_at),
+        )
+        return expires_dt is not None and now <= expires_dt
+
+    if not completed_at:
+        return False
+    completed_dt = _parse_optional_datetime_utc(_optional_text(completed_at))
+    if completed_dt is None:
+        return False
+    ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
+    if ttl_value is None:
+        return False
+    return (now - completed_dt).total_seconds() <= ttl_value
+
+
+def _job_row_is_visible(row: object, now: datetime) -> bool:
+    status, completed_at, ttl_seconds, legacy_expires_at = _job_visibility_fields(row)
+    if status in _ACTIVE_JOB_STATUSES:
+        return True
+    return _completed_job_is_visible(completed_at, ttl_seconds, legacy_expires_at, now)
+
+
 # ---------------------------------------------------------------------------
 # _ExternalOwnerJobQueue
 # ---------------------------------------------------------------------------
@@ -134,37 +213,18 @@ class _ExternalOwnerJobQueue:
 
     @staticmethod
     def _row_is_expired(row: sqlite3.Row) -> bool:
-        if row["status"] in {"queued", "running"}:
+        if row["status"] in _ACTIVE_JOB_STATUSES:
             return False
-
-        def _parse(value: str | None) -> datetime | None:
-            if value is None:
-                return None
-            try:
-                parsed = datetime.fromisoformat(value)
-            except (TypeError, ValueError):
-                return None
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=UTC)
-            return parsed.astimezone(UTC)
 
         now_dt = datetime.now(UTC)
         ttl_seconds = row["ttl_seconds"]
-        completed_at = _parse(row["completed_at"])
-        legacy_expires_at = _parse(row["legacy_expires_at"])
-
         if ttl_seconds is not None:
-            ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
-            if ttl_value is None:
-                return True
-            if completed_at is None:
-                return True
-            return completed_at + timedelta(seconds=ttl_value) <= now_dt
-        if legacy_expires_at is not None:
-            return legacy_expires_at <= now_dt
-        if completed_at is None:
-            return True
-        return completed_at + timedelta(seconds=LEGACY_UNKNOWN_TTL_SECONDS) <= now_dt
+            return _completed_row_with_ttl_is_expired(row["completed_at"], ttl_seconds, now_dt)
+        return _completed_row_without_ttl_is_expired(
+            row["completed_at"],
+            row["legacy_expires_at"],
+            now_dt,
+        )
 
     def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
         try:
@@ -288,27 +348,6 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         raise _TransientLegacyQueueReadError(f"legacy queue inspection failed: {exc}") from exc
     now = datetime.now(UTC)
     for row in rows:
-        status = row["status"] if isinstance(row, sqlite3.Row) else row[0]
-        completed_at = row["completed_at"] if isinstance(row, sqlite3.Row) else row[1]
-        ttl_seconds = row["ttl_seconds"] if isinstance(row, sqlite3.Row) else row[2]
-        legacy_expires_at = row["legacy_expires_at"] if isinstance(row, sqlite3.Row) else row[3]
-        if status in {"queued", "running"}:
-            return True
-        if ttl_seconds is None:
-            expires_dt = _legacy_unknown_ttl_expires_at(completed_at, legacy_expires_at)
-            if expires_dt is None:
-                continue
-            if now <= expires_dt:
-                return True
-            continue
-        if not completed_at:
-            continue
-        completed_dt = _parse_iso_datetime_utc(completed_at)
-        if completed_dt is None:
-            continue  # skip corrupt row, don't abort entire queue
-        ttl_value = _coerce_positive_ttl_seconds(ttl_seconds)
-        if ttl_value is None:
-            continue
-        if (now - completed_dt).total_seconds() <= ttl_value:
+        if _job_row_is_visible(row, now):
             return True
     return False
