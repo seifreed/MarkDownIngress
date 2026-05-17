@@ -1,7 +1,6 @@
 """HTTP fetcher adapter using httpx - fast mode implementation."""
 
 import asyncio
-import logging
 import time
 from threading import Lock
 
@@ -18,39 +17,27 @@ from markdown_ingress.adapters.fetching.http_support import (
 from markdown_ingress.adapters.fetching.http_support import (
     DEFAULT_MAX_RESPONSE_SIZE as _DEFAULT_MAX_RESPONSE_SIZE,
 )
-from markdown_ingress.adapters.fetching.http_support import (
-    MAX_RETRIES as _MAX_RETRIES,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    RETRYABLE_STATUS as _RETRYABLE_STATUS,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    ResponseSizeLimitError,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    retry_delay_seconds as _retry_delay_seconds,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    should_retry_with_ssl_bypass as _should_retry_with_ssl_bypass,
-)
-from markdown_ingress.adapters.fetching.http_support import (
-    validate_content_type as _validate_content_type,
-)
+from markdown_ingress.adapters.fetching.http_support import ResponseSizeLimitError
+from markdown_ingress.adapters.fetching.httpx_fetch_async import AsyncHttpxFetchMixin
+from markdown_ingress.adapters.fetching.httpx_fetch_sync import SyncHttpxFetchMixin
 from markdown_ingress.adapters.fetching.request_policy import FetchRequestPolicyMixin
 from markdown_ingress.adapters.fetching.response_content import ResponseContentMixin
-from markdown_ingress.adapters.fetching.ssl_bypass_fetch import (
-    SslBypassFetchMixin,
-    SslBypassFetchState,
-)
+from markdown_ingress.adapters.fetching.ssl_bypass_fetch import SslBypassFetchMixin
 from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
-from markdown_ingress.models import FetchResult
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "DomainCircuitOpenError",
+    "Fetcher",
+    "ResponseSizeLimitError",
+    "UnsupportedContentTypeError",
+]
 
 
 class Fetcher(
+    AsyncHttpxFetchMixin,
+    SyncHttpxFetchMixin,
     ClientLifecycleMixin,
     FetchRequestPolicyMixin,
     ResponseContentMixin,
@@ -128,316 +115,3 @@ class Fetcher(
         self._ssl_bypass_lock = Lock()
         self._closing = False
         self._async_close_tasks: set[asyncio.Task[None]] = set()
-
-    async def fetch(self, url: str) -> FetchResult:
-        url, logical_url, host_header, sni_hostname, host = (
-            self._prepare_request_url_with_dns_retry(url)
-        )
-        requested_logical_url = logical_url
-
-        last_exc: Exception | None = None
-        ssl_retried = self._is_ssl_bypass_active(host)
-        verify: bool | str = not ssl_retried
-        attempt = 0
-        redirect_count = 0
-        previous_ua: str | None = None
-
-        client = await self._get_async_client()
-        while attempt < _MAX_RETRIES and not ssl_retried:
-            ua = self._next_user_agent(previous=previous_ua)
-            previous_ua = ua
-            self._ensure_circuit_closed(host)
-            sleep_for = self._reserve_domain_slot(host)
-            if sleep_for > 0:
-                await asyncio.sleep(sleep_for)
-                self._ensure_circuit_closed(host)
-            start_time = time.perf_counter()
-
-            try:
-                headers = self._build_headers(ua, host_header=host_header)
-                stream = self._open_stream(client, url, headers=headers, sni_hostname=sni_hostname)
-                async with stream as response:
-                    response_host = host
-
-                    if self._should_follow_redirect(response):
-                        redirect_target = self._prepare_redirect_url(
-                            response, logical_url, redirect_count
-                        )
-                        if redirect_target is None:
-                            raise RuntimeError("Redirect response missing Location header")
-                        await self._drain_async_response_for_reuse(
-                            response, "Failed to read redirect response body"
-                        )
-                        url, logical_url, host_header, sni_hostname, host = redirect_target
-                        redirect_count += 1
-                        continue
-
-                    self._enforce_declared_response_size(response)
-
-                    if self._is_redirect_response(response) and not self.follow_redirects:
-                        content = await self._read_async_response_content(response)
-                        elapsed_ms = (time.perf_counter() - start_time) * 1000
-                        self._record_success(response_host)
-                        return self._make_fetch_result(
-                            content,
-                            requested_logical_url,
-                            logical_url,
-                            response,
-                            elapsed_ms,
-                            ua,
-                            attempt,
-                        )
-
-                    if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
-                        retry_delay = _retry_delay_seconds(response, attempt)
-                        self._handle_retryable_status(
-                            response_host, response.status_code, retry_delay
-                        )
-                        await self._drain_async_response_for_reuse(
-                            response, "Failed to read response body during retry"
-                        )
-                        await asyncio.sleep(retry_delay)
-                        attempt += 1
-                        continue
-
-                    response.raise_for_status()
-                    _validate_content_type(response)
-
-                    content = await self._read_async_response_content(response)
-
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                self._record_success(response_host)
-                return self._make_fetch_result(
-                    content,
-                    requested_logical_url,
-                    logical_url,
-                    response,
-                    elapsed_ms,
-                    ua,
-                    attempt,
-                )
-
-            except (UnsupportedContentTypeError, ResponseSizeLimitError):
-                raise
-
-            except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
-                raise
-
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                status_code = exc.response.status_code
-                response_host = host
-                if status_code not in _RETRYABLE_STATUS:
-                    raise
-                retry_delay = _retry_delay_seconds(exc.response, attempt)
-                self._handle_retryable_status(response_host, status_code, retry_delay)
-                if attempt >= _MAX_RETRIES - 1:
-                    raise
-                await asyncio.sleep(retry_delay)
-                attempt += 1
-                continue
-
-            except DomainCircuitOpenError:
-                raise
-
-            except httpx.TooManyRedirects:
-                raise
-
-            except Exception as exc:
-                last_exc = exc
-                self._record_failure(host)
-
-                if _should_retry_with_ssl_bypass(
-                    allow_ssl_bypass=self.allow_ssl_bypass,
-                    ssl_retried=ssl_retried,
-                    exc=exc,
-                ):
-                    logger.warning(
-                        "SSL verification failed for %s, retrying with certificate verification "
-                        "disabled. "
-                        "This bypass is insecure and should only be used for testing.",
-                        url,
-                    )
-                    verify = False  # pragma: no cover
-                    ssl_retried = True  # pragma: no cover
-                    attempt += 1
-                    break  # pragma: no cover
-                attempt += 1
-
-        if ssl_retried and verify is False:
-            return await self._fetch_with_ssl_bypass(
-                SslBypassFetchState(
-                    url=url,
-                    logical_url=logical_url,
-                    requested_logical_url=requested_logical_url,
-                    host_header=host_header,
-                    sni_hostname=sni_hostname,
-                    host=host,
-                    redirect_count=redirect_count,
-                    previous_ua=previous_ua,
-                ),
-                consumed_attempts=attempt,
-                last_exc=last_exc,
-            )
-
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(
-            f"Fetch failed for {url} after {_MAX_RETRIES} attempts"
-        )  # pragma: no cover
-
-    def fetch_sync(self, url: str) -> FetchResult:
-        url, logical_url, host_header, sni_hostname, host = (
-            self._prepare_request_url_with_dns_retry(url)
-        )
-        requested_logical_url = logical_url
-
-        last_exc: Exception | None = None
-        ssl_retried = self._is_ssl_bypass_active(host)
-        verify: bool | str = not ssl_retried
-        attempt = 0
-        redirect_count = 0
-        previous_ua: str | None = None
-
-        client = self._get_sync_client()
-        while attempt < _MAX_RETRIES and not ssl_retried:
-            ua = self._next_user_agent(previous=previous_ua)
-            previous_ua = ua
-            self._ensure_circuit_closed(host)
-            sleep_for = self._reserve_domain_slot(host)
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-                self._ensure_circuit_closed(host)
-            start_time = time.perf_counter()
-
-            try:
-                headers = self._build_headers(ua, host_header=host_header)
-                stream = self._open_stream(client, url, headers=headers, sni_hostname=sni_hostname)
-                with stream as response:
-                    response_host = host
-                    if self._should_follow_redirect(response):
-                        redirect_target = self._prepare_redirect_url(
-                            response, logical_url, redirect_count
-                        )
-                        if redirect_target is None:
-                            raise RuntimeError("Redirect response missing Location header")
-                        self._drain_sync_response_for_reuse(
-                            response, "Failed to read redirect response body"
-                        )
-                        url, logical_url, host_header, sni_hostname, host = redirect_target
-                        redirect_count += 1
-                        continue
-
-                    self._enforce_declared_response_size(response)
-
-                    if self._is_redirect_response(response) and not self.follow_redirects:
-                        sync_content = self._read_sync_response_content(response)
-                        elapsed_ms = (time.perf_counter() - start_time) * 1000
-                        self._record_success(response_host)
-                        return self._make_fetch_result(
-                            sync_content,
-                            requested_logical_url,
-                            logical_url,
-                            response,
-                            elapsed_ms,
-                            ua,
-                            attempt,
-                        )
-
-                    if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES - 1:
-                        retry_delay = _retry_delay_seconds(response, attempt)
-                        self._handle_retryable_status(
-                            response_host, response.status_code, retry_delay
-                        )
-                        self._drain_sync_response_for_reuse(
-                            response, "Failed to read response body during retry"
-                        )
-                        time.sleep(retry_delay)
-                        attempt += 1
-                        continue
-
-                    response.raise_for_status()
-                    _validate_content_type(response)
-
-                    sync_content = self._read_sync_response_content(response)
-
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                self._record_success(response_host)
-                return self._make_fetch_result(
-                    sync_content,
-                    requested_logical_url,
-                    logical_url,
-                    response,
-                    elapsed_ms,
-                    ua,
-                    attempt,
-                )
-
-            except (UnsupportedContentTypeError, ResponseSizeLimitError):
-                raise
-
-            except (ValueError, httpx.InvalidURL, httpx.UnsupportedProtocol):
-                raise
-
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                status_code = exc.response.status_code
-                response_host = host
-                if status_code not in _RETRYABLE_STATUS:
-                    raise
-                retry_delay = _retry_delay_seconds(exc.response, attempt)
-                self._handle_retryable_status(response_host, status_code, retry_delay)
-                if attempt >= _MAX_RETRIES - 1:
-                    raise
-                time.sleep(retry_delay)
-                attempt += 1
-                continue
-
-            except DomainCircuitOpenError:
-                raise
-
-            except httpx.TooManyRedirects:
-                raise
-
-            except Exception as exc:
-                last_exc = exc
-                self._record_failure(host)
-
-                if _should_retry_with_ssl_bypass(
-                    allow_ssl_bypass=self.allow_ssl_bypass,
-                    ssl_retried=ssl_retried,
-                    exc=exc,
-                ):
-                    logger.warning(
-                        "SSL verification failed for %s, retrying with certificate verification "
-                        "disabled. "
-                        "This bypass is insecure and should only be used for testing.",
-                        url,
-                    )
-                    verify = False  # pragma: no cover
-                    ssl_retried = True  # pragma: no cover
-                    attempt += 1
-                    break  # pragma: no cover
-                attempt += 1
-
-        if ssl_retried and verify is False:
-            return self._fetch_sync_with_ssl_bypass(
-                SslBypassFetchState(
-                    url=url,
-                    logical_url=logical_url,
-                    requested_logical_url=requested_logical_url,
-                    host_header=host_header,
-                    sni_hostname=sni_hostname,
-                    host=host,
-                    redirect_count=redirect_count,
-                    previous_ua=previous_ua,
-                ),
-                consumed_attempts=attempt,
-                last_exc=last_exc,
-            )
-
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError(
-            f"Fetch failed for {url} after {_MAX_RETRIES} attempts"
-        )  # pragma: no cover
