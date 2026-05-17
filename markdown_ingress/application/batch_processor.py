@@ -14,9 +14,9 @@ from markdown_ingress.application.batch_state import (
     _CostBudget,
     _PreparedBatchRequest,
 )
+from markdown_ingress.application.cache_resolution import _purge_corrupt_cache_entry
 from markdown_ingress.application.exceptions import _copy_batch_exception
 from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
-from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.ingest_stats import (
     bump_ingest_stat,
     record_mode_request,
@@ -45,19 +45,6 @@ __all__ = [
     "_CostBudget",
     "_PreparedBatchRequest",
 ]
-
-
-def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
-    """Best-effort removal of a corrupt cache value before recomputing."""
-    try:
-        cache_backend.delete(cache_key)
-    except Exception as exc:
-        _logger.warning(
-            "Failed to delete corrupt cache entry for %s; continuing as cache miss: %s",
-            cache_key,
-            exc,
-            exc_info=True,
-        )
 
 
 class _BatchUrlProcessor:
