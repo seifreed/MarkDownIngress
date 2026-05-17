@@ -532,6 +532,25 @@ class TestCreateBatchProcessor:
         assert processor.model == "claude"
         assert processor.timeout == 22
         assert processor.max_concurrent == 7
+        assert processor._build_config().timeout == 22
+
+    def test_config_timeout_is_not_overwritten_by_default_batch_timeout(self, tmp_path):
+        config_path = tmp_path / "batch.yaml"
+        config_path.write_text("timeout: 5\n")
+        args = Namespace(
+            fast=False,
+            render=False,
+            strict=None,
+            permissive=False,
+            concurrent=None,
+            timeout=None,
+            model=None,
+            config=str(config_path),
+        )
+
+        config = _create_batch_processor(args)._build_config()
+
+        assert config.timeout == 5.0
 
     def test_preserves_full_runtime_config_in_build_config(self, tmp_path):
         config_path = tmp_path / "batch.yaml"

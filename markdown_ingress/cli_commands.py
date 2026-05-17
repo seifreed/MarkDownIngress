@@ -96,7 +96,7 @@ def create_batch_processor(args: Namespace) -> BatchProcessor:
         else (runtime_config.batch_timeout if runtime_config is not None else 30.0)
     )
     if args.timeout is not None or (
-        runtime_config is not None and runtime_config.batch_timeout is not None
+        runtime_config is not None and "batch_timeout" in runtime_config.explicit_keys()
     ):
         explicit_overrides.add("timeout")
     if timeout is not None and timeout <= 0:
