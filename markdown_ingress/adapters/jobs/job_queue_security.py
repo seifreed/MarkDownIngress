@@ -5,6 +5,7 @@ import math
 import os
 import socket
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from markdown_ingress.core.ssrf import (
@@ -127,30 +128,66 @@ def is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address)
     return is_blocked_ip_address(normalize_ip_for_ssrf(ip_obj))
 
 
+def _validate_resolved_ip(
+    hostname: str,
+    normalized_hostname: str,
+    ip_str: str,
+    *,
+    allow_local: bool,
+) -> str | None:
+    try:
+        ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(ip_str))
+    except ValueError:
+        return None
+
+    if allow_local:
+        return ip_str
+
+    if is_blocked_hostname(ip_str) or is_blocked_hostname(normalized_hostname):
+        raise ValueError(f"Hostname {hostname} resolves to blocked IP {ip_str}")
+    if is_blocked_ip_address(ip_obj):
+        raise ValueError(f"Hostname {hostname} resolves to private IP {ip_str}")
+    return ip_str
+
+
+def _first_validated_resolved_ip(
+    hostname: str,
+    normalized_hostname: str,
+    addr_info: list[Any],
+    *,
+    allow_local: bool,
+) -> str:
+    if not addr_info:
+        raise ValueError(f"No IP addresses resolved for {hostname}")
+
+    validated_ip: str | None = None
+    for _family, _, _, _, sockaddr in addr_info:
+        ip_str = str(sockaddr[0])
+        resolved_ip = _validate_resolved_ip(
+            hostname,
+            normalized_hostname,
+            ip_str,
+            allow_local=allow_local,
+        )
+        if resolved_ip is not None and validated_ip is None:
+            validated_ip = resolved_ip
+
+    if validated_ip is None:
+        raise ValueError(f"No valid public IP found for {hostname}")
+    return validated_ip
+
+
 def resolve_and_validate_ip(hostname: str, *, allow_local: bool = False) -> str:
     """Resolve hostname and validate the IP is not private/blocked."""
     try:
         normalized_hostname = normalize_hostname(hostname)
         addr_info = socket.getaddrinfo(normalized_hostname, None)
-        if not addr_info:
-            raise ValueError(f"No IP addresses resolved for {hostname}")
-        validated_ip: str | None = None
-        for _family, _, _, _, sockaddr in addr_info:
-            ip_str = str(sockaddr[0])
-            try:
-                ip_obj = normalize_ip_for_ssrf(ipaddress.ip_address(ip_str))
-            except ValueError:
-                continue
-            if is_blocked_hostname(ip_str) or is_blocked_hostname(normalized_hostname):
-                if not allow_local:
-                    raise ValueError(f"Hostname {hostname} resolves to blocked IP {ip_str}")
-            if not allow_local and is_blocked_ip_address(ip_obj):
-                raise ValueError(f"Hostname {hostname} resolves to private IP {ip_str}")
-            if validated_ip is None:
-                validated_ip = ip_str
-        if validated_ip is None:
-            raise ValueError(f"No valid public IP found for {hostname}")
-        return validated_ip
+        return _first_validated_resolved_ip(
+            hostname,
+            normalized_hostname,
+            addr_info,
+            allow_local=allow_local,
+        )
     except socket.gaierror:
         raise
     except OSError as exc:
