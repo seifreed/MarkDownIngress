@@ -105,6 +105,7 @@ pip-wheel-metadata/
 
 # Local test files
 test_output/
+test_results/
 artifacts/
 *.md.test
 *.json.test
