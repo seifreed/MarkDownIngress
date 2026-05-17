@@ -221,6 +221,7 @@ _JOB_QUEUE_WATCHDOG_THREAD: threading.Thread | None = None
 _JOB_QUEUE_WATCHDOG_STOP: threading.Event | None = None
 _JOB_QUEUE_HISTORY: list[PersistentJobQueue] = []
 _RECOVERABLE_QUEUE_STATES = {"closing", "lease_lost", "external_owner", "backend_error"}
+_REPAIRABLE_QUEUE_STATES = _RECOVERABLE_QUEUE_STATES | {"closed"}
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
 
@@ -344,7 +345,7 @@ def _current_recoverable_job_queue() -> tuple[Any, str | None] | None:
             _clear_job_queue_repair_state_locked()
             return None
         state = getattr(queue, "state", None)
-        if state not in _RECOVERABLE_QUEUE_STATES:
+        if state not in _REPAIRABLE_QUEUE_STATES:
             _clear_job_queue_repair_state_locked()
             return None
         return queue, state
@@ -434,7 +435,7 @@ def _maybe_start_job_queue_repair() -> None:
         queue = JOB_QUEUE
         state = getattr(queue, "state", None)
         repair_thread = _JOB_QUEUE_REPAIR_THREAD
-    if state in _RECOVERABLE_QUEUE_STATES and not (
+    if state in _REPAIRABLE_QUEUE_STATES and not (
         repair_thread is not None and repair_thread.is_alive()
     ):
         _start_job_queue_repair_loop()
@@ -561,7 +562,7 @@ def _get_job_queue():
         queue = JOB_QUEUE
         if queue is None:
             raise RuntimeError("Job queue is unavailable")
-        if getattr(queue, "state", None) not in _RECOVERABLE_QUEUE_STATES:
+        if getattr(queue, "state", None) not in _REPAIRABLE_QUEUE_STATES:
             return queue
         if getattr(queue, "state", None) == "external_owner":
             return queue
@@ -574,7 +575,7 @@ def _get_job_queue():
     except (RuntimeError, TypeError) as exc:
         # Re-check state under lock after repair failure
         with _JOB_QUEUE_LOCK:
-            if getattr(queue_to_repair, "state", None) in _RECOVERABLE_QUEUE_STATES:
+            if getattr(queue_to_repair, "state", None) in _REPAIRABLE_QUEUE_STATES:
                 current = JOB_QUEUE
                 if current is None:
                     raise RuntimeError("Job queue is unavailable") from exc
