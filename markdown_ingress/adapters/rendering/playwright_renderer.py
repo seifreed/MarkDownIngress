@@ -1,12 +1,8 @@
 """Playwright-based renderer adapter for SPA/JavaScript-heavy sites."""
 
 import asyncio
-import atexit
 import importlib.util
 import logging
-import os
-import tempfile
-import threading
 
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_navigation import (
@@ -16,6 +12,12 @@ from markdown_ingress.adapters.rendering.renderer_navigation import (
     extract_page_content,
     navigate_page,
     wait_for_content,
+)
+from markdown_ingress.adapters.rendering.renderer_screenshots import (
+    capture_screenshot,
+)
+from markdown_ingress.adapters.rendering.renderer_screenshots import (
+    cleanup_screenshot as cleanup_screenshot_file,
 )
 from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
@@ -33,25 +35,6 @@ from markdown_ingress.core.ssrf import (
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
-
-# Thread-safe tracking of temp screenshots for atexit cleanup
-_active_screenshots: set[str] = set()
-_screenshots_lock = threading.Lock()
-
-
-def _cleanup_pending_screenshots() -> None:
-    """atexit handler: clean up any temp screenshot files still on disk."""
-    with _screenshots_lock:
-        paths = list(_active_screenshots)
-        _active_screenshots.clear()
-    for path in paths:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-atexit.register(_cleanup_pending_screenshots)
 
 PLAYWRIGHT_INSTALLED = importlib.util.find_spec("playwright") is not None
 _RETRYABLE_NAVIGATION_ERRORS = (
@@ -264,40 +247,11 @@ class Renderer(IRenderer):
         return blocker
 
     async def _capture_screenshot(self, page) -> str | None:
-        if not self.screenshot:
-            return None
-
-        if self.screenshot is True:
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="mdingress_screenshot_"
-            )
-            screenshot_path = temp_file.name
-            temp_file.close()
-            with _screenshots_lock:
-                _active_screenshots.add(screenshot_path)
-        else:
-            screenshot_path = str(self.screenshot)
-
-        try:
-            await page.screenshot(path=screenshot_path, full_page=True)
-        except Exception as e:
-            logger.debug("Screenshot capture failed: %s", e)
-            if self.screenshot is True:
-                Renderer.cleanup_screenshot(screenshot_path)
-            raise
-        return screenshot_path
+        return await capture_screenshot(page, self.screenshot)
 
     @staticmethod
     def cleanup_screenshot(path: str | None) -> None:
-        if not path:
-            return
-        try:
-            os.unlink(path)
-            with _screenshots_lock:
-                _active_screenshots.discard(path)
-        except OSError:
-            with _screenshots_lock:
-                _active_screenshots.discard(path)
+        cleanup_screenshot_file(path)
 
     def _build_metadata(self, screenshot_path: str | None, blocker) -> dict:
         metadata = {
