@@ -307,11 +307,16 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
                     except (OSError, ValueError):
                         pass
                 else:
-                    logger.error("Non-retryable error %s: %s", error_type, exc)
-                    raise exc
+                    logger.exception("Non-retryable error %s", error_type)
+                    raise
             else:
-                logger.error("All %d attempts failed for %s", validated_max_retries, request.url)
-                logger.error("Final error: %s: %s", error_type, exc)
+                logger.exception(
+                    "All %d attempts failed for %s; final error: %s",
+                    validated_max_retries,
+                    request.url,
+                    error_type,
+                )
+                raise
 
     if last_exception is not None:
         raise last_exception

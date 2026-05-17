@@ -112,7 +112,7 @@ class SecurityEngine:
             nova_result = self.nova.scan(markdown)
             return self._parse_scanned_nova_result(nova_result)
         except Exception as e:
-            logger.error(f"Nova scan failed: {e}")
+            logger.exception("Nova scan failed")
             return (
                 self.exception_fallback_score,
                 {"error": str(e), "scan_incomplete": True},

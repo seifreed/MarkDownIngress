@@ -586,11 +586,11 @@ def _ensure_job_queue_initialized():
             _job_queue_init_failed_at = None
             _maybe_start_job_queue_repair()
             _start_job_queue_watchdog()
-        except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error) as e:
+        except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error):
             # Catch specific exceptions. Do NOT set _job_queue_initialized = True
             # on failure so that subsequent calls can retry after backoff.
             _job_queue_init_failed_at = time.monotonic()
-            _logger.error("Failed to initialize job queue: %s", e)
+            _logger.exception("Failed to initialize job queue")
             # JOB_QUEUE remains None; endpoints will handle unavailable queue
 
 

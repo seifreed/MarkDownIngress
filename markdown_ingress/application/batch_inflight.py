@@ -82,7 +82,7 @@ async def publish_batch_inflight_result(
                 )
             if ctx.batch_inflight.get(request_key) is record:
                 ctx.batch_inflight.pop(request_key, None)
-            raise exc
+            raise
         shared_count = record.followers
         try:
             record.future.set_result((shared_document, shared_count))
