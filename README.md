@@ -327,7 +327,7 @@ MarkDownIngress deduplicates the in-flight work. Result metadata exposes:
 For process-level observability, the library also exposes
 `get_ingest_stats()` and `reset_ingest_stats()`, including
 `mode_counts`, `mode_timings_ms`, and `mode_results` for `fast`, `render`, and `auto`.
-See [examples/library_batch_async.py](/Users/seifreed/tools/IA/MarkDownIngress/examples/library_batch_async.py)
+See [examples/library_batch_async.py](examples/library_batch_async.py)
 for a complete batch example that prints these metrics.
 
 #### Async Integration
