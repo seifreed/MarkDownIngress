@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from typing import Any, Final, cast
 
 import httpx
@@ -109,58 +110,124 @@ def build_renderer_config(
 ) -> RenderConfig:
     """Normalize init inputs into a concrete RenderConfig."""
     if config is None:
-        return RenderConfig(
-            timeout=timeout if timeout is not None else 30.0,
-            wait_until=wait_until if wait_until is not None else default_wait_until,
-            headless=headless if headless is not None else True,
+        return _build_default_renderer_config(
+            default_wait_until,
+            timeout=timeout,
+            wait_until=wait_until,
+            headless=headless,
             user_agent=user_agent,
-            stealth=stealth if stealth is not None else False,
-            disable_http2=disable_http2 if disable_http2 is not None else False,
-            extreme_mode=extreme_mode if extreme_mode is not None else False,
-            block_resources=block_resources if block_resources is not None else True,
-            block_images=block_images if block_images is not None else True,
-            block_fonts=block_fonts if block_fonts is not None else True,
-            block_media=block_media if block_media is not None else True,
-            block_ads=block_ads if block_ads is not None else True,
-            block_trackers=block_trackers if block_trackers is not None else True,
-            screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
+            stealth=stealth,
+            disable_http2=disable_http2,
+            extreme_mode=extreme_mode,
+            block_resources=block_resources,
+            block_images=block_images,
+            block_fonts=block_fonts,
+            block_media=block_media,
+            block_ads=block_ads,
+            block_trackers=block_trackers,
+            screenshot=screenshot,
             allow_local_urls=allow_local_urls,
         )
 
-    from dataclasses import replace
+    overrides = _collect_renderer_config_overrides(
+        timeout=timeout,
+        wait_until=wait_until,
+        headless=headless,
+        user_agent=user_agent,
+        stealth=stealth,
+        disable_http2=disable_http2,
+        extreme_mode=extreme_mode,
+        block_resources=block_resources,
+        block_images=block_images,
+        block_fonts=block_fonts,
+        block_media=block_media,
+        block_ads=block_ads,
+        block_trackers=block_trackers,
+        screenshot=screenshot,
+        allow_local_urls=allow_local_urls,
+    )
+    return replace(config, **overrides) if overrides else config
 
-    overrides: dict[str, Any] = {}
-    if timeout is not None:
-        overrides["timeout"] = timeout
-    if wait_until is not None:
-        overrides["wait_until"] = wait_until
-    if headless is not None:
-        overrides["headless"] = headless
-    if user_agent is not None:
-        overrides["user_agent"] = user_agent
-    if stealth is not None:
-        overrides["stealth"] = stealth
-    if disable_http2 is not None:
-        overrides["disable_http2"] = disable_http2
-    if extreme_mode is not None:
-        overrides["extreme_mode"] = extreme_mode
-    if block_resources is not None:
-        overrides["block_resources"] = block_resources
-    if block_images is not None:
-        overrides["block_images"] = block_images
-    if block_fonts is not None:
-        overrides["block_fonts"] = block_fonts
-    if block_media is not None:
-        overrides["block_media"] = block_media
-    if block_ads is not None:
-        overrides["block_ads"] = block_ads
-    if block_trackers is not None:
-        overrides["block_trackers"] = block_trackers
+
+def _build_default_renderer_config(
+    default_wait_until: str,
+    *,
+    timeout: float | None,
+    wait_until: str | None,
+    headless: bool | None,
+    user_agent: str | None,
+    stealth: bool | None,
+    disable_http2: bool | None,
+    extreme_mode: bool | None,
+    block_resources: bool | None,
+    block_images: bool | None,
+    block_fonts: bool | None,
+    block_media: bool | None,
+    block_ads: bool | None,
+    block_trackers: bool | None,
+    screenshot: bool | str | None,
+    allow_local_urls: bool | None,
+) -> RenderConfig:
+    return RenderConfig(
+        timeout=timeout if timeout is not None else 30.0,
+        wait_until=wait_until if wait_until is not None else default_wait_until,
+        headless=headless if headless is not None else True,
+        user_agent=user_agent,
+        stealth=stealth if stealth is not None else False,
+        disable_http2=disable_http2 if disable_http2 is not None else False,
+        extreme_mode=extreme_mode if extreme_mode is not None else False,
+        block_resources=block_resources if block_resources is not None else True,
+        block_images=block_images if block_images is not None else True,
+        block_fonts=block_fonts if block_fonts is not None else True,
+        block_media=block_media if block_media is not None else True,
+        block_ads=block_ads if block_ads is not None else True,
+        block_trackers=block_trackers if block_trackers is not None else True,
+        screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
+        allow_local_urls=allow_local_urls,
+    )
+
+
+def _collect_renderer_config_overrides(
+    *,
+    timeout: float | None,
+    wait_until: str | None,
+    headless: bool | None,
+    user_agent: str | None,
+    stealth: bool | None,
+    disable_http2: bool | None,
+    extreme_mode: bool | None,
+    block_resources: bool | None,
+    block_images: bool | None,
+    block_fonts: bool | None,
+    block_media: bool | None,
+    block_ads: bool | None,
+    block_trackers: bool | None,
+    screenshot: bool | str | None,
+    allow_local_urls: bool | None,
+) -> dict[str, Any]:
+    overrides: dict[str, Any] = {
+        name: value
+        for name, value in (
+            ("timeout", timeout),
+            ("wait_until", wait_until),
+            ("headless", headless),
+            ("user_agent", user_agent),
+            ("stealth", stealth),
+            ("disable_http2", disable_http2),
+            ("extreme_mode", extreme_mode),
+            ("block_resources", block_resources),
+            ("block_images", block_images),
+            ("block_fonts", block_fonts),
+            ("block_media", block_media),
+            ("block_ads", block_ads),
+            ("block_trackers", block_trackers),
+            ("allow_local_urls", allow_local_urls),
+        )
+        if value is not None
+    }
     if screenshot is not _SCREENSHOT_UNSET:
         overrides["screenshot"] = screenshot
-    if allow_local_urls is not None:
-        overrides["allow_local_urls"] = allow_local_urls
-    return replace(config, **overrides) if overrides else config
+    return overrides
 
 
 async def execute_render_session(
