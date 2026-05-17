@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal
 
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
@@ -29,6 +31,42 @@ def _validate_max_concurrent(value: object) -> int:
     if value < 1:
         raise ValueError("max_concurrent must be >= 1")
     return value
+
+
+@dataclass
+class _CustomBatchState:
+    total: int
+    documents: list[SafeDocument | None]
+    errors: list[BatchErrorItem]
+    errors_lock: asyncio.Lock
+    semaphore: asyncio.Semaphore
+    progress_lock: asyncio.Lock
+    completed: int = 0
+
+
+def _ensure_safe_document(document: object) -> SafeDocument:
+    if document is None:
+        raise TypeError("process_url() returned None instead of SafeDocument")
+    if not isinstance(document, SafeDocument):
+        raise TypeError(
+            "process_url() returned " f"{type(document).__name__} instead of SafeDocument"
+        )
+    return document
+
+
+async def _record_custom_batch_error(
+    state: _CustomBatchState, index: int, url: str, exc: Exception
+) -> None:
+    async with state.errors_lock:
+        state.errors.append(
+            BatchErrorItem(
+                index=index,
+                url=url,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                traceback=traceback.format_exc(),
+            )
+        )
 
 
 class BatchProcessor:
@@ -108,81 +146,77 @@ class BatchProcessor:
                 on_progress=self.on_progress,
             )
 
+        return await self._process_custom_batch_async(urls, max_concurrent)
+
+    async def _process_custom_batch_async(
+        self, urls: list[str], max_concurrent: int
+    ) -> BatchResult:
         total = len(urls)
-        documents: list[SafeDocument | None] = [None] * total
-        errors: list[BatchErrorItem] = []
-        errors_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(max_concurrent)
-        progress_lock = asyncio.Lock()
-        completed = 0
+        state = _CustomBatchState(
+            total=total,
+            documents=[None] * total,
+            errors=[],
+            errors_lock=asyncio.Lock(),
+            semaphore=asyncio.Semaphore(max_concurrent),
+            progress_lock=asyncio.Lock(),
+        )
+        results = await self._run_custom_batch_tasks(urls, state)
+        successful = sum(1 for item in results if item)
+        return BatchResult(
+            total=total,
+            successful=successful,
+            failed=total - successful,
+            documents=state.documents,
+            errors=state.errors,
+        )
 
-        async def report_completion(url: str) -> None:
-            nonlocal completed
-            if self.on_progress is None:
-                return
-            async with progress_lock:
-                completed += 1
-                try:
-                    self.on_progress(completed, total, url)
-                except Exception as exc:
-                    _logger.warning(
-                        "Batch progress callback failed for %s (%d/%d): %s",
-                        url,
-                        completed,
-                        total,
-                        exc,
-                        exc_info=True,
-                    )
-
-        async def process_one(index: int, url: str) -> bool:
-            async with semaphore:
-                try:
-                    document = await self.process_url(url)
-                    if document is None:
-                        raise TypeError("process_url() returned None instead of SafeDocument")
-                    if not isinstance(document, SafeDocument):
-                        raise TypeError(
-                            "process_url() returned "
-                            f"{type(document).__name__} instead of SafeDocument"
-                        )
-                    documents[index] = document
-                    await report_completion(url)
-                    return True
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    import traceback
-
-                    async with errors_lock:
-                        errors.append(
-                            BatchErrorItem(
-                                index=index,
-                                url=url,
-                                error=str(exc),
-                                error_type=type(exc).__name__,
-                                traceback=traceback.format_exc(),
-                            )
-                        )
-                    await report_completion(url)
-                    return False
-
-        tasks = [asyncio.create_task(process_one(index, url)) for index, url in enumerate(urls)]
+    async def _run_custom_batch_tasks(
+        self, urls: list[str], state: _CustomBatchState
+    ) -> list[bool]:
+        tasks = [
+            asyncio.create_task(self._process_custom_batch_url(state, index, url))
+            for index, url in enumerate(urls)
+        ]
         try:
-            results = await asyncio.gather(*tasks)
+            return await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
-        successful = sum(1 for item in results if item)
-        return BatchResult(
-            total=total,
-            successful=successful,
-            failed=total - successful,
-            documents=documents,
-            errors=errors,
-        )
+    async def _process_custom_batch_url(
+        self, state: _CustomBatchState, index: int, url: str
+    ) -> bool:
+        async with state.semaphore:
+            try:
+                document = await self.process_url(url)
+                state.documents[index] = _ensure_safe_document(document)
+                await self._report_custom_batch_completion(state, url)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await _record_custom_batch_error(state, index, url, exc)
+                await self._report_custom_batch_completion(state, url)
+                return False
+
+    async def _report_custom_batch_completion(self, state: _CustomBatchState, url: str) -> None:
+        if self.on_progress is None:
+            return
+        async with state.progress_lock:
+            state.completed += 1
+            try:
+                self.on_progress(state.completed, state.total, url)
+            except Exception as exc:
+                _logger.warning(
+                    "Batch progress callback failed for %s (%d/%d): %s",
+                    url,
+                    state.completed,
+                    state.total,
+                    exc,
+                    exc_info=True,
+                )
 
     def process_batch(self, urls: list[str]) -> BatchResult:
         """Synchronous wrapper for batch processing."""
