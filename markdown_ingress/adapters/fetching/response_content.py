@@ -54,16 +54,19 @@ class ResponseContentMixin:
                 f"max_response_size {self.max_response_size}"
             )
 
+    def _enforce_streamed_response_size(self, total_size: int) -> None:
+        if self.max_response_size is not None and total_size > self.max_response_size:
+            raise ResponseSizeLimitError(
+                f"Response content size {total_size} exceeds "
+                f"max_response_size {self.max_response_size}"
+            )
+
     async def _read_async_response_content(self, response: httpx.Response) -> bytes:
         chunks: list[bytes] = []
         total_size = 0
         async for chunk in response.aiter_bytes():
             total_size += len(chunk)
-            if self.max_response_size is not None and total_size > self.max_response_size:
-                raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds "
-                    f"max_response_size {self.max_response_size}"
-                )
+            self._enforce_streamed_response_size(total_size)
             chunks.append(chunk)
         return b"".join(chunks)
 
@@ -74,11 +77,7 @@ class ResponseContentMixin:
         try:
             async for chunk in response.aiter_bytes():
                 total_size += len(chunk)
-                if self.max_response_size is not None and total_size > self.max_response_size:
-                    raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds "
-                        f"max_response_size {self.max_response_size}"
-                    )
+                self._enforce_streamed_response_size(total_size)
         except ResponseSizeLimitError:
             raise
         except Exception:
@@ -89,11 +88,7 @@ class ResponseContentMixin:
         total_size = 0
         for chunk in response.iter_bytes():
             total_size += len(chunk)
-            if self.max_response_size is not None and total_size > self.max_response_size:
-                raise ResponseSizeLimitError(
-                    f"Response content size {total_size} exceeds "
-                    f"max_response_size {self.max_response_size}"
-                )
+            self._enforce_streamed_response_size(total_size)
             chunks.append(chunk)
         return b"".join(chunks)
 
@@ -102,11 +97,7 @@ class ResponseContentMixin:
         try:
             for chunk in response.iter_bytes():
                 total_size += len(chunk)
-                if self.max_response_size is not None and total_size > self.max_response_size:
-                    raise ResponseSizeLimitError(
-                        f"Response content size {total_size} exceeds "
-                        f"max_response_size {self.max_response_size}"
-                    )
+                self._enforce_streamed_response_size(total_size)
         except ResponseSizeLimitError:
             raise
         except Exception:

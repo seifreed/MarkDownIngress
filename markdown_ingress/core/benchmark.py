@@ -62,6 +62,11 @@ class Benchmark:
         self._fetcher_factory = fetcher_factory
         self._compare_fn = compare_fn
 
+    def _create_comparison_fetcher(self) -> IFetcher:
+        if self._fetcher_factory is None:
+            raise RuntimeError("No fetcher_factory provided to Benchmark.")
+        return self._fetcher_factory()
+
     def run_single(
         self,
         url: str,
@@ -136,9 +141,7 @@ class Benchmark:
                 _logger.warning("compare_extractors not available (no compare_fn provided)")
             else:
                 try:
-                    if self._fetcher_factory is None:
-                        raise RuntimeError("No fetcher_factory provided to Benchmark.")
-                    fetcher = self._fetcher_factory()
+                    fetcher = self._create_comparison_fetcher()
                     try:
                         fetch_result = fetcher.fetch_sync(url)
                     finally:
