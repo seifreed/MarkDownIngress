@@ -213,7 +213,8 @@ class HTTPWebhookNotifier:
         self._validate_webhook_url_without_dns_resolution(webhook_url)
         pinned_ip = self._pinned_delivery_ip(webhook_url, parsed, validated_ip)
         if pinned_ip is not None:
-            return self._notify_with_dns_pinning(webhook_url, data, pinned_ip)
+            self._notify_with_dns_pinning(webhook_url, data, pinned_ip)
+            return
         self._notify_without_dns_pinning(webhook_url, data)
 
     def _validate_webhook_url_without_dns_resolution(self, webhook_url: str) -> None:

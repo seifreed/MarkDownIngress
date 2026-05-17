@@ -351,7 +351,4 @@ def _queue_still_has_visible_jobs(queue) -> bool:
     except (AttributeError, TypeError, KeyError) as exc:
         raise _TransientLegacyQueueReadError(f"legacy queue inspection failed: {exc}") from exc
     now = datetime.now(UTC)
-    for row in rows:
-        if _job_row_is_visible(row, now):
-            return True
-    return False
+    return any(_job_row_is_visible(row, now) for row in rows)

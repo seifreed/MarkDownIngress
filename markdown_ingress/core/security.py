@@ -224,7 +224,7 @@ class SecurityAnalyzer:
         """
         with cls._PATTERNS_LOCK:
             current_hash = cls._get_patterns_hash()
-            if cls._COMPILED_PATTERNS is not None and cls._PATTERNS_HASH == current_hash:
+            if cls._COMPILED_PATTERNS is not None and current_hash == cls._PATTERNS_HASH:
                 return cls._COMPILED_PATTERNS
             result = [
                 (re.compile(p.pattern, p.flags), p.weight, p.description)

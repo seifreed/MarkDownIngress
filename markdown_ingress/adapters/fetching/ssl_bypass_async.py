@@ -73,7 +73,7 @@ class AsyncSslBypassFetchMixin:
                     )
             ssl_attempt += 1
 
-        raise_ssl_bypass_exhausted(state.url, ssl_last_exc)
+        return raise_ssl_bypass_exhausted(state.url, ssl_last_exc)
 
     def _create_async_ssl_bypass_client(self: Any) -> httpx.AsyncClient:
         return httpx.AsyncClient(

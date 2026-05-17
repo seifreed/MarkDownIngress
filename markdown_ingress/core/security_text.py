@@ -106,10 +106,7 @@ def _detect_redos_pattern(pattern: str) -> bool:
     # These can cause exponential backtracking when the optional content can match
     # multiple ways or when combined with other quantifiers
     optional_quantified = re.compile(r"\([^)]*\?\)\s*(?:[+*]|\{\d+,?\d*\})")
-    if optional_quantified.search(pattern):
-        return True
-
-    return False
+    return bool(optional_quantified.search(pattern))
 
 
 def _safe_chr(codepoint: int) -> str:
