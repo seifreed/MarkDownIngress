@@ -11,12 +11,251 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
+_HTML_BODY = b"<html><body><article><p>ok</p></article></body></html>"
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_SSL_BYPASS_REDIRECT_DNS = {
+    "https://example.com/start": "https://93.184.216.34/start",
+    "https://next.test/step": "https://93.184.216.35/step",
+    "https://final.test/final": "https://93.184.216.36/final",
+}
+
 
 def _start_server(handler_cls: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+class _FakeSSLFailureError(Exception):
+    pass
+
+
+class _SyncStreamResponse:
+    charset_encoding = "utf-8"
+
+    def __init__(
+        self,
+        url: str,
+        status_code: int,
+        headers: dict[str, str] | httpx.Headers,
+        body: bytes = b"",
+        *,
+        response: httpx.Response | None = None,
+    ):
+        self._response = response
+        self._body = body
+        self.url = response.url if response is not None else url
+        self.status_code = response.status_code if response is not None else status_code
+        self.headers = response.headers if response is not None else headers
+        self.is_redirect = self.status_code in _REDIRECT_STATUS_CODES
+
+    @classmethod
+    def from_response(cls, response: httpx.Response, body: bytes = b"") -> _SyncStreamResponse:
+        return cls(
+            str(response.url), response.status_code, response.headers, body, response=response
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self._response is not None:
+            self._response.raise_for_status()
+
+    def iter_bytes(self):
+        yield self._body
+
+
+class _AsyncStreamResponse:
+    charset_encoding = "utf-8"
+
+    def __init__(
+        self,
+        url: str,
+        status_code: int,
+        headers: dict[str, str] | httpx.Headers,
+        body: bytes = b"",
+        *,
+        response: httpx.Response | None = None,
+    ):
+        self._response = response
+        self._body = body
+        self.url = response.url if response is not None else url
+        self.status_code = response.status_code if response is not None else status_code
+        self.headers = response.headers if response is not None else headers
+        self.is_redirect = self.status_code in _REDIRECT_STATUS_CODES
+
+    @classmethod
+    def from_response(cls, response: httpx.Response, body: bytes = b"") -> _AsyncStreamResponse:
+        return cls(
+            str(response.url), response.status_code, response.headers, body, response=response
+        )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aread(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self._response is not None:
+            self._response.raise_for_status()
+
+    async def aiter_bytes(self):
+        yield self._body
+
+
+class _SyncSequenceClient:
+    def __init__(self, *outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+        self.requests: list[tuple[str, dict]] = []
+        self.user_agents: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def close(self):
+        return None
+
+    def stream(self, method: str, url: str, **kwargs):
+        self.calls += 1
+        self.requests.append((url, kwargs))
+        headers = kwargs.get("headers") or {}
+        if "User-Agent" in headers:
+            self.user_agents.append(headers["User-Agent"])
+        outcome = self._outcomes[min(self.calls - 1, len(self._outcomes) - 1)]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if callable(outcome):
+            return outcome(url)
+        return outcome
+
+
+class _AsyncSequenceClient:
+    def __init__(self, *outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+        self.requests: list[tuple[str, dict]] = []
+        self.user_agents: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aclose(self):
+        return None
+
+    def stream(self, method: str, url: str, **kwargs):
+        self.calls += 1
+        self.requests.append((url, kwargs))
+        headers = kwargs.get("headers") or {}
+        if "User-Agent" in headers:
+            self.user_agents.append(headers["User-Agent"])
+        outcome = self._outcomes[min(self.calls - 1, len(self._outcomes) - 1)]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if callable(outcome):
+            return outcome(url)
+        return outcome
+
+
+class _SyncRoutingClient:
+    def __init__(self, routes: dict[str, _SyncStreamResponse]):
+        self._routes = routes
+        self.calls: list[tuple[str, dict]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def close(self):
+        return None
+
+    def stream(self, method: str, url: str, **kwargs):
+        self.calls.append((url, kwargs))
+        return self._routes[url]
+
+
+class _AsyncRoutingClient:
+    def __init__(self, routes: dict[str, _AsyncStreamResponse]):
+        self._routes = routes
+        self.calls: list[tuple[str, dict]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def aclose(self):
+        return None
+
+    def stream(self, method: str, url: str, **kwargs):
+        self.calls.append((url, kwargs))
+        return self._routes[url]
+
+
+def _sync_status_stream(url: str, status_code: int, body: bytes) -> _SyncStreamResponse:
+    response = httpx.Response(
+        status_code,
+        headers={"content-type": "text/html"},
+        request=httpx.Request("GET", url),
+        content=body,
+    )
+    return _SyncStreamResponse.from_response(response, body)
+
+
+def _async_status_stream(url: str, status_code: int, body: bytes) -> _AsyncStreamResponse:
+    response = httpx.Response(
+        status_code,
+        headers={"content-type": "text/html"},
+        request=httpx.Request("GET", url),
+        content=body,
+    )
+    return _AsyncStreamResponse.from_response(response, body)
+
+
+def _async_client_factory(client):
+    async def get_async_client():
+        return client
+
+    return get_async_client
+
+
+async def _expect_async_fetch_error(fetcher, url: str, expected_error: type[Exception]) -> None:
+    try:
+        with pytest.raises(expected_error):
+            await fetcher.fetch(url)
+    finally:
+        await fetcher.aclose()
+
+
+def _map_pinned_redirect_url(url: str, *, allow_local_urls: bool = False) -> str:
+    if url == "https://target.test:9443/final":
+        return "https://203.0.113.10:9443/final"
+    return url
+
+
+def _map_ssl_bypass_redirect_url(url: str, *, allow_local_urls: bool = False) -> str:
+    return _SSL_BYPASS_REDIRECT_DNS[url]
 
 
 def test_fetcher_applies_retry_after_backoff_to_same_host():
@@ -222,54 +461,19 @@ def test_fetcher_retryable_status_retries_with_different_user_agent(monkeypatch)
         headers={"content-type": "text/html"},
         request=retry_request,
     )
-    success_body = b"<html><body><article><p>ok</p></article></body></html>"
     success_response = httpx.Response(
         200,
         headers={
             "content-type": "text/html; charset=utf-8",
-            "content-length": str(len(success_body)),
+            "content-length": str(len(_HTML_BODY)),
         },
         request=retry_request,
     )
 
-    class MockStreamResponse:
-        def __init__(self, response: httpx.Response, body: bytes = b""):
-            self._response = response
-            self.status_code = response.status_code
-            self.headers = response.headers
-            self.url = response.url
-            self.charset_encoding = None
-            self._body = body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def raise_for_status(self):
-            self._response.raise_for_status()
-
-        def read(self):
-            return self._body
-
-        def iter_bytes(self):
-            if self._body:
-                yield self._body
-
-    class SyncClient:
-        def __init__(self):
-            self.calls = 0
-            self.user_agents: list[str] = []
-
-        def stream(self, method: str, url: str, headers=None):
-            self.calls += 1
-            self.user_agents.append(headers["User-Agent"])
-            if self.calls == 1:
-                return MockStreamResponse(retry_response)
-            return MockStreamResponse(success_response, success_body)
-
-    client = SyncClient()
+    client = _SyncSequenceClient(
+        _SyncStreamResponse.from_response(retry_response),
+        _SyncStreamResponse.from_response(success_response, _HTML_BODY),
+    )
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=True)
     monkeypatch.setattr(fetcher, "_get_sync_client", lambda: client)
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
@@ -398,57 +602,23 @@ def test_fetch_async_server_errors_open_circuit_breaker(monkeypatch):
         request=request,
     )
 
-    class MockAsyncStreamResponse:
-        status_code = response.status_code
-        headers = response.headers
-        url = response.url
-        charset_encoding = None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def aread(self):
-            return b""
-
-        def raise_for_status(self):
-            response.raise_for_status()
-
-        async def aiter_bytes(self):
-            yield b""
-
-    class AsyncClient:
-        def __init__(self):
-            self.calls = 0
-
-        def stream(self, method: str, url: str, **kwargs):
-            self.calls += 1
-            return MockAsyncStreamResponse()
-
-    client = AsyncClient()
+    client = _AsyncSequenceClient(_AsyncStreamResponse.from_response(response))
     fetcher = Fetcher(
         timeout=2.0,
         domain_request_interval=0.0,
         circuit_breaker_threshold=1,
     )
+    monkeypatch.setattr(fetcher, "_get_async_client", _async_client_factory(client))
+    monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
+    monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
 
-    async def run():
-        try:
-
-            async def get_async_client():
-                return client
-
-            monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
-            monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
-            monkeypatch.setattr(fetcher, "_validate_url", lambda url, allow_local_urls=False: url)
-            with pytest.raises(DomainCircuitOpenError):
-                await fetcher.fetch("https://example.com/server-error")
-        finally:
-            await fetcher.aclose()
-
-    asyncio.run(run())
+    asyncio.run(
+        _expect_async_fetch_error(
+            fetcher,
+            "https://example.com/server-error",
+            DomainCircuitOpenError,
+        )
+    )
 
     assert client.calls == 1
     assert fetcher._open_until_by_host
@@ -513,68 +683,36 @@ def test_fetch_sync_uses_original_hostname_for_sni_after_dns_pinning(monkeypatch
 def test_fetch_sync_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
-    calls: list[tuple[str, dict]] = []
-
-    class StreamResponse:
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
-            self.url = url
-            self.status_code = status_code
-            self.headers = headers
-            self._body = body
-            self.is_redirect = status_code in {301, 302, 303, 307, 308}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return self._body
-
-        def raise_for_status(self):
-            return None
-
-        def iter_bytes(self):
-            yield self._body
-
-    class SyncClient:
-        def stream(self, method: str, url: str, **kwargs):
-            calls.append((url, kwargs))
-            if url == "https://start.test/page":
-                return StreamResponse(
-                    url,
-                    302,
-                    {"location": "https://target.test:9443/final"},
-                )
-            return StreamResponse(
-                url,
+    client = _SyncRoutingClient(
+        {
+            "https://start.test/page": _SyncStreamResponse(
+                "https://start.test/page",
+                302,
+                {"location": "https://target.test:9443/final"},
+            ),
+            "https://203.0.113.10:9443/final": _SyncStreamResponse(
+                "https://203.0.113.10:9443/final",
                 200,
                 {"content-type": "text/html"},
-                b"<html><body><article><p>ok</p></article></body></html>",
-            )
-
-    def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        if url == "https://target.test:9443/final":
-            return "https://203.0.113.10:9443/final"
-        return url
+                _HTML_BODY,
+            ),
+        }
+    )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
-    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: SyncClient())
+    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: client)
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
-    monkeypatch.setattr(fetcher, "_validate_url", validate)
+    monkeypatch.setattr(fetcher, "_validate_url", _map_pinned_redirect_url)
 
     result = fetcher.fetch_sync("https://start.test/page")
 
     assert result.status_code == 200
     assert result.url == "https://start.test/page"
     assert result.final_url == "https://target.test:9443/final"
-    assert calls[0][0] == "https://start.test/page"
-    assert calls[1][0] == "https://203.0.113.10:9443/final"
-    assert calls[1][1]["headers"]["Host"] == "target.test:9443"
-    assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+    assert client.calls[0][0] == "https://start.test/page"
+    assert client.calls[1][0] == "https://203.0.113.10:9443/final"
+    assert client.calls[1][1]["headers"]["Host"] == "target.test:9443"
+    assert client.calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
 
 
 def test_fetch_sync_invalid_redirect_location_is_not_retried_or_circuited():
@@ -745,62 +883,27 @@ def test_fetch_sync_redirect_body_respects_max_response_size():
 def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
-    calls: list[tuple[str, dict]] = []
-
-    class AsyncStreamResponse:
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
-            self.url = url
-            self.status_code = status_code
-            self.headers = headers
-            self._body = body
-            self.is_redirect = status_code in {301, 302, 303, 307, 308}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def aread(self):
-            return self._body
-
-        def raise_for_status(self):
-            return None
-
-        async def aiter_bytes(self):
-            yield self._body
-
-    class AsyncClient:
-        def stream(self, method: str, url: str, **kwargs):
-            calls.append((url, kwargs))
-            if url == "https://start.test/page":
-                return AsyncStreamResponse(
-                    url,
-                    302,
-                    {"location": "https://target.test:9443/final"},
-                )
-            return AsyncStreamResponse(
-                url,
+    client = _AsyncRoutingClient(
+        {
+            "https://start.test/page": _AsyncStreamResponse(
+                "https://start.test/page",
+                302,
+                {"location": "https://target.test:9443/final"},
+            ),
+            "https://203.0.113.10:9443/final": _AsyncStreamResponse(
+                "https://203.0.113.10:9443/final",
                 200,
                 {"content-type": "text/html"},
-                b"<html><body><article><p>ok</p></article></body></html>",
-            )
-
-    def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        if url == "https://target.test:9443/final":
-            return "https://203.0.113.10:9443/final"
-        return url
-
-    async def get_async_client():
-        return AsyncClient()
+                _HTML_BODY,
+            ),
+        }
+    )
 
     async def run():
         fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, rotate_ua=False)
-        monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+        monkeypatch.setattr(fetcher, "_get_async_client", _async_client_factory(client))
         monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
-        monkeypatch.setattr(fetcher, "_validate_url", validate)
+        monkeypatch.setattr(fetcher, "_validate_url", _map_pinned_redirect_url)
         return await fetcher.fetch("https://start.test/page")
 
     result = asyncio.run(run())
@@ -808,10 +911,10 @@ def test_fetch_async_redirect_uses_validated_pinned_url_and_original_sni(monkeyp
     assert result.status_code == 200
     assert result.url == "https://start.test/page"
     assert result.final_url == "https://target.test:9443/final"
-    assert calls[0][0] == "https://start.test/page"
-    assert calls[1][0] == "https://203.0.113.10:9443/final"
-    assert calls[1][1]["headers"]["Host"] == "target.test:9443"
-    assert calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
+    assert client.calls[0][0] == "https://start.test/page"
+    assert client.calls[1][0] == "https://203.0.113.10:9443/final"
+    assert client.calls[1][1]["headers"]["Host"] == "target.test:9443"
+    assert client.calls[1][1]["extensions"]["sni_hostname"] == b"target.test"
 
 
 @pytest.mark.asyncio
@@ -1142,68 +1245,22 @@ def test_sync_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
         request=httpx.Request("GET", "https://unit.test/ssl-final"),
     )
 
-    class FakeSSLFailureError(Exception):
-        pass
-
-    class MockStreamResponse:
-        """Mock response that supports streaming interface."""
-
-        def __init__(self, response):
-            self._response = response
-            self.status_code = response.status_code
-            self.headers = response.headers
-            self.url = response.url
-            self.charset_encoding = None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def raise_for_status(self):
-            self._response.raise_for_status()
-
-        def iter_bytes(self):
-            yield b""
-
-    class MainClient:
-        def __init__(self):
-            self.calls = 0
-
-        def stream(self, method: str, url: str, headers=None):
-            self.calls += 1
-            if self.calls == 1:
-                return MockStreamResponse(first_retryable)
-            raise FakeSSLFailureError("SSL handshake failed")
-
-    class BypassClient:
-        def __init__(self):
-            self.calls = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method: str, url: str, headers=None):
-            self.calls += 1
-            return MockStreamResponse(bypass_retryable)
-
     sleep_calls: list[float] = []
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep",
         lambda seconds: sleep_calls.append(seconds),
     )
-    bypass_client = BypassClient()
+    bypass_client = _SyncSequenceClient(_SyncStreamResponse.from_response(bypass_retryable))
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
         lambda *args, **kwargs: bypass_client,
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
-    main_client = MainClient()
+    main_client = _SyncSequenceClient(
+        _SyncStreamResponse.from_response(first_retryable),
+        _FakeSSLFailureError("SSL handshake failed"),
+    )
     monkeypatch.setattr(fetcher, "_get_sync_client", lambda: main_client)
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
     monkeypatch.setattr(fetcher, "_defer_host", lambda host, delay_seconds: None)
@@ -1366,53 +1423,10 @@ def test_sync_ssl_bypass_opens_circuit_for_server_errors(monkeypatch):
         "markdown_ingress.adapters.fetching.httpx_fetcher.time.sleep", lambda seconds: None
     )
 
-    class StreamResponse:
-        status_code = 500
-        headers = {"content-type": "text/html"}
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str):
-            self.url = url
-            self._response = httpx.Response(
-                500,
-                request=httpx.Request("GET", url),
-                content=b"server error",
-            )
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return b"server error"
-
-        def raise_for_status(self):
-            self._response.raise_for_status()
-
-        def iter_bytes(self):
-            yield b"server error"
-
-    class BypassClient:
-        calls = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def close(self):
-            return None
-
-        def stream(self, method: str, url: str, **kwargs):
-            type(self).calls += 1
-            return StreamResponse(url)
-
+    bypass_client = _SyncSequenceClient(lambda url: _sync_status_stream(url, 500, b"server error"))
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
-        lambda *args, **kwargs: BypassClient(),
+        lambda *args, **kwargs: bypass_client,
     )
 
     fetcher = Fetcher(
@@ -1434,97 +1448,59 @@ def test_sync_ssl_bypass_opens_circuit_for_server_errors(monkeypatch):
     finally:
         fetcher.close()
 
-    assert BypassClient.calls == 1
+    assert bypass_client.calls == 1
     assert fetcher._open_until_by_host
 
 
 def test_sync_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
-    calls: list[tuple[str, dict]] = []
-
-    class FakeSSLFailureError(Exception):
-        pass
-
-    class MainClient:
-        def stream(self, method: str, url: str, **kwargs):
-            raise FakeSSLFailureError("SSL handshake failed")
-
-    class StreamResponse:
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
-            self.url = url
-            self.status_code = status_code
-            self.headers = headers
-            self._body = body
-            self.is_redirect = status_code in {301, 302, 303, 307, 308}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return self._body
-
-        def raise_for_status(self):
-            return None
-
-        def iter_bytes(self):
-            yield self._body
-
-    class BypassClient:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method: str, url: str, **kwargs):
-            calls.append((url, kwargs))
-            if url == "https://93.184.216.34/start":
-                return StreamResponse(url, 302, {"location": "https://next.test/step"})
-            if url == "https://93.184.216.35/step":
-                return StreamResponse(url, 302, {"location": "https://final.test/final"})
-            return StreamResponse(
-                url,
+    bypass_client = _SyncRoutingClient(
+        {
+            "https://93.184.216.34/start": _SyncStreamResponse(
+                "https://93.184.216.34/start",
+                302,
+                {"location": "https://next.test/step"},
+            ),
+            "https://93.184.216.35/step": _SyncStreamResponse(
+                "https://93.184.216.35/step",
+                302,
+                {"location": "https://final.test/final"},
+            ),
+            "https://93.184.216.36/final": _SyncStreamResponse(
+                "https://93.184.216.36/final",
                 200,
                 {"content-type": "text/html"},
-                b"<html><body><article><p>ok</p></article></body></html>",
-            )
-
-    def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        mapping = {
-            "https://example.com/start": "https://93.184.216.34/start",
-            "https://next.test/step": "https://93.184.216.35/step",
-            "https://final.test/final": "https://93.184.216.36/final",
+                _HTML_BODY,
+            ),
         }
-        return mapping[url]
+    )
 
-    bypass_client = BypassClient()
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.Client",
         lambda *args, **kwargs: bypass_client,
     )
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
-    monkeypatch.setattr(fetcher, "_get_sync_client", lambda: MainClient())
+    monkeypatch.setattr(
+        fetcher,
+        "_get_sync_client",
+        lambda: _SyncSequenceClient(_FakeSSLFailureError("SSL handshake failed")),
+    )
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
-    monkeypatch.setattr(fetcher, "_validate_url", validate)
+    monkeypatch.setattr(fetcher, "_validate_url", _map_ssl_bypass_redirect_url)
 
     result = fetcher.fetch_sync("https://example.com/start")
 
     assert result.status_code == 200
     assert result.url == "https://example.com/start"
     assert result.final_url == "https://final.test/final"
-    assert [url for url, _ in calls] == [
+    assert [url for url, _ in bypass_client.calls] == [
         "https://93.184.216.34/start",
         "https://93.184.216.35/step",
         "https://93.184.216.36/final",
     ]
-    assert calls[-1][1]["headers"]["Host"] == "final.test"
-    assert calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
+    assert bypass_client.calls[-1][1]["headers"]["Host"] == "final.test"
+    assert bypass_client.calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
 
 
 def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
@@ -1541,65 +1517,16 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
         request=httpx.Request("GET", "https://unit.test/ssl-final"),
     )
 
-    class FakeSSLFailureError(Exception):
-        pass
-
-    class MockAsyncStreamResponse:
-        """Mock response that supports async streaming interface."""
-
-        def __init__(self, response):
-            self._response = response
-            self.status_code = response.status_code
-            self.headers = response.headers
-            self.url = response.url
-            self.charset_encoding = None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def raise_for_status(self):
-            self._response.raise_for_status()
-
-        async def aiter_bytes(self):
-            yield b""
-
-    class MainClient:
-        def __init__(self):
-            self.calls = 0
-
-        def stream(self, method: str, url: str, headers=None):
-            self.calls += 1
-            if self.calls == 1:
-                return MockAsyncStreamResponse(first_retryable)
-            raise FakeSSLFailureError("SSL handshake failed")
-
-    class BypassClient:
-        def __init__(self):
-            self.calls = 0
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method: str, url: str, headers=None):
-            self.calls += 1
-            return MockAsyncStreamResponse(bypass_retryable)
-
     sleep_calls: list[float] = []
 
     async def fake_sleep(seconds: float):
         sleep_calls.append(seconds)
 
-    async def get_async_client():
-        return main_client
-
-    bypass_client = BypassClient()
-    main_client = MainClient()
+    bypass_client = _AsyncSequenceClient(_AsyncStreamResponse.from_response(bypass_retryable))
+    main_client = _AsyncSequenceClient(
+        _AsyncStreamResponse.from_response(first_retryable),
+        _FakeSSLFailureError("SSL handshake failed"),
+    )
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.asyncio.sleep", fake_sleep
     )
@@ -1609,7 +1536,7 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
     )
 
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
-    monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+    monkeypatch.setattr(fetcher, "_get_async_client", _async_client_factory(main_client))
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
     monkeypatch.setattr(fetcher, "_defer_host", lambda host, delay_seconds: None)
 
@@ -1627,50 +1554,10 @@ def test_async_ssl_bypass_retries_with_remaining_attempts(monkeypatch):
 def test_async_ssl_bypass_does_not_open_circuit_for_client_errors(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
-    class AsyncStreamResponse:
-        status_code = 404
-        headers = {"content-type": "text/html"}
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str):
-            self.url = url
-            self._response = httpx.Response(
-                404,
-                request=httpx.Request("GET", url),
-                content=b"not found",
-            )
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def raise_for_status(self):
-            self._response.raise_for_status()
-
-        async def aiter_bytes(self):
-            yield b"not found"
-
-    class BypassClient:
-        calls = 0
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def aclose(self):
-            return None
-
-        def stream(self, method: str, url: str, **kwargs):
-            type(self).calls += 1
-            return AsyncStreamResponse(url)
-
+    bypass_client = _AsyncSequenceClient(lambda url: _async_status_stream(url, 404, b"not found"))
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient",
-        lambda *args, **kwargs: BypassClient(),
+        lambda *args, **kwargs: bypass_client,
     )
 
     fetcher = Fetcher(
@@ -1697,100 +1584,59 @@ def test_async_ssl_bypass_does_not_open_circuit_for_client_errors(monkeypatch):
 
     asyncio.run(run())
 
-    assert BypassClient.calls == 2
+    assert bypass_client.calls == 2
     assert fetcher._open_until_by_host == {}
 
 
 def test_async_ssl_bypass_redirects_do_not_consume_retry_attempts(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
-    calls: list[tuple[str, dict]] = []
-
-    class FakeSSLFailureError(Exception):
-        pass
-
-    class MainClient:
-        def stream(self, method: str, url: str, **kwargs):
-            raise FakeSSLFailureError("SSL handshake failed")
-
-    class AsyncStreamResponse:
-        charset_encoding = "utf-8"
-
-        def __init__(self, url: str, status_code: int, headers: dict[str, str], body: bytes = b""):
-            self.url = url
-            self.status_code = status_code
-            self.headers = headers
-            self._body = body
-            self.is_redirect = status_code in {301, 302, 303, 307, 308}
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def aread(self):
-            return self._body
-
-        def raise_for_status(self):
-            return None
-
-        async def aiter_bytes(self):
-            yield self._body
-
-    class BypassClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def stream(self, method: str, url: str, **kwargs):
-            calls.append((url, kwargs))
-            if url == "https://93.184.216.34/start":
-                return AsyncStreamResponse(url, 302, {"location": "https://next.test/step"})
-            if url == "https://93.184.216.35/step":
-                return AsyncStreamResponse(url, 302, {"location": "https://final.test/final"})
-            return AsyncStreamResponse(
-                url,
+    bypass_client = _AsyncRoutingClient(
+        {
+            "https://93.184.216.34/start": _AsyncStreamResponse(
+                "https://93.184.216.34/start",
+                302,
+                {"location": "https://next.test/step"},
+            ),
+            "https://93.184.216.35/step": _AsyncStreamResponse(
+                "https://93.184.216.35/step",
+                302,
+                {"location": "https://final.test/final"},
+            ),
+            "https://93.184.216.36/final": _AsyncStreamResponse(
+                "https://93.184.216.36/final",
                 200,
                 {"content-type": "text/html"},
-                b"<html><body><article><p>ok</p></article></body></html>",
-            )
-
-    def validate(url: str, *, allow_local_urls: bool = False) -> str:
-        mapping = {
-            "https://example.com/start": "https://93.184.216.34/start",
-            "https://next.test/step": "https://93.184.216.35/step",
-            "https://final.test/final": "https://93.184.216.36/final",
+                _HTML_BODY,
+            ),
         }
-        return mapping[url]
+    )
 
-    async def get_async_client():
-        return MainClient()
-
-    bypass_client = BypassClient()
     monkeypatch.setattr(
         "markdown_ingress.adapters.fetching.httpx_fetcher.httpx.AsyncClient",
         lambda *args, **kwargs: bypass_client,
     )
     fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0, allow_ssl_bypass=True)
-    monkeypatch.setattr(fetcher, "_get_async_client", get_async_client)
+    monkeypatch.setattr(
+        fetcher,
+        "_get_async_client",
+        _async_client_factory(_AsyncSequenceClient(_FakeSSLFailureError("SSL handshake failed"))),
+    )
     monkeypatch.setattr(fetcher, "_reserve_domain_slot", lambda host: 0.0)
-    monkeypatch.setattr(fetcher, "_validate_url", validate)
+    monkeypatch.setattr(fetcher, "_validate_url", _map_ssl_bypass_redirect_url)
 
     result = asyncio.run(fetcher.fetch("https://example.com/start"))
 
     assert result.status_code == 200
     assert result.url == "https://example.com/start"
     assert result.final_url == "https://final.test/final"
-    assert [url for url, _ in calls] == [
+    assert [url for url, _ in bypass_client.calls] == [
         "https://93.184.216.34/start",
         "https://93.184.216.35/step",
         "https://93.184.216.36/final",
     ]
-    assert calls[-1][1]["headers"]["Host"] == "final.test"
-    assert calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
+    assert bypass_client.calls[-1][1]["headers"]["Host"] == "final.test"
+    assert bypass_client.calls[-1][1]["extensions"]["sni_hostname"] == b"final.test"
 
 
 def test_fetcher_sync_rechecks_circuit_breaker_after_rate_limit_sleep(monkeypatch):
