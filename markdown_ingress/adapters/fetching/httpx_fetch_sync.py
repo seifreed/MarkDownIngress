@@ -92,7 +92,7 @@ class SyncHttpxFetchMixin:
             self._handle_sync_status_error(state, exc)
         except (DomainCircuitOpenError, httpx.TooManyRedirects):
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fetch errors become failed attempts
             self._handle_sync_generic_fetch_error(state, exc)
         return None
 

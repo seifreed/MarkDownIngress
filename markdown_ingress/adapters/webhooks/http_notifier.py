@@ -288,7 +288,7 @@ class HTTPWebhookNotifier:
             raise RuntimeError(
                 f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
             ) from exc
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - webhook transport errors are retryable
             return _WebhookAttemptOutcome(error=exc)
 
     def _notify_without_dns_pinning(self, webhook_url: str, data: bytes) -> None:

@@ -286,7 +286,7 @@ async def handle_security_report(
             domain_policies=domain_policy_payload(request.domain_policies) or None,
         )
         return to_security_report_response(report)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - API boundary converts failures to HTTP errors
         _raise_runtime_http_error(exc)
 
 

@@ -65,7 +65,7 @@ class SyncSslBypassFetchMixin:
                     )
                 except (DomainCircuitOpenError, httpx.TooManyRedirects):
                     raise
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - SSL fallback records attempt error
                     ssl_last_exc = exc
                     self._handle_sync_ssl_bypass_generic_error(
                         state, exc, ssl_attempt, remaining_attempts

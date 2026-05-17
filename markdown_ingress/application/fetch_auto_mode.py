@@ -58,7 +58,7 @@ class _AutoModeSelector:
         fast_config.mode = "fast"
         try:
             fast_doc = self._pipeline.execute_mode(url, fast_config, matched_domain_policy, budget)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - auto mode falls back from fast to render
             return self._auto_fallback_render_on_error(
                 url, config, matched_domain_policy, budget, exc
             )

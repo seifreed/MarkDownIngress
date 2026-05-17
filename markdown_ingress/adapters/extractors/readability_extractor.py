@@ -63,7 +63,7 @@ class Extractor(IExtractor):
             doc = Document(pre_cleaned_html)
             title = doc.title()
             content_html = doc.summary(html_partial=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - readability failures fall back to raw HTML
             logger.warning(
                 "Readability extraction failed for URL %s, falling back to raw content: %s",
                 url,

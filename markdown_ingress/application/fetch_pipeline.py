@@ -212,7 +212,7 @@ class _FetchPipeline:
                     fetch_result.metadata[SCREENSHOT_TEMP] = True
                 else:
                     _cleanup_screenshot(context.screenshot_temp_path)
-        except Exception as render_exc:
+        except Exception as render_exc:  # noqa: BLE001 - render mode returns structured failure
             return self._handle_render_failure(context, render_exc)
         else:
             return fetch_result
