@@ -3,13 +3,80 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from rich.table import Table
 
 from markdown_ingress.cli_console import console
 from markdown_ingress.cli_json_output import batch_document_json_row
+
+
+@dataclass
+class _BatchErrorLookup:
+    by_index: dict[int, str]
+    by_url: dict[str, list[str]]
+    legacy_errors: Any
+    legacy_items_by_url: dict[str, list[str]]
+    by_url_offsets: dict[str, int] = field(default_factory=dict)
+    legacy_item_offsets: dict[str, int] = field(default_factory=dict)
+
+    def error_for(self, index: int, url: str) -> str | None:
+        if index in self.by_index:
+            return self.by_index[index]
+        return self._fallback_error(url)
+
+    def _fallback_error(self, url: str) -> str | None:
+        if self.by_url:
+            return _next_offset_error(self.by_url, self.by_url_offsets, url)
+        if isinstance(self.legacy_errors, dict):
+            return cast(dict[str, str], self.legacy_errors).get(url)
+        if self.legacy_items_by_url:
+            return _next_offset_error(self.legacy_items_by_url, self.legacy_item_offsets, url)
+        return None
+
+
+def _indexed_errors(raw_error_items: Any) -> dict[int, str]:
+    return {
+        item.index: item.error
+        for item in raw_error_items
+        if hasattr(item, "index") and hasattr(item, "error")
+    }
+
+
+def _legacy_error_items_by_url(legacy_errors: Any) -> dict[str, list[str]]:
+    items_by_url: dict[str, list[str]] = {}
+    if not isinstance(legacy_errors, list):
+        return items_by_url
+    for item in legacy_errors:
+        if hasattr(item, "url") and hasattr(item, "error"):
+            items_by_url.setdefault(item.url, []).append(item.error)
+    return items_by_url
+
+
+def _next_offset_error(
+    errors_by_url: dict[str, list[str]],
+    offsets: dict[str, int],
+    url: str,
+) -> str | None:
+    options = errors_by_url.get(url) or []
+    offset = offsets.get(url, 0)
+    if offset >= len(options):
+        return None
+    offsets[url] = offset + 1
+    return options[offset]
+
+
+def _batch_error_lookup(batch_result: Any) -> _BatchErrorLookup:
+    raw_error_items = getattr(batch_result, "error_items", getattr(batch_result, "errors", []))
+    legacy_errors = getattr(batch_result, "errors", {})
+    return _BatchErrorLookup(
+        by_index=_indexed_errors(raw_error_items),
+        by_url=cast(dict[str, list[str]], getattr(batch_result, "errors_by_url", {})),
+        legacy_errors=legacy_errors,
+        legacy_items_by_url=_legacy_error_items_by_url(legacy_errors),
+    )
 
 
 def load_urls_from_file(filepath: str) -> list[str]:
@@ -49,50 +116,13 @@ def display_batch_summary(batch_result, urls: list[str] | None = None) -> None:
 
 
 def _build_batch_rows(urls: list[str], batch_result) -> list[dict]:
-    raw_error_items = getattr(batch_result, "error_items", getattr(batch_result, "errors", []))
-    error_by_index = {
-        item.index: item.error
-        for item in raw_error_items
-        if hasattr(item, "index") and hasattr(item, "error")
-    }
-    errors_by_url = cast(dict[str, list[str]], getattr(batch_result, "errors_by_url", {}))
-    legacy_errors = getattr(batch_result, "errors", {})
-    errors_by_url_offsets: dict[str, int] = {}
-    _error_items_offsets: dict[str, int] = {}
+    error_lookup = _batch_error_lookup(batch_result)
     documents = list(getattr(batch_result, "documents", []))
-
-    _error_items_by_url: dict[str, list[str]] = {}
-    if isinstance(legacy_errors, list):
-        for item in legacy_errors:
-            if hasattr(item, "url") and hasattr(item, "error"):
-                _error_items_by_url.setdefault(item.url, []).append(item.error)
-
-    def fallback_error(index: int, url: str) -> str | None:
-        if errors_by_url:
-            options = errors_by_url.get(url) or []
-            offset = errors_by_url_offsets.get(url, 0)
-            if offset < len(options):
-                errors_by_url_offsets[url] = offset + 1
-                return options[offset]
-            return None
-        if isinstance(legacy_errors, dict):
-            return cast(dict[str, str], legacy_errors).get(url)
-        if _error_items_by_url:
-            items = _error_items_by_url.get(url, [])
-            offset = _error_items_offsets.get(url, 0)
-            if offset < len(items):
-                _error_items_offsets[url] = offset + 1
-                return items[offset]
-            return None
-        return None
 
     rows = []
     for index, url in enumerate(urls):
         doc = documents[index] if index < len(documents) else None
-        if index in error_by_index:
-            error = error_by_index[index]
-        else:
-            error = fallback_error(index, url)
+        error = error_lookup.error_for(index, url)
         if doc is None and error is None:
             error = f"Missing batch result for input index {index}"
         rows.append({"index": index, "url": url, "document": doc, "error": error})
