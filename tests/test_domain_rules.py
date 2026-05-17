@@ -31,6 +31,15 @@ def test_apply_domain_html_rules_removes_selectors_and_tags():
     assert stats["blocked_tags_removed"] == 1
 
 
+def test_apply_domain_html_rules_treats_blocked_tags_case_insensitively():
+    policy = DomainPolicy(domain="example.com", blocked_tags=["FORM"])
+
+    filtered, stats = apply_domain_html_rules(HTML, policy)
+
+    assert "<form" not in filtered
+    assert stats["blocked_tags_removed"] == 1
+
+
 def test_apply_domain_html_rules_unwraps_and_allows_only_specific_tags():
     policy = DomainPolicy(
         domain="example.com",

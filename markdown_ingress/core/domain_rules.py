@@ -79,7 +79,7 @@ def _unwrap_nodes_matching_selectors(soup: BeautifulSoup, selectors: list[str] |
 def _remove_blocked_tags(soup: BeautifulSoup, tag_names: list[str] | None) -> int:
     removed = 0
     for tag_name in tag_names or []:
-        for node in soup.find_all(tag_name):
+        for node in soup.find_all(tag_name.lower()):
             # Skip nodes already removed by blocked_selectors above;
             # decomposed nodes lose their parent reference.
             if node.parent is None:
