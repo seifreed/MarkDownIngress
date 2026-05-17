@@ -21,6 +21,13 @@ class SslBypassFetchState:
     redirect_count: int
     previous_ua: str | None
 
+    def update_redirect_target(
+        self,
+        redirect_target: tuple[str, str, str | None, str | None, str],
+    ) -> None:
+        self.url, self.logical_url, self.host_header, self.sni_hostname, self.host = redirect_target
+        self.redirect_count += 1
+
 
 def raise_ssl_bypass_exhausted(url: str, last_exc: Exception | None) -> NoReturn:
     if last_exc is not None:
