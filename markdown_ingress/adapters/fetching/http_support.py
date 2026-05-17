@@ -129,10 +129,11 @@ def parse_content_length(content_length: str | None) -> int | None:
         return None
     try:
         value = int(content_length)
-        return value if value >= 0 else None
     except ValueError:
         logger.warning("Malformed Content-Length header: %s", content_length)
         return None
+    else:
+        return value if value >= 0 else None
 
 
 def host_soft_throttle_delay(host: str, base_delay: float) -> float:

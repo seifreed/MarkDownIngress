@@ -212,9 +212,10 @@ class _FetchPipeline:
                     fetch_result.metadata[SCREENSHOT_TEMP] = True
                 else:
                     _cleanup_screenshot(context.screenshot_temp_path)
-            return fetch_result
         except Exception as render_exc:
             return self._handle_render_failure(context, render_exc)
+        else:
+            return fetch_result
 
     def _fetch_render(
         self,

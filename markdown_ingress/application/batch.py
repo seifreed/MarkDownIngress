@@ -194,13 +194,14 @@ class BatchProcessor:
                 document = await self.process_url(url)
                 state.documents[index] = _ensure_safe_document(document)
                 await self._report_custom_batch_completion(state, url)
-                return True
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 await _record_custom_batch_error(state, index, url, exc)
                 await self._report_custom_batch_completion(state, url)
                 return False
+            else:
+                return True
 
     async def _report_custom_batch_completion(self, state: _CustomBatchState, url: str) -> None:
         if self.on_progress is None:

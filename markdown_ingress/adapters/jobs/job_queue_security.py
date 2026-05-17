@@ -118,9 +118,10 @@ def is_private_ip(ip_str: str) -> bool:
             ip_obj = ipaddress.ip_address(sockaddr[0])
             if is_private_ip_address(ip_obj):
                 return True
-        return False
     except (socket.gaierror, OSError, ValueError):
         return True
+    else:
+        return False
 
 
 def is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

@@ -117,7 +117,6 @@ class _BatchUrlProcessor:
                         started_at=started_at,
                     )
                 await self._report_completion(prepared.url)
-                return True
             except Exception as exc:
                 _logger.warning(
                     "Failed to clone cached batch document for %s, cache entry may be corrupt: %s",
@@ -126,6 +125,8 @@ class _BatchUrlProcessor:
                     exc_info=True,
                 )
                 _purge_corrupt_cache_entry(prepared.cache_backend, prepared.cache_key)
+            else:
+                return True
         bump_ingest_stat("cache_misses")
         return False
 

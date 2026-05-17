@@ -292,7 +292,6 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
             }
             if attempt > 0:
                 logger.info("Success on attempt %d", attempt + 1)
-            return doc
         except Exception as exc:
             last_exception = exc
             error_type = type(exc).__name__
@@ -317,6 +316,8 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
                     error_type,
                 )
                 raise
+        else:
+            return doc
 
     if last_exception is not None:
         raise last_exception

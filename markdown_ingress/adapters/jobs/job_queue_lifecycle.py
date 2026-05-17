@@ -176,7 +176,6 @@ class JobQueueLifecycleMixin:
                             ),
                         )
                     conn.commit()
-                return
             except sqlite3.OperationalError as e:
                 last_error = e
                 if attempt < self.lease_acquire_max_retries - 1:
@@ -186,6 +185,8 @@ class JobQueueLifecycleMixin:
                     )
                     time.sleep(delay)
                     continue
+            else:
+                return
         raise RuntimeError(
             f"Failed to acquire lease after {self.lease_acquire_max_retries} attempts: {last_error}"
         ) from last_error

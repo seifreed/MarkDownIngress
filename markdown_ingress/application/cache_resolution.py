@@ -96,7 +96,6 @@ class _CacheResolutionHelper:
             bump_ingest_stat("cache_hits")
             cached_copy.metadata[REQUESTED_MODE] = requested_mode
             record_mode_result(requested_mode, success=True)
-            return cached_copy
         except Exception as exc:
             _logger.warning(
                 "Failed to clone cached document for %s, cache entry may be corrupt: %s",
@@ -107,6 +106,8 @@ class _CacheResolutionHelper:
             _purge_corrupt_cache_entry(cache_backend, cache_key)
             bump_ingest_stat("cache_misses")
             return None
+        else:
+            return cached_copy
 
     def try_inflight_follower(
         self,

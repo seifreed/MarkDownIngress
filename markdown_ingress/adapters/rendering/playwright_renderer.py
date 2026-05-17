@@ -317,7 +317,6 @@ class Renderer(IRenderer):
                 result.metadata["strategy_attempt"] = strategy_index + 1
                 result.metadata["timeout_used_ms"] = timeout_ms
                 logger.info(f"[Extreme Mode] Success with {wait_state} strategy")
-                return result
 
             except Exception as e:
                 last_exception = e
@@ -325,6 +324,8 @@ class Renderer(IRenderer):
                 logger.warning(f"[Extreme Mode] {wait_state} strategy failed: {error_msg[:100]}")
                 if strategy_index < len(self.LOAD_STRATEGIES) - 1:
                     continue
+            else:
+                return result
 
         logger.error("[Extreme Mode] All progressive timeout strategies failed")
         if last_exception is not None:
