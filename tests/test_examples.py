@@ -29,5 +29,6 @@ def test_import_safe_examples_load(example_path: Path) -> None:
     original_path = list(sys.path)
     try:
         spec.loader.exec_module(module)
+        assert sys.path == original_path
     finally:
         sys.path[:] = original_path

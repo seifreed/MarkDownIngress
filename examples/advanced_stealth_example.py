@@ -13,13 +13,21 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (
+def _ensure_source_checkout_importable() -> None:
+    """Allow direct execution from a source checkout without import-time side effects."""
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+if __name__ == "__main__":
+    _ensure_source_checkout_importable()
+
+from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (  # noqa: E402
     AdvancedStealthRenderer,
 )
-from markdown_ingress.core.stealth import (
+from markdown_ingress.core.stealth import (  # noqa: E402
     STEALTH_JS_INJECTION,
     ULTRA_STEALTH_ARGS,
     get_advanced_context_options,
