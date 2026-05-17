@@ -234,6 +234,94 @@ class SecurityAnalyzer:
             cls._PATTERNS_HASH = current_hash
             return result
 
+    def _compiled_patterns_for_detection(self) -> list[tuple[re.Pattern, float, str]]:
+        if self.INJECTION_PATTERNS is not SecurityAnalyzer.INJECTION_PATTERNS:
+            return self._compile_custom_injection_patterns()
+        return self._get_compiled_patterns()
+
+    def _compile_custom_injection_patterns(self) -> list[tuple[re.Pattern, float, str]]:
+        compiled = []
+        for pattern in self.INJECTION_PATTERNS:
+            compiled_pattern = self._compile_custom_injection_pattern(pattern)
+            if compiled_pattern is not None:
+                compiled.append(compiled_pattern)
+        return compiled
+
+    @staticmethod
+    def _compile_custom_injection_pattern(
+        pattern: InjectionPattern,
+    ) -> tuple[re.Pattern, float, str] | None:
+        if not pattern.pattern or not pattern.pattern.strip():
+            return None
+        if len(pattern.pattern) > 10000:
+            raise ValueError(f"Pattern too long (max 10000 chars): {pattern.description}")
+        if _detect_redos_pattern(pattern.pattern):
+            raise ValueError(
+                f"Pattern may cause ReDoS (catastrophic backtracking): {pattern.description}"
+            )
+        if not (0.0 <= pattern.weight <= 1.0):
+            raise ValueError(f"Invalid weight {pattern.weight} for pattern: {pattern.description}")
+        try:
+            return re.compile(pattern.pattern, pattern.flags), pattern.weight, pattern.description
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern '{pattern.description}': {e}") from e
+
+    @staticmethod
+    def _normalized_detection_variants(
+        text: str, decoded_text: str, decode_warnings: list[str]
+    ) -> list[str]:
+        normalized_variants = [_normalize_security_text(decoded_text)]
+        if "decoding_iteration_limit_reached" in decode_warnings:
+            original_normalized = _normalize_security_text(text)
+            if original_normalized not in normalized_variants:
+                normalized_variants.append(original_normalized)
+        return normalized_variants
+
+    @staticmethod
+    def _best_pattern_occurrences(
+        regex: re.Pattern, normalized_variants: list[str]
+    ) -> tuple[int, list]:
+        best_found = []
+        best_occurrences = 0
+        for normalized_text in normalized_variants:
+            found = regex.findall(normalized_text)
+            if len(found) > best_occurrences:
+                best_occurrences = len(found)
+                best_found = found
+        return best_occurrences, best_found
+
+    def _collect_pattern_matches(
+        self,
+        compiled: list[tuple[re.Pattern, float, str]],
+        normalized_variants: list[str],
+    ) -> list[dict]:
+        matches: list[dict] = []
+        for regex, weight, description in compiled:
+            occurrences, found = self._best_pattern_occurrences(regex, normalized_variants)
+            if occurrences:
+                matches.append(
+                    {
+                        "pattern": description,
+                        "weight": weight,
+                        "occurrences": occurrences,
+                        "samples": found[:3],
+                    }
+                )
+        return matches
+
+    @staticmethod
+    def _append_decoding_limit_match(matches: list[dict], decode_warnings: list[str]) -> None:
+        if "decoding_iteration_limit_reached" not in decode_warnings:
+            return
+        matches.append(
+            {
+                "pattern": "Deeply nested encoding",
+                "weight": 0.6,
+                "occurrences": 1,
+                "samples": [],
+            }
+        )
+
     def _detect_patterns(self, text: str) -> tuple[list[dict], list[str]]:
         """
         Detect injection patterns in text.
@@ -243,73 +331,15 @@ class SecurityAnalyzer:
 
         Returns list of matched patterns with metadata.
         """
-        matches: list[dict] = []
-
-        # Normalize text for security analysis:
-        # 1. Decode HTML entities and URL encoding (prevent bypass via &lt;instruction&gt;)
-        # 2. Convert Unicode whitespace to regular spaces
-        # 3. Normalize to ASCII (handles homoglyphs like Cyrillic U+0430 as 'a')
         decoded_text, decode_warnings = _decode_html_entities(text)
-        normalized_variants = [_normalize_security_text(decoded_text)]
-        if "decoding_iteration_limit_reached" in decode_warnings:
-            original_normalized = _normalize_security_text(text)
-            if original_normalized not in normalized_variants:
-                normalized_variants.append(original_normalized)
-
-        # Use instance patterns if overridden, otherwise class-level cached ones
-        # BUG FIX: Validate custom patterns to prevent ReDoS and empty patterns
-        if self.INJECTION_PATTERNS is not SecurityAnalyzer.INJECTION_PATTERNS:
-            compiled = []
-            for p in self.INJECTION_PATTERNS:
-                # Skip empty patterns
-                if not p.pattern or not p.pattern.strip():
-                    continue
-                # Prevent ReDoS via overly long patterns
-                if len(p.pattern) > 10000:
-                    raise ValueError(f"Pattern too long (max 10000 chars): {p.description}")
-                # BUG FIX: Check for ReDoS patterns (catastrophic backtracking)
-                if _detect_redos_pattern(p.pattern):
-                    raise ValueError(
-                        f"Pattern may cause ReDoS (catastrophic backtracking): {p.description}"
-                    )
-                # Validate weight is in valid range
-                if not (0.0 <= p.weight <= 1.0):
-                    raise ValueError(f"Invalid weight {p.weight} for pattern: {p.description}")
-                try:
-                    compiled.append((re.compile(p.pattern, p.flags), p.weight, p.description))
-                except re.error as e:
-                    raise ValueError(f"Invalid regex pattern '{p.description}': {e}") from e
-        else:
-            compiled = self._get_compiled_patterns()
-
-        for regex, weight, description in compiled:
-            best_found = []
-            best_occurrences = 0
-            for normalized_text in normalized_variants:
-                found = regex.findall(normalized_text)
-                if len(found) > best_occurrences:
-                    best_occurrences = len(found)
-                    best_found = found
-            if best_occurrences:
-                matches.append(
-                    {
-                        "pattern": description,
-                        "weight": weight,
-                        "occurrences": best_occurrences,
-                        "samples": best_found[:3],
-                    }
-                )
-
-        if "decoding_iteration_limit_reached" in decode_warnings:
-            matches.append(
-                {
-                    "pattern": "Deeply nested encoding",
-                    "weight": 0.6,
-                    "occurrences": 1,
-                    "samples": [],
-                }
-            )
-
+        normalized_variants = self._normalized_detection_variants(
+            text, decoded_text, decode_warnings
+        )
+        matches = self._collect_pattern_matches(
+            self._compiled_patterns_for_detection(),
+            normalized_variants,
+        )
+        self._append_decoding_limit_match(matches, decode_warnings)
         return matches, decode_warnings
 
     def _calculate_imperative_density(self, text: str) -> float:
