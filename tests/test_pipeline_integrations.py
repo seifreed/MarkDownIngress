@@ -1423,6 +1423,31 @@ def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
     assert doc.metadata["fetch_metadata"]["degraded_render_fallback"] is True
 
 
+def test_render_temp_screenshot_removed_when_renderer_factory_fails():
+    use_case = IngestUseCase(playwright_available=True)
+    captured: dict[str, str | bool | None] = {}
+
+    def raising_renderer_factory(config):
+        captured["path"] = config.screenshot
+        raise RuntimeError("renderer factory failed")
+
+    use_case.renderer_factory = raising_renderer_factory
+
+    try:
+        with pytest.raises(RuntimeError, match="renderer factory failed"):
+            use_case.execute(
+                "https://unit.test/factory-fails",
+                IngestConfig(mode="render", timeout=3.0, screenshot=True),
+            )
+
+        assert isinstance(captured["path"], str)
+        assert not Path(captured["path"]).exists()
+    finally:
+        path = captured.get("path")
+        if isinstance(path, str):
+            Path(path).unlink(missing_ok=True)
+
+
 def test_render_mode_does_not_degrade_to_fast_fetch_on_timeout():
     use_case = IngestUseCase(playwright_available=True)
     fetch_calls: list[str] = []

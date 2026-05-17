@@ -195,8 +195,8 @@ class _FetchPipeline:
 
     def _run_render_or_degrade(self, context: _RenderAttemptContext) -> FetchResult:
         """Run the Playwright render; fall back to a plain HTTP fetch on retryable failure."""
-        renderer = self._renderer_factory(context.render_config)
         try:
+            renderer = self._renderer_factory(context.render_config)
             fetch_result = cast(
                 FetchResult,
                 context.timed_stage("fetch_render", lambda: renderer.render_sync(context.url)),
