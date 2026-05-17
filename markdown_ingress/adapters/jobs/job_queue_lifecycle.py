@@ -250,11 +250,102 @@ class JobQueueLifecycleMixin:
             self._lease_lost = True
             self._closed = True
             self._closing = True
-            if not self._worker_stop_requested:
-                worker_count = len(self._workers)
-                for _ in range(worker_count):
-                    self._queue.put(STOP_WORKER)
-                self._worker_stop_requested = True
+            self._request_worker_stop_locked()
+
+    def _request_worker_stop_locked(self: Any) -> None:
+        if self._worker_stop_requested:
+            return
+        worker_count = len(self._workers)
+        for _ in range(worker_count):
+            self._queue.put(STOP_WORKER)
+        self._worker_stop_requested = True
+
+    def _wait_for_existing_close_locked(self: Any) -> bool:
+        if not getattr(self, "_close_in_progress", False):
+            return False
+        while getattr(self, "_close_in_progress", False) and not self._shutdown_complete:
+            self._state_changed.wait(timeout=0.1)
+        return bool(self._shutdown_complete)
+
+    def _validate_close_preserves_state_locked(
+        self: Any,
+        preserve_state_on_inline_timeout: bool,
+    ) -> None:
+        if not preserve_state_on_inline_timeout:
+            return
+        if self._inline_jobs_running > 0:
+            raise RuntimeError("Job queue inline jobs did not stop before lease release")
+        if any(worker.is_alive() for worker in self._workers):
+            raise RuntimeError("Job queue workers did not stop before lease release")
+
+    def _wait_for_inline_jobs_before_close_locked(
+        self: Any,
+        inline_wait_timeout: float | None,
+    ) -> None:
+        deadline = None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
+        while self._inline_jobs_running > 0:
+            if deadline is None:
+                self._state_changed.wait(timeout=0.1)
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Job queue inline jobs did not stop before lease release")
+            self._state_changed.wait(timeout=min(0.1, remaining))
+
+    def _begin_close_and_wait_inline_jobs(
+        self: Any,
+        *,
+        inline_wait_timeout: float | None,
+        preserve_state_on_inline_timeout: bool,
+    ) -> bool:
+        with self._lock:
+            if self._shutdown_complete:
+                return False
+            if self._wait_for_existing_close_locked():
+                return False
+            self._validate_close_preserves_state_locked(preserve_state_on_inline_timeout)
+            self._close_in_progress = True
+            self._closing = True
+            self._request_worker_stop_locked()
+            try:
+                self._wait_for_inline_jobs_before_close_locked(inline_wait_timeout)
+            except BaseException:
+                self._close_in_progress = False
+                self._state_changed.notify_all()
+                raise
+            return True
+
+    def _join_workers_for_close(self: Any) -> None:
+        for worker in list(self._workers):
+            worker.join(timeout=2.0)
+        still_alive = [worker for worker in self._workers if worker.is_alive()]
+        if still_alive:
+            raise RuntimeError("Job queue workers did not stop before lease release")
+
+    def _stop_heartbeat_for_close(self: Any) -> None:
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=2.0)
+
+    def _release_lease_for_close(self: Any) -> None:
+        with closing(self._connect()) as conn:
+            if not self._lease_lost:
+                conn.execute(
+                    "DELETE FROM queue_leases WHERE lease_name = ? AND owner_id = ?",
+                    ("default", self.instance_id),
+                )
+            conn.commit()
+
+    def _mark_shutdown_complete(self: Any) -> None:
+        with self._lock:
+            self._closed = True
+            self._shutdown_complete = True
+            self._state_changed.notify_all()
+
+    def _release_failed_close_claim(self: Any) -> None:
+        with self._lock:
+            self._close_in_progress = False
+            self._state_changed.notify_all()
 
     def close(
         self: Any,
@@ -266,67 +357,19 @@ class JobQueueLifecycleMixin:
             return
         claimed_close = False
         try:
-            with self._lock:
-                if self._shutdown_complete:
-                    return
-                if getattr(self, "_close_in_progress", False):
-                    while (
-                        getattr(self, "_close_in_progress", False) and not self._shutdown_complete
-                    ):
-                        self._state_changed.wait(timeout=0.1)
-                    if self._shutdown_complete:
-                        return
-                if preserve_state_on_inline_timeout and self._inline_jobs_running > 0:
-                    raise RuntimeError("Job queue inline jobs did not stop before lease release")
-                if preserve_state_on_inline_timeout and any(
-                    worker.is_alive() for worker in self._workers
-                ):
-                    raise RuntimeError("Job queue workers did not stop before lease release")
-                self._close_in_progress = True
-                claimed_close = True
-                self._closing = True
-                if not self._worker_stop_requested:
-                    worker_count = len(self._workers)
-                    for _ in range(worker_count):
-                        self._queue.put(STOP_WORKER)
-                    self._worker_stop_requested = True
-                deadline = (
-                    None if inline_wait_timeout is None else time.monotonic() + inline_wait_timeout
-                )
-                while self._inline_jobs_running > 0:
-                    if deadline is not None:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise RuntimeError(
-                                "Job queue inline jobs did not stop before lease release"
-                            )
-                        self._state_changed.wait(timeout=min(0.1, remaining))
-                    else:
-                        self._state_changed.wait(timeout=0.1)
-            for worker in list(self._workers):
-                worker.join(timeout=2.0)
-            still_alive = [worker for worker in self._workers if worker.is_alive()]
-            if still_alive:
-                raise RuntimeError("Job queue workers did not stop before lease release")
-            self._heartbeat_stop.set()
-            if self._heartbeat_thread is not None:
-                self._heartbeat_thread.join(timeout=2.0)
-            with closing(self._connect()) as conn:
-                if not self._lease_lost:
-                    conn.execute(
-                        "DELETE FROM queue_leases WHERE lease_name = ? AND owner_id = ?",
-                        ("default", self.instance_id),
-                    )
-                conn.commit()
-            with self._lock:
-                self._closed = True
-                self._shutdown_complete = True
-                self._state_changed.notify_all()
+            claimed_close = self._begin_close_and_wait_inline_jobs(
+                inline_wait_timeout=inline_wait_timeout,
+                preserve_state_on_inline_timeout=preserve_state_on_inline_timeout,
+            )
+            if not claimed_close:
+                return
+            self._join_workers_for_close()
+            self._stop_heartbeat_for_close()
+            self._release_lease_for_close()
+            self._mark_shutdown_complete()
         finally:
             if claimed_close and not self._shutdown_complete:
-                with self._lock:
-                    self._close_in_progress = False
-                    self._state_changed.notify_all()
+                self._release_failed_close_claim()
 
     def _recover_orphaned_jobs(self: Any) -> None:
         """Fail queued/running jobs from a previous process instance."""
