@@ -29,34 +29,69 @@ def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _rate_limit_client_id(request: Request, x_api_key: str | None) -> str:
+def _api_key_client_id(x_api_key: str | None) -> str | None:
     import markdown_ingress.api_server as _srv
 
     if _srv.OPTIONAL_API_KEY is not None and x_api_key is not None:
         return hashlib.sha256(x_api_key.encode()).hexdigest()[:16]
-    # Support X-Forwarded-For / X-Real-IP when behind trusted proxies
-    trusted_proxies = os.getenv("MDI_TRUSTED_PROXY_IPS", "").strip()
-    if trusted_proxies and request.client is not None and request.client.host:
-        trusted_set = {ip.strip() for ip in trusted_proxies.split(",") if ip.strip()}
-        if request.client.host in trusted_set:
-            # Use X-Real-IP first, then rightmost untrusted IP from X-Forwarded-For.
-            # Each header value MUST parse as a valid IP; otherwise an attacker
-            # could send arbitrary strings to bypass per-IP rate-limit buckets.
-            real_ip = request.headers.get("x-real-ip")
-            if real_ip:
-                candidate = real_ip.strip()
-                if _is_valid_ip(candidate):
-                    return f"ip:{candidate}"
-            xff = request.headers.get("x-forwarded-for")
-            if xff:
-                parts = [p.strip() for p in xff.split(",")]
-                for part in reversed(parts):
-                    if part in trusted_set:
-                        continue
-                    if _is_valid_ip(part):
-                        return f"ip:{part}"
+    return None
+
+
+def _request_client_host(request: Request) -> str | None:
     if request.client is not None and request.client.host:
-        return f"ip:{request.client.host}"
+        return request.client.host
+    return None
+
+
+def _trusted_proxy_ips() -> set[str]:
+    trusted_proxies = os.getenv("MDI_TRUSTED_PROXY_IPS", "").strip()
+    return {ip.strip() for ip in trusted_proxies.split(",") if ip.strip()}
+
+
+def _real_ip_client_id(request: Request) -> str | None:
+    real_ip = request.headers.get("x-real-ip")
+    if not real_ip:
+        return None
+    candidate = real_ip.strip()
+    if _is_valid_ip(candidate):
+        return f"ip:{candidate}"
+    return None
+
+
+def _forwarded_for_client_id(request: Request, trusted_set: set[str]) -> str | None:
+    xff = request.headers.get("x-forwarded-for")
+    if not xff:
+        return None
+    parts = [part.strip() for part in xff.split(",")]
+    for part in reversed(parts):
+        if part in trusted_set:
+            continue
+        if _is_valid_ip(part):
+            return f"ip:{part}"
+    return None
+
+
+def _trusted_proxy_client_id(request: Request, trusted_set: set[str]) -> str | None:
+    # Use X-Real-IP first, then rightmost untrusted IP from X-Forwarded-For.
+    # Each header value MUST parse as a valid IP; otherwise an attacker
+    # could send arbitrary strings to bypass per-IP rate-limit buckets.
+    return _real_ip_client_id(request) or _forwarded_for_client_id(request, trusted_set)
+
+
+def _rate_limit_client_id(request: Request, x_api_key: str | None) -> str:
+    api_key_client_id = _api_key_client_id(x_api_key)
+    if api_key_client_id is not None:
+        return api_key_client_id
+
+    client_host = _request_client_host(request)
+    trusted_set = _trusted_proxy_ips()
+    if client_host is not None and client_host in trusted_set:
+        proxy_client_id = _trusted_proxy_client_id(request, trusted_set)
+        if proxy_client_id is not None:
+            return proxy_client_id
+
+    if client_host is not None:
+        return f"ip:{client_host}"
     return "anonymous:unknown"
 
 
