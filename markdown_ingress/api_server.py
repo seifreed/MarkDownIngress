@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import uvicorn
 from fastapi import Depends, FastAPI
@@ -48,6 +48,10 @@ from markdown_ingress.api_server_handlers import (
     handle_retry_ingest,
     handle_security_report,
     handle_sync_batch,
+)
+from markdown_ingress.api_server_job_history import (
+    prune_job_queue_history,
+    remember_job_queue,
 )
 from markdown_ingress.api_server_legacy_routes import register_legacy_routes
 from markdown_ingress.api_server_queue import (
@@ -241,22 +245,7 @@ def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
     This function may be called from contexts that don't hold the lock,
     so we ensure thread-safety by acquiring it here.
     """
-    if queue is None:
-        return
-    with _JOB_QUEUE_LOCK:
-        if getattr(queue, "state", None) == "external_owner":
-            return
-        if any(existing is queue for existing in _JOB_QUEUE_HISTORY):
-            return
-        queue_db_path = getattr(queue, "db_path", None)
-        if queue_db_path is not None:
-            queue_db_path = str(queue_db_path)
-            _JOB_QUEUE_HISTORY[:] = [
-                existing
-                for existing in _JOB_QUEUE_HISTORY
-                if str(getattr(existing, "db_path", object())) != queue_db_path
-            ]
-        _JOB_QUEUE_HISTORY.append(queue)
+    remember_job_queue(_JOB_QUEUE_HISTORY, _JOB_QUEUE_LOCK, queue)
 
 
 def _prune_job_queue_history() -> None:
@@ -265,19 +254,13 @@ def _prune_job_queue_history() -> None:
     BUG FIX #3: All access to _JOB_QUEUE_HISTORY is protected by _JOB_QUEUE_LOCK.
     This includes both reading (iteration) and writing (slice assignment).
     """
-    with _JOB_QUEUE_LOCK:
-        kept = []
-        for queue in _JOB_QUEUE_HISTORY:
-            try:
-                if _queue_still_has_visible_jobs(queue):
-                    cast(Any, queue)._history_read_failures = 0
-                    kept.append(queue)
-            except _TransientLegacyQueueReadError:
-                failures = int(getattr(queue, "_history_read_failures", 0)) + 1
-                cast(Any, queue)._history_read_failures = failures
-                if failures < _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD:
-                    kept.append(queue)
-        _JOB_QUEUE_HISTORY[:] = kept
+    prune_job_queue_history(
+        _JOB_QUEUE_HISTORY,
+        _JOB_QUEUE_LOCK,
+        queue_still_has_visible_jobs=_queue_still_has_visible_jobs,
+        transient_read_error=_TransientLegacyQueueReadError,
+        prune_error_threshold=_LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
+    )
 
 
 def _replace_job_queue_if_current(expected_queue, replacement_queue) -> bool:
