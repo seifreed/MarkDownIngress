@@ -20,7 +20,25 @@ jobs:
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build twine
+        pip install -e ".[dev]" bandit[toml] build twine
+
+    - name: Install Playwright browsers
+      run: playwright install chromium
+
+    - name: Run ruff
+      run: ruff check .
+
+    - name: Run black
+      run: black --check .
+
+    - name: Run mypy
+      run: mypy markdown_ingress tests
+
+    - name: Run bandit
+      run: bandit -q -r markdown_ingress
+
+    - name: Run tests
+      run: python -m pytest -q -m "not baseline and not campaign"
     
     - name: Build package
       run: python -m build

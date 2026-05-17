@@ -103,6 +103,23 @@ def test_ci_workflow_covers_public_docs_examples_and_local_gate() -> None:
     assert '-m "not baseline and not campaign"' in workflow
 
 
+def test_publish_workflow_verifies_before_upload() -> None:
+    workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
+    upload_index = workflow.index("twine upload dist/*")
+
+    required_steps = [
+        'pip install -e ".[dev]" bandit[toml] build twine',
+        "ruff check .",
+        "black --check .",
+        "mypy markdown_ingress tests",
+        "bandit -q -r markdown_ingress",
+        'python -m pytest -q -m "not baseline and not campaign"',
+    ]
+    for step in required_steps:
+        assert step in workflow
+        assert workflow.index(step) < upload_index
+
+
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
