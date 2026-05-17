@@ -817,6 +817,27 @@ async def test_fetcher_close_inside_running_loop_schedules_async_client_close():
     assert fetcher._async_close_tasks == set()
 
 
+@pytest.mark.asyncio
+async def test_fetcher_aclose_closes_existing_sync_client():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    class FakeSyncClient:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0)
+    sync_client = FakeSyncClient()
+    fetcher._sync_client = sync_client
+
+    await fetcher.aclose()
+
+    assert sync_client.closed is True
+    assert fetcher._sync_client is None
+
+
 def test_fetch_sync_follow_redirects_false_returns_redirect_response(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 

@@ -113,6 +113,10 @@ class ClientLifecycleMixin:
 
     async def aclose(self: Any) -> None:
         self._closing = True
+        with self._client_lock:
+            if self._sync_client is not None:
+                self._sync_client.close()
+                self._sync_client = None
         async with self._get_async_client_lock():
             if self._async_client is not None:
                 await self._async_client.aclose()
