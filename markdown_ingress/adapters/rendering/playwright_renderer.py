@@ -21,6 +21,7 @@ from markdown_ingress.adapters.rendering.renderer_screenshots import (
 )
 from markdown_ingress.adapters.rendering.renderer_support import (
     _SCREENSHOT_UNSET,
+    RendererConfigInputs,
     build_renderer_config,
     execute_render_session,
 )
@@ -89,22 +90,24 @@ class Renderer(IRenderer):
     ):
         config = build_renderer_config(
             self.DEFAULT_WAIT_UNTIL,
-            config=config,
-            timeout=timeout,
-            wait_until=wait_until,
-            headless=headless,
-            user_agent=user_agent,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            block_resources=block_resources,
-            block_images=block_images,
-            block_fonts=block_fonts,
-            block_media=block_media,
-            block_ads=block_ads,
-            block_trackers=block_trackers,
-            screenshot=screenshot,
-            allow_local_urls=allow_local_urls,
+            RendererConfigInputs(
+                config=config,
+                timeout=timeout,
+                wait_until=wait_until,
+                headless=headless,
+                user_agent=user_agent,
+                stealth=stealth,
+                disable_http2=disable_http2,
+                extreme_mode=extreme_mode,
+                block_resources=block_resources,
+                block_images=block_images,
+                block_fonts=block_fonts,
+                block_media=block_media,
+                block_ads=block_ads,
+                block_trackers=block_trackers,
+                screenshot=screenshot,
+                allow_local_urls=allow_local_urls,
+            ),
         )
 
         self.timeout = int(config.timeout * 1000)

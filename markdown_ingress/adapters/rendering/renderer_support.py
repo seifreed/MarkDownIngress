@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Final, cast
 
 import httpx
@@ -88,145 +88,86 @@ def raise_for_render_status(response: Any | None, url: str) -> None:
     http_response.raise_for_status()
 
 
+@dataclass(frozen=True)
+class RendererConfigInputs:
+    """Optional RenderConfig plus per-field overrides supplied by renderer constructors."""
+
+    config: RenderConfig | None = None
+    timeout: float | None = None
+    wait_until: str | None = None
+    headless: bool | None = None
+    user_agent: str | None = None
+    stealth: bool | None = None
+    disable_http2: bool | None = None
+    extreme_mode: bool | None = None
+    block_resources: bool | None = None
+    block_images: bool | None = None
+    block_fonts: bool | None = None
+    block_media: bool | None = None
+    block_ads: bool | None = None
+    block_trackers: bool | None = None
+    screenshot: Any = _SCREENSHOT_UNSET
+    allow_local_urls: bool | None = None
+
+
 def build_renderer_config(
     default_wait_until: str,
-    *,
-    config: RenderConfig | None = None,
-    timeout: float | None = None,
-    wait_until: str | None = None,
-    headless: bool | None = None,
-    user_agent: str | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    block_resources: bool | None = None,
-    block_images: bool | None = None,
-    block_fonts: bool | None = None,
-    block_media: bool | None = None,
-    block_ads: bool | None = None,
-    block_trackers: bool | None = None,
-    screenshot: bool | str | None = _SCREENSHOT_UNSET,
-    allow_local_urls: bool | None = None,
+    inputs: RendererConfigInputs,
 ) -> RenderConfig:
     """Normalize init inputs into a concrete RenderConfig."""
-    if config is None:
-        return _build_default_renderer_config(
-            default_wait_until,
-            timeout=timeout,
-            wait_until=wait_until,
-            headless=headless,
-            user_agent=user_agent,
-            stealth=stealth,
-            disable_http2=disable_http2,
-            extreme_mode=extreme_mode,
-            block_resources=block_resources,
-            block_images=block_images,
-            block_fonts=block_fonts,
-            block_media=block_media,
-            block_ads=block_ads,
-            block_trackers=block_trackers,
-            screenshot=screenshot,
-            allow_local_urls=allow_local_urls,
-        )
+    if inputs.config is None:
+        return _build_default_renderer_config(default_wait_until, inputs)
 
-    overrides = _collect_renderer_config_overrides(
-        timeout=timeout,
-        wait_until=wait_until,
-        headless=headless,
-        user_agent=user_agent,
-        stealth=stealth,
-        disable_http2=disable_http2,
-        extreme_mode=extreme_mode,
-        block_resources=block_resources,
-        block_images=block_images,
-        block_fonts=block_fonts,
-        block_media=block_media,
-        block_ads=block_ads,
-        block_trackers=block_trackers,
-        screenshot=screenshot,
-        allow_local_urls=allow_local_urls,
-    )
-    return replace(config, **overrides) if overrides else config
+    overrides = _collect_renderer_config_overrides(inputs)
+    return replace(inputs.config, **overrides) if overrides else inputs.config
 
 
 def _build_default_renderer_config(
     default_wait_until: str,
-    *,
-    timeout: float | None,
-    wait_until: str | None,
-    headless: bool | None,
-    user_agent: str | None,
-    stealth: bool | None,
-    disable_http2: bool | None,
-    extreme_mode: bool | None,
-    block_resources: bool | None,
-    block_images: bool | None,
-    block_fonts: bool | None,
-    block_media: bool | None,
-    block_ads: bool | None,
-    block_trackers: bool | None,
-    screenshot: bool | str | None,
-    allow_local_urls: bool | None,
+    inputs: RendererConfigInputs,
 ) -> RenderConfig:
     return RenderConfig(
-        timeout=timeout if timeout is not None else 30.0,
-        wait_until=wait_until if wait_until is not None else default_wait_until,
-        headless=headless if headless is not None else True,
-        user_agent=user_agent,
-        stealth=stealth if stealth is not None else False,
-        disable_http2=disable_http2 if disable_http2 is not None else False,
-        extreme_mode=extreme_mode if extreme_mode is not None else False,
-        block_resources=block_resources if block_resources is not None else True,
-        block_images=block_images if block_images is not None else True,
-        block_fonts=block_fonts if block_fonts is not None else True,
-        block_media=block_media if block_media is not None else True,
-        block_ads=block_ads if block_ads is not None else True,
-        block_trackers=block_trackers if block_trackers is not None else True,
-        screenshot=None if screenshot is _SCREENSHOT_UNSET else screenshot,
-        allow_local_urls=allow_local_urls,
+        timeout=inputs.timeout if inputs.timeout is not None else 30.0,
+        wait_until=inputs.wait_until if inputs.wait_until is not None else default_wait_until,
+        headless=inputs.headless if inputs.headless is not None else True,
+        user_agent=inputs.user_agent,
+        stealth=inputs.stealth if inputs.stealth is not None else False,
+        disable_http2=inputs.disable_http2 if inputs.disable_http2 is not None else False,
+        extreme_mode=inputs.extreme_mode if inputs.extreme_mode is not None else False,
+        block_resources=inputs.block_resources if inputs.block_resources is not None else True,
+        block_images=inputs.block_images if inputs.block_images is not None else True,
+        block_fonts=inputs.block_fonts if inputs.block_fonts is not None else True,
+        block_media=inputs.block_media if inputs.block_media is not None else True,
+        block_ads=inputs.block_ads if inputs.block_ads is not None else True,
+        block_trackers=inputs.block_trackers if inputs.block_trackers is not None else True,
+        screenshot=None if inputs.screenshot is _SCREENSHOT_UNSET else inputs.screenshot,
+        allow_local_urls=inputs.allow_local_urls,
     )
 
 
-def _collect_renderer_config_overrides(
-    *,
-    timeout: float | None,
-    wait_until: str | None,
-    headless: bool | None,
-    user_agent: str | None,
-    stealth: bool | None,
-    disable_http2: bool | None,
-    extreme_mode: bool | None,
-    block_resources: bool | None,
-    block_images: bool | None,
-    block_fonts: bool | None,
-    block_media: bool | None,
-    block_ads: bool | None,
-    block_trackers: bool | None,
-    screenshot: bool | str | None,
-    allow_local_urls: bool | None,
-) -> dict[str, Any]:
+def _collect_renderer_config_overrides(inputs: RendererConfigInputs) -> dict[str, Any]:
     overrides: dict[str, Any] = {
         name: value
         for name, value in (
-            ("timeout", timeout),
-            ("wait_until", wait_until),
-            ("headless", headless),
-            ("user_agent", user_agent),
-            ("stealth", stealth),
-            ("disable_http2", disable_http2),
-            ("extreme_mode", extreme_mode),
-            ("block_resources", block_resources),
-            ("block_images", block_images),
-            ("block_fonts", block_fonts),
-            ("block_media", block_media),
-            ("block_ads", block_ads),
-            ("block_trackers", block_trackers),
-            ("allow_local_urls", allow_local_urls),
+            ("timeout", inputs.timeout),
+            ("wait_until", inputs.wait_until),
+            ("headless", inputs.headless),
+            ("user_agent", inputs.user_agent),
+            ("stealth", inputs.stealth),
+            ("disable_http2", inputs.disable_http2),
+            ("extreme_mode", inputs.extreme_mode),
+            ("block_resources", inputs.block_resources),
+            ("block_images", inputs.block_images),
+            ("block_fonts", inputs.block_fonts),
+            ("block_media", inputs.block_media),
+            ("block_ads", inputs.block_ads),
+            ("block_trackers", inputs.block_trackers),
+            ("allow_local_urls", inputs.allow_local_urls),
         )
         if value is not None
     }
-    if screenshot is not _SCREENSHOT_UNSET:
-        overrides["screenshot"] = screenshot
+    if inputs.screenshot is not _SCREENSHOT_UNSET:
+        overrides["screenshot"] = inputs.screenshot
     return overrides
 
 
