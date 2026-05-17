@@ -102,7 +102,7 @@ def parse_bundled_rule_content(
     for block in extract_rule_blocks(content):
         try:
             rules.append(parser.parse(block.strip()))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - bundled rule failures are per-block
             failures.append(RuleParseFailure(block[:50], str(exc)))
     return rules, failures
 

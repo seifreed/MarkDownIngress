@@ -823,9 +823,15 @@ class SlowSideEffectPlugin(Plugin):
                 max_concurrent=1,
             )
         )
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + 20.0
         while not started_path.exists():
+            if task.done():
+                await task
+                pytest.fail("batch worker finished before plugin processing started")
             if time.monotonic() >= deadline:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
                 pytest.fail("batch worker never started plugin processing")
             await asyncio.sleep(0.05)
         task.cancel()

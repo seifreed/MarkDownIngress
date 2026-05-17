@@ -209,7 +209,7 @@ class NovaGuard:
                         e,
                     )
                     continue
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - permission checks fail closed
             logger.warning("Unexpected error checking path permissions: %s", e)
         return False  # Default to deny on error
 

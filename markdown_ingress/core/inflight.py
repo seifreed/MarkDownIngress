@@ -311,7 +311,7 @@ class InFlightRegistry:
                     entry.document.metadata["inflight_shared_count"] = shared_count
                 if error is not None:
                     entry.error = copy_exception_for_transfer(error)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - release must notify waiters on copy failure
                 entry.error = exc
             finally:
                 entry.completing = True

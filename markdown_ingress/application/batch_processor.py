@@ -155,7 +155,7 @@ class _BatchUrlProcessor:
             # find a cancelled future and deadlock.
             await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - follower records leader failure as item
             import traceback
 
             await ctx.append_error(
@@ -346,7 +346,7 @@ class _BatchUrlProcessor:
         except asyncio.CancelledError:
             await self._handle_cancelled(record, prepared)
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - per-item batch failures are collected
             return await self._handle_process_exception(prepared, record, exc)
         finally:
             if semaphore_held:

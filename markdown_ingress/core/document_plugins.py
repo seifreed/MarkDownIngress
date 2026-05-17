@@ -53,7 +53,7 @@ def unload_document_plugins(
             plugin_loader.unload_plugin(plugin_name)
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception as exc:  # pragma: no cover - defensive logging path
+        except Exception as exc:  # noqa: BLE001 - plugin unload errors become warnings
             unload_errors.append(f"{plugin_name}: {type(exc).__name__}: {exc}")
     if unload_errors:
         for message in unload_errors:

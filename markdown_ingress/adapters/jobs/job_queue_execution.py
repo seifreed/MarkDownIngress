@@ -37,7 +37,7 @@ class JobQueueExecutionMixin:
                 self._execute_job(job_id, task)
             except JobAlreadyRunningError as exc:
                 _logger.info("Skipping duplicate execution for job %s: %s", job_id, exc)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:  # noqa: BLE001 - worker boundary marks jobs failed
                 _logger.warning("Worker loop exception for job %s: %s", job_id, exc)
                 if job_id is not None:
                     self._mark_worker_job_failed(job_id, exc)
@@ -49,7 +49,7 @@ class JobQueueExecutionMixin:
             job = self.get(job_id, cleanup_expired=False)
             if job is not None and job.status not in {"failed", "completed"}:
                 self._mark_failed(job_id, str(exc))
-        except Exception as mark_exc:
+        except Exception as mark_exc:  # noqa: BLE001 - fallback keeps failure visible
             _logger.warning(
                 "Could not mark job %s as failed: %s",
                 job_id,
@@ -112,7 +112,7 @@ class JobQueueExecutionMixin:
     def _mark_job_failed_preserving_original_error(self: Any, job_id: str, exc: Exception) -> None:
         try:
             self._mark_failed(job_id, str(exc))
-        except Exception:
+        except Exception:  # noqa: BLE001 - original job failure must be preserved
             _logger.warning(
                 "Failed to mark job %s as failed (original error: %s)",
                 job_id,
@@ -129,7 +129,7 @@ class JobQueueExecutionMixin:
                 self._mark_completed_preserve_result(
                     job_id, result, "Job queue lease was lost before result persistence"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - lease-loss preservation is best effort
                 _logger.debug("Failed to preserve job result on lease loss: %s", e)
                 self._mark_failed(job_id, "Job queue lease was lost before result persistence")
             raise RuntimeError("Job queue lease was lost before result persistence")
@@ -214,7 +214,7 @@ class JobQueueExecutionMixin:
         def run_task() -> None:
             try:
                 result_container[0] = task()
-            except BaseException as e:
+            except BaseException as e:  # noqa: BLE001 - thread bridge preserves caller errors
                 exception_container[0] = e
 
         thread = threading.Thread(target=run_task, daemon=True)

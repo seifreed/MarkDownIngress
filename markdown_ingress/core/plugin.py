@@ -139,7 +139,7 @@ class PluginLoader:
                         self.load_plugin(plugin_instance)
                         loaded_count += 1
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - bad external plugins are skipped
                 sys.modules.pop(module_name, None)
                 import logging
 

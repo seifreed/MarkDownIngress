@@ -115,7 +115,7 @@ async def publish_batch_inflight_exception(
         if record.followers == 0 and record.future.done():
             try:
                 record.future.exception()
-            except Exception as future_exc:
+            except (asyncio.CancelledError, asyncio.InvalidStateError) as future_exc:
                 _logger.debug(
                     "Consumed batch inflight exception for %s: %s",
                     request_key[:32],
