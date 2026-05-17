@@ -92,7 +92,7 @@ class _BatchUrlProcessor:
             return False
         try:
             cached = prepared.cache_backend.get(prepared.cache_key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cache backends fail open as misses
             _logger.warning(
                 "Batch cache lookup failed for %s; continuing without cache: %s",
                 prepared.cache_key,
@@ -117,7 +117,7 @@ class _BatchUrlProcessor:
                         started_at=started_at,
                     )
                 await self._report_completion(prepared.url)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - corrupt cached values are purged
                 _logger.warning(
                     "Failed to clone cached batch document for %s, cache entry may be corrupt: %s",
                     prepared.cache_key,
@@ -218,7 +218,7 @@ class _BatchUrlProcessor:
                     document,
                     ttl=prepared.resolved_config.cache_ttl,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
                 _logger.warning(
                     "Batch cache write failed for %s; continuing without cache: %s",
                     prepared.cache_key,
@@ -295,7 +295,7 @@ class _BatchUrlProcessor:
                     exc.document,
                     prepared.resolved_config.reports_dir,
                 )
-            except Exception as persist_exc:
+            except Exception as persist_exc:  # noqa: BLE001 - report persistence is optional
                 _logger.warning(
                     "Failed to persist security report for %s: %s",
                     prepared.url,

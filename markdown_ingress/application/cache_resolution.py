@@ -38,7 +38,7 @@ def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
     """Best-effort removal of a corrupt cache value before recomputing."""
     try:
         cache_backend.delete(cache_key)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - cache backends fail open as cache misses
         _logger.warning(
             "Failed to delete corrupt cache entry for %s; continuing as cache miss: %s",
             cache_key,
@@ -79,7 +79,7 @@ class _CacheResolutionHelper:
             return None
         try:
             cached = cache_backend.get(cache_key)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cache backends fail open as misses
             _logger.warning(
                 "Cache lookup failed for %s; continuing without cache: %s",
                 cache_key,
@@ -96,7 +96,7 @@ class _CacheResolutionHelper:
             bump_ingest_stat("cache_hits")
             cached_copy.metadata[REQUESTED_MODE] = requested_mode
             record_mode_result(requested_mode, success=True)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - corrupt cached values are purged
             _logger.warning(
                 "Failed to clone cached document for %s, cache entry may be corrupt: %s",
                 cache_key,

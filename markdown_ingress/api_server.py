@@ -362,26 +362,34 @@ def _external_owner_backend_still_owned(queue) -> bool:
     return check_external_owner_still_owns(db_path, _is_stale_heartbeat, _set_backend_error)
 
 
-def _clear_job_queue_repair_state_locked() -> None:
+def _clear_job_queue_repair_state_locked(
+    expected_stop_event: threading.Event | None = None,
+) -> None:
     global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
+    if expected_stop_event is not None and _JOB_QUEUE_REPAIR_STOP is not expected_stop_event:
+        return
     _JOB_QUEUE_REPAIR_THREAD = None
     _JOB_QUEUE_REPAIR_STOP = None
 
 
-def _clear_job_queue_repair_state() -> None:
+def _clear_job_queue_repair_state(
+    expected_stop_event: threading.Event | None = None,
+) -> None:
     with _JOB_QUEUE_LOCK:
-        _clear_job_queue_repair_state_locked()
+        _clear_job_queue_repair_state_locked(expected_stop_event)
 
 
-def _current_recoverable_job_queue() -> tuple[Any, str | None] | None:
+def _current_recoverable_job_queue(
+    stop_event: threading.Event,
+) -> tuple[Any, str | None] | None:
     with _JOB_QUEUE_LOCK:
         queue = JOB_QUEUE
         if queue is None:
-            _clear_job_queue_repair_state_locked()
+            _clear_job_queue_repair_state_locked(stop_event)
             return None
         state = getattr(queue, "state", None)
         if state not in _REPAIRABLE_QUEUE_STATES:
-            _clear_job_queue_repair_state_locked()
+            _clear_job_queue_repair_state_locked(stop_event)
             return None
         return queue, state
 
@@ -410,19 +418,23 @@ def _maybe_wait_for_external_owner_backend(
     return state, False
 
 
-def _finish_repair_if_replaced_or_terminal(queue: Any, state: str | None) -> bool:
+def _finish_repair_if_replaced_or_terminal(
+    queue: Any,
+    state: str | None,
+    stop_event: threading.Event,
+) -> bool:
     replacement_queue = _build_replacement_queue_or_current(queue)
     if replacement_queue is not queue:
-        _clear_job_queue_repair_state()
+        _clear_job_queue_repair_state(stop_event)
         return True
     if state == "backend_error":
-        _clear_job_queue_repair_state()
+        _clear_job_queue_repair_state(stop_event)
         return True
     return False
 
 
 def _run_job_queue_repair_attempt(stop_event: threading.Event) -> bool:
-    candidate = _current_recoverable_job_queue()
+    candidate = _current_recoverable_job_queue(stop_event)
     if candidate is None:
         return False
     queue, state = candidate
@@ -435,7 +447,7 @@ def _run_job_queue_repair_attempt(stop_event: threading.Event) -> bool:
         if retry_later:
             return True
         try:
-            repair_finished = _finish_repair_if_replaced_or_terminal(queue, state)
+            repair_finished = _finish_repair_if_replaced_or_terminal(queue, state, stop_event)
         except (RuntimeError, SQLiteError, OSError) as exc:
             _logger.debug("Job queue repair rebuild failed: %s", exc, exc_info=True)
         else:

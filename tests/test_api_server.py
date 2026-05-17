@@ -1935,6 +1935,24 @@ def test_start_job_queue_repair_loop_is_singleton_under_concurrent_calls(monkeyp
     assert started["count"] == 1
 
 
+def test_stale_repair_loop_does_not_clear_newer_repair_state(monkeypatch):
+    stale_stop = threading.Event()
+    current_stop = threading.Event()
+    current_thread = threading.Thread(target=lambda: None)
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", None)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_STOP", current_stop)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", current_thread)
+
+    assert api_server._run_job_queue_repair_attempt(stale_stop) is False
+    assert api_server._JOB_QUEUE_REPAIR_STOP is current_stop
+    assert api_server._JOB_QUEUE_REPAIR_THREAD is current_thread
+
+    assert api_server._run_job_queue_repair_attempt(current_stop) is False
+    assert api_server._JOB_QUEUE_REPAIR_STOP is None
+    assert api_server._JOB_QUEUE_REPAIR_THREAD is None
+
+
 def test_get_job_queue_keeps_existing_external_owner_wrapper_while_backend_still_busy(monkeypatch):
     class ExternalOwnerQueue:
         state = "external_owner"

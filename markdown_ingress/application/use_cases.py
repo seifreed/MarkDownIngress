@@ -263,7 +263,7 @@ class IngestUseCase:
         if should_write_cache and cache_backend is not None and cache_key is not None:
             try:
                 cache_backend.set(cache_key, document, ttl=config.cache_ttl)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
                 _logger.warning(
                     "Cache write failed for %s; continuing without cache: %s",
                     cache_key,
