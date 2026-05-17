@@ -16,10 +16,12 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from markdown_ingress.core.advanced_stealth import (
+from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (
+    AdvancedStealthRenderer,
+)
+from markdown_ingress.core.stealth import (
     STEALTH_JS_INJECTION,
     ULTRA_STEALTH_ARGS,
-    AdvancedStealthRenderer,
     get_advanced_context_options,
     get_advanced_stealth_config,
     inject_stealth,

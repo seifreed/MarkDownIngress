@@ -11,7 +11,7 @@ This script shows how to use the ResourceBlocker to:
 import asyncio
 import sys
 
-from markdown_ingress.core.renderer import Renderer
+from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 
 
 async def demo_resource_blocking():
