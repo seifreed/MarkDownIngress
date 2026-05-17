@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 
+from markdown_ingress.models import SafeDocument
+
 _SIMPLE_PICKLABLE_TYPES = (str, int, float, bool, bytes, type(None))
 
 
@@ -35,7 +37,12 @@ def _copy_custom_attrs(source: Exception, target: Exception) -> None:
     for attr, value in getattr(source, "__dict__", {}).items():
         if attr not in skip:
             try:
-                setattr(target, attr, make_picklable(value))
+                copied_value: object
+                if attr == "document":
+                    copied_value = copy.deepcopy(value) if isinstance(value, SafeDocument) else None
+                else:
+                    copied_value = make_picklable(value)
+                setattr(target, attr, copied_value)
             except (AttributeError, TypeError):
                 pass
 

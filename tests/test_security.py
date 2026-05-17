@@ -7,8 +7,11 @@ import pytest
 from markdown_ingress.core.document_builder import (
     _dedupe_preserving_order as dedupe_document_builder_flags,
 )
+from markdown_ingress.core.exception_copy import copy_exception_for_transfer
+from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.core.security import InjectionPattern, SecurityAnalyzer
 from markdown_ingress.core.security_engine import _dedupe_preserving_order as dedupe_security_flags
+from markdown_ingress.models import SafeDocument
 
 
 def test_safe_content():
@@ -177,6 +180,25 @@ def test_security_flag_deduplication_preserves_first_seen_order():
         "block",
         "policy_block",
     ]
+
+
+def test_copy_exception_for_transfer_preserves_policy_block_document():
+    document = SafeDocument(
+        markdown="blocked",
+        metadata={"policy_action": "block"},
+        token_estimate=1,
+        content_hash="sha256:blocked",
+        injection_score=1.0,
+        flags=["policy_block"],
+    )
+
+    copied = copy_exception_for_transfer(PolicyBlockedError("blocked", document=document))
+
+    assert isinstance(copied, PolicyBlockedError)
+    assert isinstance(copied.document, SafeDocument)
+    assert copied.document is not document
+    assert copied.document.flags == ["policy_block"]
+    assert copied.document.metadata["policy_action"] == "block"
 
 
 def test_injection_count_floor_escalates_repeated_low_weight_matches(monkeypatch):
