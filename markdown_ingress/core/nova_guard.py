@@ -7,6 +7,14 @@ This integration is optional and degrades safely when NOVA rules are not configu
 import logging
 from pathlib import Path
 
+from markdown_ingress.core.nova_rules import (
+    extract_rule_blocks,
+    parse_bundled_rule_content,
+    parse_rule_content,
+    read_rules_file_atomically,
+    reject_unsafe_rules_path,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -155,49 +163,7 @@ class NovaGuard:
         """
         raw_path = Path(rules_path)
         resolved_path = raw_path.resolve()
-
-        # Check for path traversal sequences (including URL-encoded variants)
-        # BUG FIX: Previous check only looked for literal "..", missing encoded variants
-        import urllib.parse
-
-        # Security: Check for null bytes (prevent null byte injection)
-        if "\x00" in str(rules_path) or "%00" in str(rules_path).lower():
-            raise ValueError(f"Null bytes not allowed in rules_path: {rules_path}")
-
-        def _decode_fully(encoded_path: str) -> str:
-            """Decode URL-encoded path until fully decoded."""
-            decoded = encoded_path
-            for _ in range(
-                25
-            ):  # Fixed-point loop breaks early; cap prevents adversarial deep-encoding
-                new_decoded = urllib.parse.unquote(decoded)
-                if new_decoded == decoded:
-                    break
-                decoded = new_decoded
-            return decoded
-
-        raw_lower = str(rules_path).lower().replace("\\", "/")
-        fully_decoded = _decode_fully(str(rules_path))
-        normalized_lower = fully_decoded.lower().replace("\\", "/")
-
-        raw_encoded_traversal_patterns = [
-            "%2e%2e",
-            "%252e",
-            "%5c",
-            "%c0%ae",
-            "%c1%9c",
-            "%c0%af",
-            "%c0%2f",
-            "..%00",
-            "..%252f",
-            "..%255c",
-            "%e0%80%ae",
-            "..%c0%ae/",
-        ]
-        if any(pattern in raw_lower for pattern in raw_encoded_traversal_patterns):
-            raise ValueError(f"Path traversal not allowed in rules_path: {rules_path}")
-        if ".." in normalized_lower or "..;/" in normalized_lower:
-            raise ValueError(f"Path traversal not allowed in rules_path: {rules_path}")
+        reject_unsafe_rules_path(rules_path)
 
         # Check if resolved path is within allowed directories
         if not self._is_path_allowed(resolved_path):
@@ -216,30 +182,11 @@ class NovaGuard:
                 resolved_path,
             )
 
-        # Open first, then fstat() on the open fd — truly atomic size check.
-        # stat() + open() had a TOCTOU window where a file could be swapped between calls.
-        max_rules_file_size = 10 * 1024 * 1024  # 10MB
         parser = NovaParser()
 
         try:
-            import os
-
-            with resolved_path.open("r", encoding="utf-8") as f:
-                file_size = os.fstat(f.fileno()).st_size
-                if file_size > max_rules_file_size:
-                    raise ValueError(
-                        f"Rules file too large: {file_size} bytes "
-                        f"(max {max_rules_file_size} bytes). "
-                        "Large files may indicate a DoS attempt."
-                    )
-                file_content = f.read()
-            blocks = self._extract_rule_blocks(file_content)
-            if blocks:
-                self.rules = []
-                for block in blocks:
-                    self.rules.append(parser.parse(block.strip()))
-            else:
-                self.rules = [parser.parse(file_content)]
+            file_content = read_rules_file_atomically(resolved_path)
+            self.rules = parse_rule_content(file_content, parser)
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"Rules file not found: {rules_path}") from exc
         except IsADirectoryError as exc:
@@ -289,18 +236,11 @@ class NovaGuard:
         if not _BUNDLED_RULES_PATH.exists():
             return []
         parser = NovaParser()
-        rules = []
-        parse_failures = []
         with open(_BUNDLED_RULES_PATH, encoding="utf-8") as f:
             content = f.read()
-        # Split rule blocks using a linear-time brace-depth scanner
-        # instead of a regex with nested quantifiers (avoids ReDoS).
-        for block in self._extract_rule_blocks(content):
-            try:
-                rules.append(parser.parse(block.strip()))
-            except Exception as e:
-                logger.warning("Failed to parse bundled rule: %s", e)
-                parse_failures.append((block[:50], str(e)))
+        rules, parse_failures = parse_bundled_rule_content(content, parser)
+        for failure in parse_failures:
+            logger.warning("Failed to parse bundled rule: %s", failure.error)
         if parse_failures:
             logger.warning(
                 "Nova rules loaded: %d successful, %d failed to parse",
@@ -312,33 +252,7 @@ class NovaGuard:
     @staticmethod
     def _extract_rule_blocks(content: str) -> list[str]:
         """Extract top-level ``rule <name> { ... }`` blocks in O(n) time."""
-        import re
-
-        blocks: list[str] = []
-        # Find each "rule <word> {" header; then scan braces at O(n).
-        for m in re.finditer(r"rule\s+\w+\s*\{", content):
-            start = m.start()
-            depth = 1
-            pos = m.end()
-            while pos < len(content) and depth > 0:
-                ch = content[pos]
-                if ch == '"' or ch == "'":
-                    quote = ch
-                    pos += 1
-                    while pos < len(content) and content[pos] != quote:
-                        if content[pos] == "\\":
-                            pos += 1  # skip escaped char
-                            if pos >= len(content):
-                                break
-                        pos += 1
-                elif ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                pos += 1
-            if depth == 0:
-                blocks.append(content[start:pos])
-        return blocks
+        return extract_rule_blocks(content)
 
     def scan(self, text: str) -> dict:
         """
