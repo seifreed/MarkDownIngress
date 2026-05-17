@@ -8,6 +8,13 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from markdown_ingress.application.batch_inflight import (
+    cancel_batch_inflight,
+    publish_batch_inflight_exception,
+    publish_batch_inflight_result,
+    register_batch_inflight,
+    remove_finished_batch_inflight,
+)
 from markdown_ingress.application.batch_state import (
     _BatchContext,
     _BatchInFlightRecord,
@@ -15,7 +22,6 @@ from markdown_ingress.application.batch_state import (
     _PreparedBatchRequest,
 )
 from markdown_ingress.application.cache_resolution import _purge_corrupt_cache_entry
-from markdown_ingress.application.exceptions import _copy_batch_exception
 from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.core.ingest_stats import (
     bump_ingest_stat,
@@ -127,18 +133,7 @@ class _BatchUrlProcessor:
         self, prepared: _PreparedBatchRequest
     ) -> tuple[_BatchInFlightRecord, bool]:
         """Register in-flight tracking. Returns (record, is_leader)."""
-        ctx = self._ctx
-        async with ctx.batch_inflight_lock:
-            record = ctx.batch_inflight.get(prepared.request_key)
-            if record is not None and record.future.done():
-                ctx.batch_inflight.pop(prepared.request_key, None)
-                record = None
-            if record is None:
-                record = _BatchInFlightRecord(future=asyncio.get_running_loop().create_future())
-                ctx.batch_inflight[prepared.request_key] = record
-                return record, True
-            record.followers += 1
-            return record, False
+        return await register_batch_inflight(self._ctx, prepared.request_key)
 
     async def _handle_follower(
         self,
@@ -157,10 +152,7 @@ class _BatchUrlProcessor:
         except asyncio.CancelledError:
             # Clean up stale entry so future requests for the same key don't
             # find a cancelled future and deadlock.
-            async with ctx.batch_inflight_lock:
-                rec = ctx.batch_inflight.get(prepared.request_key)
-                if rec is record and rec.future.done():
-                    ctx.batch_inflight.pop(prepared.request_key, None)
+            await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             raise
         except Exception as exc:
             import traceback
@@ -182,9 +174,7 @@ class _BatchUrlProcessor:
                     success=False,
                     started_at=started_at,
                 )
-            async with ctx.batch_inflight_lock:
-                if ctx.batch_inflight.get(prepared.request_key) is record:
-                    ctx.batch_inflight.pop(prepared.request_key, None)
+            await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             await self._report_completion(prepared.url)
             return False
         shared = copy.deepcopy(shared_document)
@@ -235,38 +225,12 @@ class _BatchUrlProcessor:
                     exc_info=True,
                 )
         document.metadata[REQUESTED_MODE] = prepared.requested_mode
-        async with ctx.batch_inflight_lock:
-            try:
-                shared_document = copy.deepcopy(document)
-            except Exception as exc:
-                _logger.error(
-                    "Batch deepcopy failed for %s: %s",
-                    prepared.request_key[:32],
-                    exc,
-                    exc_info=True,
-                )
-                try:
-                    record.future.set_exception(exc)
-                except asyncio.InvalidStateError as state_exc:
-                    _logger.debug(
-                        "Batch inflight future already resolved after deepcopy failure for %s: %s",
-                        prepared.request_key[:32],
-                        state_exc,
-                        exc_info=True,
-                    )
-                if ctx.batch_inflight.get(prepared.request_key) is record:
-                    ctx.batch_inflight.pop(prepared.request_key, None)
-                raise exc
-            try:
-                shared_count = record.followers
-                record.future.set_result((shared_document, shared_count))
-            except asyncio.InvalidStateError:
-                _logger.warning(
-                    "Batch inflight future already done for %s (state: %s); "
-                    "followers may have been cancelled",
-                    prepared.request_key[:32],
-                    getattr(record.future, "_state", "unknown"),
-                )
+        shared_count = await publish_batch_inflight_result(
+            ctx,
+            prepared.request_key,
+            record,
+            document,
+        )
         document.metadata[INFLIGHT_DEDUPLICATED] = False
         document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
         document.metadata.setdefault(CACHE_HIT, False)
@@ -307,12 +271,7 @@ class _BatchUrlProcessor:
         """Cancel in-flight future and clean up registry on task cancellation."""
         if record is None:
             return
-        ctx = self._ctx
-        async with ctx.batch_inflight_lock:
-            if not record.future.done():
-                record.future.cancel()
-            if ctx.batch_inflight.get(prepared.request_key) is record:
-                ctx.batch_inflight.pop(prepared.request_key, None)
+        await cancel_batch_inflight(self._ctx, prepared.request_key, record)
 
     async def _handle_process_exception(
         self,
@@ -342,31 +301,7 @@ class _BatchUrlProcessor:
                     persist_exc,
                 )
         if record is not None:
-            async with ctx.batch_inflight_lock:
-                try:
-                    if not record.future.done():
-                        record.future.set_exception(_copy_batch_exception(exc))
-                except asyncio.InvalidStateError:
-                    _logger.warning(
-                        "Batch inflight future already done when setting exception for %s",
-                        prepared.request_key[:32],
-                    )
-                # If there are no followers, consume the exception ourselves so
-                # asyncio does not log "Future exception was never retrieved".
-                if record.followers == 0 and record.future.done():
-                    try:
-                        record.future.exception()
-                    except Exception as future_exc:
-                        _logger.debug(
-                            "Consumed batch inflight exception for %s: %s",
-                            prepared.request_key[:32],
-                            future_exc,
-                            exc_info=True,
-                        )
-                # Intentionally leave the record in batch_inflight so that
-                # any followers currently waiting on the semaphore can detect
-                # it and receive the exception.  _register_inflight cleans up
-                # stale done entries on the next attempt.
+            await publish_batch_inflight_exception(ctx, prepared.request_key, record, exc)
         await ctx.append_error(
             BatchErrorItem(
                 index=prepared.index,
