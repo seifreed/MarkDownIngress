@@ -168,6 +168,14 @@ class TestSecurityReport:
                 {"imperative_density": cast(Any, "0.2")},
                 "imperative_density must be a finite number",
             ),
+            (
+                {"token_reduction_percent": -0.1},
+                "token_reduction_percent must be between 0.0 and 100.0",
+            ),
+            (
+                {"token_reduction_percent": 100.1},
+                "token_reduction_percent must be between 0.0 and 100.0",
+            ),
         ],
     )
     def test_security_report_rejects_invalid_metric_values(

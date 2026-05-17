@@ -107,3 +107,10 @@ def _ensure_score(field_name: str, value: object) -> float:
     if not 0.0 <= score <= 1.0:
         raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
     return score
+
+
+def _ensure_percentage(field_name: str, value: object) -> float:
+    percentage = _ensure_finite_float_metric(field_name, value)
+    if not 0.0 <= percentage <= 100.0:
+        raise ValueError(f"{field_name} must be between 0.0 and 100.0, got {percentage}")
+    return percentage

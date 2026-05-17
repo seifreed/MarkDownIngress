@@ -19,6 +19,7 @@ from markdown_ingress.models_validation import (
     _ensure_optional_dict,
     _ensure_optional_dict_list,
     _ensure_optional_str,
+    _ensure_percentage,
     _ensure_score,
     _ensure_str,
     _ensure_str_list,
@@ -340,7 +341,7 @@ class SecurityReport:
                 f"imperative_density must be non-negative, got {self.imperative_density}"
             )
         self.token_estimate = _ensure_non_negative_int_metric("token_estimate", self.token_estimate)
-        self.token_reduction_percent = _ensure_finite_float_metric(
+        self.token_reduction_percent = _ensure_percentage(
             "token_reduction_percent", self.token_reduction_percent
         )
         self.original_size_bytes = _ensure_non_negative_int_metric(
