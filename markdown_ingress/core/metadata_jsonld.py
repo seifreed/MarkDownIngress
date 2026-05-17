@@ -37,29 +37,42 @@ def parse_author_from_jsonld_script(script: Any) -> str | None:
         return None
 
     for item in iter_jsonld_items(data):
-        author = item.get("author")
-        if not author:
-            continue
-
-        if isinstance(author, list):
-            names = []
-            for author_item in author:
-                if isinstance(author_item, dict):
-                    name = author_item.get("name")
-                    if isinstance(name, str) and name:
-                        names.append(name)
-                elif isinstance(author_item, str) and author_item:
-                    names.append(author_item)
-            if names:
-                return ", ".join(names)
-            continue
-        if isinstance(author, dict):
-            name = author.get("name")
-            if isinstance(name, str) and name:
-                return name
-            continue
-        if isinstance(author, str):
+        author = _parse_author_value(item.get("author"))
+        if author:
             return author
+    return None
+
+
+def _parse_author_value(author: Any) -> str | None:
+    if not author:
+        return None
+    if isinstance(author, list):
+        return _parse_author_list(author)
+    if isinstance(author, dict):
+        return _parse_author_dict(author)
+    if isinstance(author, str):
+        return author
+    return None
+
+
+def _parse_author_list(author: list[Any]) -> str | None:
+    names = []
+    for author_item in author:
+        if isinstance(author_item, dict):
+            name = _parse_author_dict(author_item)
+            if name:
+                names.append(name)
+        elif isinstance(author_item, str) and author_item:
+            names.append(author_item)
+    if names:
+        return ", ".join(names)
+    return None
+
+
+def _parse_author_dict(author: dict[str, Any]) -> str | None:
+    name = author.get("name")
+    if isinstance(name, str) and name:
+        return name
     return None
 
 
