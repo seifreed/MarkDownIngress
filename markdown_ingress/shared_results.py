@@ -48,6 +48,8 @@ class BatchResult:
                         index=int(item.get("index", -1)),
                         url=str(item.get("url", "")),
                         error=str(item.get("error", "")),
+                        error_type=str(item.get("error_type", "")),
+                        traceback=str(item.get("traceback", "")),
                     )
                 )
         self.errors = normalized

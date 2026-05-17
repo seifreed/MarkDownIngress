@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _SCREENSHOT_UNSET: Final[Any] = object()
 _MIN_CHROMIUM_LAUNCH_TIMEOUT_MS: Final[int] = 1000
 _CHROMIUM_LAUNCH_RETRIES: Final[int] = 1
+_RESOURCE_CLOSE_TIMEOUT_S: Final[float] = 1.0
 
 # Lazy import for stealth injection
 try:
@@ -35,7 +36,9 @@ async def _close_async_resource(resource: Any | None, label: str) -> None:
     if resource is None:
         return
     try:
-        await resource.close()
+        await asyncio.wait_for(resource.close(), timeout=_RESOURCE_CLOSE_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("Timed out closing %s cleanly", label)
     except Exception as exc:  # noqa: BLE001 - cleanup must not mask prior failures
         logger.warning("Failed to close %s cleanly: %s", label, exc)
 

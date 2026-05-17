@@ -50,7 +50,7 @@ from markdown_ingress.cli import (
 from markdown_ingress.cli_commands import _build_batch_json_output, ingest_many_with_progress
 from markdown_ingress.cli_support import load_domain_policies
 from markdown_ingress.models import SafeDocument
-from markdown_ingress.shared_results import BatchResult
+from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 # ── Local HTTP test server ─────────────────────────────────────────────────────
 
@@ -773,6 +773,32 @@ class TestSaveBatchResults:
         assert row["links"] == {"internal": ["https://x.com/about"]}
         assert row["nova_score"] == 0.4
         assert row["security_explanation"] == {"recommendation": "allow"}
+
+    def test_json_file_preserves_batch_error_context(self, tmp_path):
+        out = tmp_path / "res.json"
+        br = BatchResult(
+            total=1,
+            successful=0,
+            failed=1,
+            documents=[None],
+            errors=[
+                BatchErrorItem(
+                    index=0,
+                    url="http://x.com",
+                    error="boom",
+                    error_type="RuntimeError",
+                    traceback="Traceback...",
+                )
+            ],
+        )
+
+        _save_batch_results(Namespace(output=str(out), json=True), ["http://x.com"], br)
+
+        payload = json.loads(out.read_text())
+        assert payload["errors"][0]["error_type"] == "RuntimeError"
+        assert payload["errors"][0]["traceback"] == "Traceback..."
+        assert payload["error_items"][0]["error_type"] == "RuntimeError"
+        assert payload["error_items"][0]["traceback"] == "Traceback..."
 
     def test_json_file_hides_markdown_with_no_content(self, tmp_path):
         doc = SafeDocument(

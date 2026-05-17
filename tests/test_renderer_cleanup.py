@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from types import ModuleType, SimpleNamespace
 
 import httpx
 import pytest
 
+import markdown_ingress.adapters.rendering.renderer_support as renderer_support
 from markdown_ingress.adapters.rendering.advanced_stealth_renderer import AdvancedStealthRenderer
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 from markdown_ingress.adapters.rendering.renderer_support import (
@@ -18,11 +20,19 @@ from markdown_ingress.models import FetchResult
 
 
 class _FakeCloseable:
-    def __init__(self, *, close_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        close_error: Exception | None = None,
+        close_delay: float = 0.0,
+    ) -> None:
         self.closed = False
         self._close_error = close_error
+        self._close_delay = close_delay
 
     async def close(self) -> None:
+        if self._close_delay > 0:
+            await asyncio.sleep(self._close_delay)
         self.closed = True
         if self._close_error is not None:
             raise self._close_error
@@ -33,10 +43,11 @@ class _FakePage(_FakeCloseable):
         self,
         *,
         close_error: Exception | None = None,
+        close_delay: float = 0.0,
         response_status: int = 200,
         response_headers: dict[str, str] | None = None,
     ) -> None:
-        super().__init__(close_error=close_error)
+        super().__init__(close_error=close_error, close_delay=close_delay)
         self.url = "https://example.com/final"
         self.routes: list[tuple[str, object]] = []
         self._response_status = response_status
@@ -120,6 +131,7 @@ def _install_fake_playwright(
     monkeypatch,
     *,
     page_close_error=None,
+    page_close_delay: float = 0.0,
     context_close_error=None,
     launch_error: Exception | None = None,
     response_status: int = 200,
@@ -127,6 +139,7 @@ def _install_fake_playwright(
 ):
     page = _FakePage(
         close_error=page_close_error,
+        close_delay=page_close_delay,
         response_status=response_status,
         response_headers=response_headers,
     )
@@ -222,6 +235,50 @@ async def test_execute_render_session_closes_context_and_browser_when_page_close
 
     assert result.status_code == 200
     assert page.closed is True
+    assert context.closed is True
+    assert browser.closed is True
+
+
+@pytest.mark.asyncio
+async def test_execute_render_session_bounds_slow_page_close(monkeypatch):
+    page, context, browser = _install_fake_playwright(
+        monkeypatch,
+        page_close_delay=0.2,
+    )
+    monkeypatch.setattr(renderer_support, "_RESOURCE_CLOSE_TIMEOUT_S", 0.01)
+
+    async def _setup_resource_blocking(_page):
+        return None
+
+    async def _navigate_page(_page, _url, _timeout_ms):
+        return SimpleNamespace(status=200, headers={"x-test": "ok"})
+
+    async def _wait_for_content(_page, max_wait):
+        return None
+
+    async def _extract_page_content(_page):
+        return "<html><body>ok</body></html>"
+
+    async def _capture_screenshot(_page):
+        return None
+
+    renderer = SimpleNamespace(
+        stealth=False,
+        _prepare_browser_args=lambda: [],
+        _prepare_launch_options=lambda browser_args: {},
+        _prepare_context_options=lambda: {},
+        _setup_resource_blocking=_setup_resource_blocking,
+        _navigate_page=_navigate_page,
+        _wait_for_content=_wait_for_content,
+        _extract_page_content=_extract_page_content,
+        _capture_screenshot=_capture_screenshot,
+        _build_metadata=lambda screenshot_path, blocker: {"renderer": "fake"},
+    )
+
+    result = await execute_render_session(renderer, "https://example.com", 1000)
+
+    assert result.status_code == 200
+    assert page.closed is False
     assert context.closed is True
     assert browser.closed is True
 

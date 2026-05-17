@@ -79,6 +79,21 @@ def _batch_error_lookup(batch_result: Any) -> _BatchErrorLookup:
     )
 
 
+def _batch_error_item_json(error_item: Any) -> dict[str, Any]:
+    payload = {
+        "index": error_item.index,
+        "url": error_item.url,
+        "error": error_item.error,
+    }
+    error_type = getattr(error_item, "error_type", "")
+    if error_type:
+        payload["error_type"] = error_type
+    traceback_text = getattr(error_item, "traceback", "")
+    if traceback_text:
+        payload["traceback"] = traceback_text
+    return payload
+
+
 def load_urls_from_file(filepath: str) -> list[str]:
     urls_file = Path(filepath)
     if not urls_file.exists():
@@ -184,11 +199,7 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
                 for row in rows
             ],
             "errors": [
-                {
-                    "index": error_item.index,
-                    "url": error_item.url,
-                    "error": error_item.error,
-                }
+                _batch_error_item_json(error_item)
                 for error_item in getattr(
                     batch_result, "error_items", getattr(batch_result, "errors", [])
                 )
@@ -198,11 +209,7 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
             ],
             "errors_by_url": getattr(batch_result, "errors_by_url", {}),
             "error_items": [
-                {
-                    "index": error_item.index,
-                    "url": error_item.url,
-                    "error": error_item.error,
-                }
+                _batch_error_item_json(error_item)
                 for error_item in getattr(
                     batch_result, "error_items", getattr(batch_result, "errors", [])
                 )

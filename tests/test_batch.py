@@ -878,6 +878,27 @@ async def test_batch_preserves_duplicate_url_errors_by_index(monkeypatch):
     assert result.errors_by_url["https://same.test"] == ["err-1", "err-2"]
 
 
+def test_batch_result_normalizes_dict_errors_without_losing_context():
+    result = BatchResult(
+        total=1,
+        successful=0,
+        failed=1,
+        errors=[
+            {
+                "index": 0,
+                "url": "https://example.com",
+                "error": "boom",
+                "error_type": "RuntimeError",
+                "traceback": "Traceback...",
+            }
+        ],
+    )
+
+    assert result.errors[0].error == "boom"
+    assert result.errors[0].error_type == "RuntimeError"
+    assert result.errors[0].traceback == "Traceback..."
+
+
 @pytest.mark.asyncio
 async def test_batch_concurrency(local_servers):
     """Test concurrent processing"""
