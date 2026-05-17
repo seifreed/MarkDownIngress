@@ -60,7 +60,8 @@ class PersistentJobQueue(
 ):
     """SQLite-backed worker queue for long-running API jobs."""
 
-    def __init__(
+    # Queue lifecycle constructor keeps operational limits explicit for callers.
+    def __init__(  # noqa: PLR0913
         self,
         db_path: str,
         worker_count: int = 2,

@@ -157,7 +157,8 @@ def _ingest_with_config(url: str, config: IngestConfig) -> SafeDocument:
     return ingest_resolved(url, config, playwright_available=PLAYWRIGHT_AVAILABLE)
 
 
-def retry_ingest(
+# Public compatibility API; internals collapse these into RetryIngestRequest.
+def retry_ingest(  # noqa: PLR0913
     url: str,
     mode="auto",
     strict: bool = True,

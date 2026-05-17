@@ -69,7 +69,8 @@ class Renderer(IRenderer):
 
     CONTENT_SELECTORS = DEFAULT_CONTENT_SELECTORS
 
-    def __init__(
+    # Public renderer constructor accepts legacy kwargs before normalizing config.
+    def __init__(  # noqa: PLR0913
         self,
         config: RenderConfig | None = None,
         timeout: float | None = None,

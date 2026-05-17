@@ -62,7 +62,8 @@ def _coerce_rule_score(raw_score: object, rule_name: str) -> float:
 class NovaGuard:
     """Advanced prompt injection detection using Nova Framework."""
 
-    def __init__(
+    # Detection profile constructor keeps optional engines and thresholds explicit.
+    def __init__(  # noqa: PLR0913
         self,
         enable_keywords: bool = True,
         enable_semantics: bool = True,

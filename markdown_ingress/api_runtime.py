@@ -268,7 +268,8 @@ def _apply_explicit_runtime_overrides(
         setattr(runtime_config, key, value)
 
 
-def build_runtime_config(
+# Public override bridge; it accepts legacy ingest kwargs then builds IngestConfig.
+def build_runtime_config(  # noqa: PLR0913
     config: IngestConfig | FileConfig | None = None,
     mode: Literal["fast", "render", "auto"] | None = None,
     strict: bool | None = None,

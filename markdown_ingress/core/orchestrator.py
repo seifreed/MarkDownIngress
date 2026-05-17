@@ -54,7 +54,8 @@ class IngestOrchestrator:
     using dependency injection pattern for better testability and maintainability.
     """
 
-    def __init__(
+    # Dependency-injection constructor keeps pipeline ports explicit for tests.
+    def __init__(  # noqa: PLR0913
         self,
         extractor: IExtractor | None = None,
         normalizer: INormalizer | None = None,

@@ -50,7 +50,8 @@ class Fetcher(
     DEFAULT_TIMEOUT = 30.0
     DEFAULT_DOMAIN_REQUEST_INTERVAL = 0.25
 
-    def __init__(
+    # Public configuration constructor; callers use these knobs independently.
+    def __init__(  # noqa: PLR0913
         self,
         timeout: float = DEFAULT_TIMEOUT,
         user_agent: str | None = None,

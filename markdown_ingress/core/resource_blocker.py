@@ -59,7 +59,8 @@ class ResourceBlocker:
     resource type (images, fonts, media) and domain patterns (ads, trackers).
     """
 
-    def __init__(
+    # Policy constructor keeps resource and SSRF controls explicit for callers.
+    def __init__(  # noqa: PLR0913
         self,
         block_images: bool = True,
         block_fonts: bool = True,

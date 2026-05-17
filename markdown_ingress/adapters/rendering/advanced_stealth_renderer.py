@@ -53,7 +53,8 @@ class AdvancedStealthRenderer:
     DEFAULT_TIMEOUT = 30000  # milliseconds
     DEFAULT_WAIT_UNTIL = "networkidle"
 
-    def __init__(
+    # Renderer configuration constructor mirrors the public render knobs.
+    def __init__(  # noqa: PLR0913
         self,
         timeout: float = 30.0,
         wait_until: str = "networkidle",
@@ -259,7 +260,8 @@ class AdvancedStealthRenderer:
         )
 
 
-async def render_with_advanced_stealth(
+# Compatibility helper mirrors AdvancedStealthRenderer keyword options.
+async def render_with_advanced_stealth(  # noqa: PLR0913
     url: str,
     timeout: float = 30.0,
     headless: bool = True,
@@ -287,7 +289,8 @@ async def render_with_advanced_stealth(
     return await renderer.render(url)
 
 
-def render_with_advanced_stealth_sync(
+# Synchronous compatibility helper mirrors the async helper signature.
+def render_with_advanced_stealth_sync(  # noqa: PLR0913
     url: str,
     timeout: float = 30.0,
     headless: bool = True,

@@ -72,7 +72,8 @@ async def _record_custom_batch_error(
 class BatchProcessor:
     """Process multiple URLs in batch via the application use case layer."""
 
-    def __init__(
+    # Compatibility constructor accepts batch defaults before building IngestConfig.
+    def __init__(  # noqa: PLR0913
         self,
         mode: Literal["fast", "render", "auto"] = "auto",
         strict: bool = True,
