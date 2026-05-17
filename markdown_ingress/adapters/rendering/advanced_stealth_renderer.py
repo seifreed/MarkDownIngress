@@ -5,11 +5,13 @@ import logging
 import time
 from typing import Literal, cast
 
+import markdown_ingress.config_validation as config_validation
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_support import (
     _close_async_resource,
     launch_chromium,
     raise_for_render_status,
+    timeout_seconds_to_ms,
 )
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
@@ -29,6 +31,11 @@ from markdown_ingress.models import FetchResult
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 logger = logging.getLogger(__name__)
+VALID_WAIT_UNTIL = config_validation.VALID_WAIT_UNTIL
+_ensure_bool = config_validation.ensure_bool
+_ensure_finite_float = config_validation.ensure_finite_float
+_ensure_optional_bool = config_validation.ensure_optional_bool
+_ensure_str = config_validation.ensure_str
 
 
 class AdvancedStealthRenderer:
@@ -71,18 +78,30 @@ class AdvancedStealthRenderer:
         block_ads: bool = True,
         block_trackers: bool = True,
     ):
-        self.timeout = int(timeout * 1000)  # Convert to milliseconds
+        timeout = _ensure_finite_float("timeout", timeout)
+        if timeout <= 0.0:
+            raise ValueError(f"timeout must be > 0.0, got {timeout}")
+        wait_until = _ensure_str("wait_until", wait_until)
+        if wait_until not in VALID_WAIT_UNTIL:
+            raise ValueError(
+                f"Invalid wait_until '{wait_until}'. Must be one of: "
+                f"{', '.join(VALID_WAIT_UNTIL)}"
+            )
+
+        self.timeout = timeout_seconds_to_ms(timeout)
         self.wait_until = wait_until
-        self.headless = headless
-        self.randomize_fingerprint = randomize_fingerprint
-        self.disable_http2 = disable_http2
-        self.allow_local_urls = resolve_allow_local_urls(allow_local_urls)
-        self.block_resources = block_resources
-        self.block_images = block_images
-        self.block_fonts = block_fonts
-        self.block_media = block_media
-        self.block_ads = block_ads
-        self.block_trackers = block_trackers
+        self.headless = _ensure_bool("headless", headless)
+        self.randomize_fingerprint = _ensure_bool("randomize_fingerprint", randomize_fingerprint)
+        self.disable_http2 = _ensure_bool("disable_http2", disable_http2)
+        self.allow_local_urls = resolve_allow_local_urls(
+            _ensure_optional_bool("allow_local_urls", allow_local_urls)
+        )
+        self.block_resources = _ensure_bool("block_resources", block_resources)
+        self.block_images = _ensure_bool("block_images", block_images)
+        self.block_fonts = _ensure_bool("block_fonts", block_fonts)
+        self.block_media = _ensure_bool("block_media", block_media)
+        self.block_ads = _ensure_bool("block_ads", block_ads)
+        self.block_trackers = _ensure_bool("block_trackers", block_trackers)
         self._dns_pins: dict[str, str] = {}
 
         if stealth_config is None:

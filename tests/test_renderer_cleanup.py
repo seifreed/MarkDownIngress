@@ -19,6 +19,28 @@ from markdown_ingress.adapters.rendering.renderer_support import (
 from markdown_ingress.models import FetchResult
 
 
+def test_renderers_round_submillisecond_timeout_up_to_one_ms():
+    assert Renderer(timeout=0.0005).timeout == 1
+    assert AdvancedStealthRenderer(timeout=0.0005).timeout == 1
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"timeout": 0}, "timeout must be > 0.0"),
+        ({"timeout": "5"}, "timeout must be a finite number"),
+        ({"wait_until": "bogus"}, "Invalid wait_until"),
+        ({"headless": "false"}, "headless must be a bool"),
+        ({"randomize_fingerprint": 1}, "randomize_fingerprint must be a bool"),
+        ({"allow_local_urls": "false"}, "allow_local_urls must be a bool"),
+        ({"block_resources": "yes"}, "block_resources must be a bool"),
+    ],
+)
+def test_advanced_stealth_rejects_invalid_constructor_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        AdvancedStealthRenderer(**kwargs)
+
+
 class _FakeCloseable:
     def __init__(
         self,

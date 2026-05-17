@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Final, cast
@@ -29,6 +30,11 @@ try:
     STEALTH_INJECT_AVAILABLE = True
 except ImportError:  # pragma: no cover
     STEALTH_INJECT_AVAILABLE = False  # pragma: no cover
+
+
+def timeout_seconds_to_ms(timeout_seconds: float) -> int:
+    """Convert a positive second timeout to Playwright milliseconds."""
+    return max(1, math.ceil(timeout_seconds * 1000))
 
 
 async def _close_async_resource(resource: Any | None, label: str) -> None:

@@ -24,6 +24,7 @@ from markdown_ingress.adapters.rendering.renderer_support import (
     RendererConfigInputs,
     build_renderer_config,
     execute_render_session,
+    timeout_seconds_to_ms,
 )
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.interfaces import IRenderer
@@ -111,7 +112,7 @@ class Renderer(IRenderer):
             ),
         )
 
-        self.timeout = int(config.timeout * 1000)
+        self.timeout = timeout_seconds_to_ms(config.timeout)
         self.wait_until = config.wait_until
         self.headless = config.headless
         self.stealth = config.stealth
