@@ -189,8 +189,11 @@ def _is_valid_url(url_string: str) -> bool:
     """
     try:
         result = urlparse(url_string)
+        hostname = result.hostname
         # Must have a scheme (http/https) and a network location (hostname)
-        return result.scheme in ("http", "https") and bool(result.hostname)
+        if result.scheme.lower() not in ("http", "https") or hostname is None:
+            return False
+        return not any(char.isspace() for char in hostname)
     except ValueError:
         return False
 
@@ -211,7 +214,10 @@ def is_legacy_mode():
     first_arg = sys.argv[1]
 
     # Quick check for http/https scheme before doing more expensive validation
-    if not (first_arg.startswith("http://") or first_arg.startswith("https://")):
+    normalized_first_arg = first_arg.lower()
+    if not (
+        normalized_first_arg.startswith("http://") or normalized_first_arg.startswith("https://")
+    ):
         return False
 
     # Validate that the URL is well-formed with a valid host

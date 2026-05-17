@@ -1146,6 +1146,10 @@ class TestIsLegacyMode:
         monkeypatch.setattr(sys, "argv", ["cli", "https://x.com"])
         assert _is_legacy_mode() is True
 
+    def test_uppercase_scheme_url(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["cli", "HTTPS://x.com"])
+        assert _is_legacy_mode() is True
+
     def test_subcommand_not_legacy(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["cli", "ingest", "http://x.com"])
         assert _is_legacy_mode() is False
@@ -1160,6 +1164,10 @@ class TestIsLegacyMode:
 
     def test_port_only_url_without_hostname_not_legacy(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["cli", "https://:443"])
+        assert _is_legacy_mode() is False
+
+    def test_hostname_with_whitespace_not_legacy(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["cli", "https://exa mple.com"])
         assert _is_legacy_mode() is False
 
 
