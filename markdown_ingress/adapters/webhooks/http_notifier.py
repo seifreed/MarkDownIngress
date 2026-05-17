@@ -8,6 +8,7 @@ import math
 import socket
 import ssl
 import time
+from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -25,6 +26,50 @@ from markdown_ingress.core.ssrf import (
 # Note: URLError is intentionally NOT included - it includes transient network errors
 # like DNS failures, connection refused, and timeouts which SHOULD be retried.
 _NON_RETRYABLE = (ValueError, TypeError)
+
+
+@dataclass(frozen=True)
+class _WebhookAttemptOutcome:
+    delivered: bool = False
+    error: Exception | None = None
+    raise_now: RuntimeError | None = None
+
+
+@dataclass(frozen=True)
+class _PinnedWebhookTarget:
+    scheme: str
+    hostname: str
+    port: int
+    path: str
+
+
+class _PinnedHTTPSConnection(HTTPSConnection):
+    """HTTPS connection that pins transport to a validated IP but keeps hostname SNI."""
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        validated_ip: str,
+        port: int | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        super().__init__(host, port=port, timeout=timeout, context=ssl.create_default_context())
+        self._validated_ip = validated_ip
+
+    def connect(self) -> None:
+        source_address = getattr(self, "source_address", None)
+        context = cast(Any, self)._context
+        raw_sock = socket.create_connection(
+            (self._validated_ip, self.port),
+            self.timeout,
+            source_address,
+        )
+        try:
+            self.sock = context.wrap_socket(raw_sock, server_hostname=self.host)
+        except Exception:
+            raw_sock.close()
+            raise
 
 
 def _validate_non_negative_int(field_name: str, value: object) -> int:
@@ -61,6 +106,52 @@ def _validate_pinned_ip_for_ssrf(validated_ip: str, *, allow_local: bool = False
     if not allow_local and is_blocked_ip_address(ip_obj):
         raise ValueError(f"validated_ip is blocked by SSRF protection: {ip_obj}")
     return str(ip_obj)
+
+
+def _parse_webhook_url(webhook_url: str):
+    parsed = urlparse(webhook_url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid webhook URL port: {webhook_url!r}: {exc}") from exc
+    if port is not None and port < 1:
+        raise ValueError(
+            f"Invalid webhook URL port: {webhook_url!r}. Port must be between 1 and 65535"
+        )
+    return parsed
+
+
+def _parse_pinned_webhook_target(webhook_url: str) -> _PinnedWebhookTarget:
+    parsed = _parse_webhook_url(webhook_url)
+    hostname = normalize_hostname(parsed.hostname or "")
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"Invalid webhook URL scheme: {parsed.scheme!r}. Only http and https are allowed."
+        )
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    return _PinnedWebhookTarget(parsed.scheme, hostname, port, path)
+
+
+def _response_status_outcome(status_code: int) -> _WebhookAttemptOutcome:
+    if 200 <= status_code < 300:
+        return _WebhookAttemptOutcome(delivered=True)
+    error = RuntimeError(f"Webhook delivery failed with status {status_code}")
+    if 400 <= status_code < 500 and status_code != 429:
+        return _WebhookAttemptOutcome(raise_now=error)
+    return _WebhookAttemptOutcome(error=error)
+
+
+def _raise_delivery_failed_after_attempts(
+    webhook_url: str, total_attempts: int, last_error: Exception | None
+) -> None:
+    raise RuntimeError(
+        f"Webhook delivery failed after {total_attempts} attempts for {webhook_url}"
+    ) from last_error
 
 
 class HTTPWebhookNotifier:
@@ -116,19 +207,16 @@ class HTTPWebhookNotifier:
         Raises:
             RuntimeError: If webhook delivery fails after all retries
         """
-        parsed = urlparse(webhook_url)
-        try:
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError(f"Invalid webhook URL port: {webhook_url!r}: {exc}") from exc
-        if port is not None and port < 1:
-            raise ValueError(
-                f"Invalid webhook URL port: {webhook_url!r}. Port must be between 1 and 65535"
-            )
-
+        parsed = _parse_webhook_url(webhook_url)
         data = json.dumps(payload).encode("utf-8")
-        last_error: Exception | None = None
 
+        self._validate_webhook_url_without_dns_resolution(webhook_url)
+        pinned_ip = self._pinned_delivery_ip(webhook_url, parsed, validated_ip)
+        if pinned_ip is not None:
+            return self._notify_with_dns_pinning(webhook_url, data, pinned_ip)
+        self._notify_without_dns_pinning(webhook_url, data)
+
+    def _validate_webhook_url_without_dns_resolution(self, webhook_url: str) -> None:
         try:
             validate_http_url_no_ssrf(
                 webhook_url,
@@ -140,10 +228,15 @@ class HTTPWebhookNotifier:
                 f"Webhook delivery blocked by SSRF protection for {webhook_url}: {exc}"
             ) from exc
 
-        # If DNS pinning is requested, use low-level HTTP connection
+    def _pinned_delivery_ip(
+        self,
+        webhook_url: str,
+        parsed: Any,
+        validated_ip: str | None,
+    ) -> str | None:
         if validated_ip is not None:
             try:
-                pinned_ip = _validate_pinned_ip_for_ssrf(
+                return _validate_pinned_ip_for_ssrf(
                     validated_ip,
                     allow_local=self.allow_local_webhooks,
                 )
@@ -151,12 +244,10 @@ class HTTPWebhookNotifier:
                 raise RuntimeError(
                     f"Webhook delivery blocked by SSRF protection for validated_ip: {exc}"
                 ) from exc
-            return self._notify_with_dns_pinning(webhook_url, data, pinned_ip)
 
-        # Defense in depth: when the caller did NOT pre-validate the IP, apply
-        # SSRF checks here so that direct use of the notifier (tests, plugins)
-        # cannot be tricked into reaching internal networks via IP literals or
-        # explicitly blocked hostnames.
+        return self._validated_hostname_rewrite_ip(webhook_url, parsed)
+
+    def _validated_hostname_rewrite_ip(self, webhook_url: str, parsed: Any) -> str | None:
         try:
             validated_url = validate_http_url_no_ssrf(
                 webhook_url,
@@ -170,61 +261,49 @@ class HTTPWebhookNotifier:
         validated_hostname = normalize_hostname(urlparse(validated_url).hostname or "")
         original_hostname = normalize_hostname(parsed.hostname or "")
         if validated_hostname and validated_hostname != original_hostname:
-            return self._notify_with_dns_pinning(webhook_url, data, validated_hostname)
+            return validated_hostname
+        return None
 
-        # Standard webhook delivery without DNS pinning
+    def _sleep_before_retry(self) -> None:
+        if self.retry_delay_seconds > 0:
+            time.sleep(self.retry_delay_seconds)
+
+    def _post_without_dns_pinning(self, webhook_url: str, data: bytes) -> httpx.Response:
+        with httpx.Client(
+            timeout=self.timeout_seconds,
+            verify=True,
+        ) as client:
+            return client.post(
+                webhook_url,
+                content=data,
+                headers={"Content-Type": "application/json"},
+            )
+
+    def _standard_delivery_attempt(self, webhook_url: str, data: bytes) -> _WebhookAttemptOutcome:
+        try:
+            response = self._post_without_dns_pinning(webhook_url, data)
+            return _response_status_outcome(response.status_code)
+        except _NON_RETRYABLE as exc:
+            raise RuntimeError(
+                f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
+            ) from exc
+        except Exception as exc:
+            return _WebhookAttemptOutcome(error=exc)
+
+    def _notify_without_dns_pinning(self, webhook_url: str, data: bytes) -> None:
+        last_error: Exception | None = None
         for attempt in range(self.total_attempts):
-            try:
-                with httpx.Client(
-                    timeout=self.timeout_seconds,
-                    verify=True,
-                ) as client:
-                    response = client.post(
-                        webhook_url,
-                        content=data,
-                        headers={"Content-Type": "application/json"},
-                    )
-                if 200 <= response.status_code < 300:
-                    return
-                last_error = RuntimeError(
-                    f"Webhook delivery failed with status {response.status_code}"
-                )
-                # Retry on 429 (Too Many Requests) and 5xx server errors
-                # Don't retry other 4xx client errors (they indicate configuration issues)
-                if 400 <= response.status_code < 500 and response.status_code != 429:
-                    raise last_error
-                if attempt == self.total_attempts - 1:
-                    break
-                if self.retry_delay_seconds > 0:
-                    time.sleep(self.retry_delay_seconds)
-            except _NON_RETRYABLE as exc:
-                # Non-retryable: bad URL, bad payload, connection refused, etc.
-                raise RuntimeError(
-                    f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
-                ) from exc
-            except RuntimeError as exc:
-                # Runtime fix (L7): only re-raise without wrapping when the
-                # RuntimeError is the one we deliberately raised for a 4xx
-                # non-retryable status (tracked via `last_error is exc`). Any
-                # other RuntimeError (e.g. a transient connection-pool error
-                # from httpx) joins the retry loop like a generic Exception so
-                # the caller still gets the "after N attempts" wrapper.
-                if last_error is exc:
-                    raise
-                last_error = exc
-                if attempt == self.total_attempts - 1:
-                    break
-                if self.retry_delay_seconds > 0:
-                    time.sleep(self.retry_delay_seconds)
-            except Exception as exc:
-                last_error = exc
-                if attempt == self.total_attempts - 1:
-                    break
-                if self.retry_delay_seconds > 0:
-                    time.sleep(self.retry_delay_seconds)
-        raise RuntimeError(
-            f"Webhook delivery failed after {self.total_attempts} attempts for {webhook_url}"
-        ) from last_error
+            outcome = self._standard_delivery_attempt(webhook_url, data)
+            if outcome.delivered:
+                return
+            if outcome.raise_now is not None:
+                raise outcome.raise_now
+            last_error = outcome.error
+            if attempt == self.total_attempts - 1:
+                break
+            self._sleep_before_retry()
+
+        _raise_delivery_failed_after_attempts(webhook_url, self.total_attempts, last_error)
 
     def _notify_with_dns_pinning(
         self,
@@ -246,131 +325,68 @@ class HTTPWebhookNotifier:
         Raises:
             RuntimeError: If delivery fails
         """
-        parsed = urlparse(webhook_url)
-        hostname = normalize_hostname(parsed.hostname or "")
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError(
-                f"Invalid webhook URL scheme: {parsed.scheme!r}. Only http and https are allowed."
-            )
-        try:
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError(f"Invalid webhook URL port: {webhook_url!r}: {exc}") from exc
-        if port is None:
-            port = 443 if parsed.scheme == "https" else 80
-        elif port < 1:
-            raise ValueError(
-                f"Invalid webhook URL port: {webhook_url!r}. Port must be between 1 and 65535"
-            )
-        path = parsed.path or "/"
-        if parsed.query:
-            path += "?" + parsed.query
-
-        # Use appropriate connection type based on scheme
-        if parsed.scheme == "https":
-
-            class _PinnedHTTPSConnection(HTTPSConnection):
-                """HTTPS connection that pins transport to a validated IP but keeps hostname SNI."""
-
-                def __init__(
-                    self,
-                    host: str,
-                    *,
-                    validated_ip: str,
-                    port: int | None = None,
-                    timeout: float | None = None,
-                ) -> None:
-                    super().__init__(
-                        host, port=port, timeout=timeout, context=ssl.create_default_context()
-                    )
-                    self._validated_ip = validated_ip
-
-                def connect(self) -> None:
-                    source_address = getattr(self, "source_address", None)
-                    context = cast(Any, self)._context
-                    raw_sock = socket.create_connection(
-                        (self._validated_ip, self.port),
-                        self.timeout,
-                        source_address,
-                    )
-                    try:
-                        self.sock = context.wrap_socket(raw_sock, server_hostname=self.host)
-                    except Exception:
-                        raw_sock.close()
-                        raise
-
-            def _make_connection() -> HTTPConnection:
-                return _PinnedHTTPSConnection(
-                    hostname,
-                    validated_ip=validated_ip,
-                    port=port,
-                    timeout=self.timeout_seconds,
-                )
-
-        else:
-
-            def _make_connection() -> HTTPConnection:
-                return HTTPConnection(
-                    validated_ip,
-                    port=port,
-                    timeout=self.timeout_seconds,
-                )
-
+        target = _parse_pinned_webhook_target(webhook_url)
         last_error: Exception | None = None
         for attempt in range(self.total_attempts):
+            outcome = self._pinned_delivery_attempt(webhook_url, data, target, validated_ip)
+            if outcome.delivered:
+                return
+            if outcome.raise_now is not None:
+                raise outcome.raise_now
+            last_error = outcome.error
+            if attempt == self.total_attempts - 1:
+                break
+            self._sleep_before_retry()
+
+        _raise_delivery_failed_after_attempts(webhook_url, self.total_attempts, last_error)
+
+    def _make_pinned_connection(
+        self, target: _PinnedWebhookTarget, validated_ip: str
+    ) -> HTTPConnection:
+        if target.scheme == "https":
+            return _PinnedHTTPSConnection(
+                target.hostname,
+                validated_ip=validated_ip,
+                port=target.port,
+                timeout=self.timeout_seconds,
+            )
+        return HTTPConnection(
+            validated_ip,
+            port=target.port,
+            timeout=self.timeout_seconds,
+        )
+
+    def _send_pinned_request(
+        self, conn: HTTPConnection, target: _PinnedWebhookTarget, data: bytes
+    ) -> int:
+        host_header = _format_host_header(target.hostname, target.port, target.scheme)
+        headers = {
+            "Content-Type": "application/json",
+            "Host": host_header,
+        }
+        conn.request("POST", target.path, body=data, headers=headers)
+        response = conn.getresponse()
+        return response.status
+
+    def _pinned_delivery_attempt(
+        self,
+        webhook_url: str,
+        data: bytes,
+        target: _PinnedWebhookTarget,
+        validated_ip: str,
+    ) -> _WebhookAttemptOutcome:
+        try:
+            conn = self._make_pinned_connection(target, validated_ip)
             try:
-                conn = _make_connection()
-                try:
-                    # Set Host header to original hostname
-                    host_header = _format_host_header(hostname, port, parsed.scheme)
-                    headers = {
-                        "Content-Type": "application/json",
-                        "Host": host_header,
-                    }
-                    conn.request("POST", path, body=data, headers=headers)
-                    response = conn.getresponse()
-
-                    # Handle response
-                    if 200 <= response.status < 300:
-                        return
-
-                    # Handle error responses
-                    if 400 <= response.status < 500 and response.status != 429:
-                        # Client error - don't retry
-                        raise RuntimeError(f"Webhook delivery failed with status {response.status}")
-
-                    # Server error or 429 - retry
-                    last_error = RuntimeError(
-                        f"Webhook delivery failed with status {response.status}"
-                    )
-                    if attempt == self.total_attempts - 1:
-                        break
-                    if self.retry_delay_seconds > 0:
-                        time.sleep(self.retry_delay_seconds)
-
-                finally:
-                    conn.close()
-
-            except TimeoutError as exc:
-                last_error = exc
-                if attempt == self.total_attempts - 1:
-                    break
-                if self.retry_delay_seconds > 0:
-                    time.sleep(self.retry_delay_seconds)
-            except OSError as exc:
-                last_error = exc
-                if attempt == self.total_attempts - 1:
-                    break
-                if self.retry_delay_seconds > 0:
-                    time.sleep(self.retry_delay_seconds)
-            except RuntimeError:
-                raise
-            except Exception as exc:
-                # Non-retryable errors
-                raise RuntimeError(
-                    f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
-                ) from exc
-
-        raise RuntimeError(
-            f"Webhook delivery failed after {self.total_attempts} attempts for {webhook_url}"
-        ) from last_error
+                status = self._send_pinned_request(conn, target, data)
+            finally:
+                conn.close()
+            return _response_status_outcome(status)
+        except (TimeoutError, OSError) as exc:
+            return _WebhookAttemptOutcome(error=exc)
+        except RuntimeError as exc:
+            return _WebhookAttemptOutcome(raise_now=exc)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
+            ) from exc
