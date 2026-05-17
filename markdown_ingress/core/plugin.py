@@ -27,7 +27,7 @@ class PluginInfo:
 class Plugin(ABC):
     """Base class for MarkDownIngress plugins"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.info = PluginInfo(
             name=self.__class__.__name__, version="0.1.0", description="Custom plugin"
         )
@@ -63,10 +63,10 @@ class Plugin(ABC):
 class PluginLoader:
     """Load and manage plugins"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.plugins: dict[str, Plugin] = {}
 
-    def load_plugin(self, plugin: Plugin):
+    def load_plugin(self, plugin: Plugin) -> None:
         """
         Register a plugin instance.
 
@@ -81,7 +81,7 @@ class PluginLoader:
         plugin.on_load()
         self.plugins[name] = plugin
 
-    def unload_plugin(self, name: str):
+    def unload_plugin(self, name: str) -> None:
         """
         Unload a plugin by name.
 

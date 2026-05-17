@@ -67,7 +67,7 @@ def cmd_ingest(args):
         sys.exit(1)
 
 
-def create_batch_processor(args):
+def create_batch_processor(args: Namespace) -> BatchProcessor:
     """Create and configure batch processor."""
     runtime_config = load_runtime_config(args)
     base_config = runtime_config.to_ingest_config() if runtime_config is not None else None

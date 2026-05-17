@@ -106,7 +106,7 @@ class Policy:
     name: str = "default"
     description: str = "Default security policy"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate policy configuration."""
         self.block_threshold = _ensure_score("block_threshold", self.block_threshold)
         self.warn_threshold = _ensure_score("warn_threshold", self.warn_threshold)

@@ -8,6 +8,7 @@ to speed up rendering and reduce bandwidth usage.
 import logging
 import threading
 from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
 from markdown_ingress.core.resource_block_patterns import (
@@ -118,7 +119,7 @@ class ResourceBlocker:
         self.blocked_by_type: dict[str, int] = {}
         self.blocked_by_domain: dict[str, int] = {}
 
-    async def setup_blocking(self, page):
+    async def setup_blocking(self, page: Any) -> None:
         """
         Setup request interception on a Playwright page.
 
@@ -128,7 +129,7 @@ class ResourceBlocker:
         await page.route("**/*", self._handle_route)
         logger.debug("Resource blocking enabled on page")
 
-    async def _handle_route(self, route):
+    async def _handle_route(self, route: Any) -> None:
         """
         Intercept and block requests based on configured rules.
 
