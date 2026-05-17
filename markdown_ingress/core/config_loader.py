@@ -18,7 +18,6 @@ from markdown_ingress.core.config_env import (
 from markdown_ingress.core.config_env_overrides import (
     FieldRestoreContext,
     apply_env_overrides,
-    apply_scalar_list_and_custom_overrides,
     restore_field,
     validate_categorical_fields,
     validate_numeric_fields,
@@ -114,16 +113,6 @@ class ConfigLoader:
             bool_converter=self._str_to_bool,
             bool_or_string_converter=self._str_to_bool_or_string,
         )
-
-    def _apply_scalar_list_and_custom_overrides(
-        self,
-        config: Config,
-        env_mapping: dict,
-        explicit: set,
-        previous_values: dict,
-    ) -> None:
-        """Apply scalar, list, and custom-pattern env var overrides to config in-place."""
-        apply_scalar_list_and_custom_overrides(config, env_mapping, explicit, previous_values)
 
     def _validate_categorical_fields(
         self,

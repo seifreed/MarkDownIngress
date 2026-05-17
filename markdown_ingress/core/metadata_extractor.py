@@ -129,7 +129,6 @@ class MetadataExtractor:
 
         language_info = self._extract_language_info(
             parser,
-            html,
             detect_language=detect_language,
             normalize_multilingual=normalize_multilingual,
         )
@@ -239,7 +238,6 @@ class MetadataExtractor:
     def _extract_language_info(
         self,
         parser: HTMLParser,
-        html: str,
         *,
         detect_language: bool,
         normalize_multilingual: bool,

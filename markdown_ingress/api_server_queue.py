@@ -193,7 +193,7 @@ class _ExternalOwnerJobQueue:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def submit(self, *args, **kwargs):
+    def submit(self, *_args, **_kwargs):
         if self.state == "backend_error":
             raise RuntimeError("Job queue backend read failed: external owner backend is unhealthy")
         raise RuntimeError(
@@ -201,6 +201,7 @@ class _ExternalOwnerJobQueue:
         )
 
     def pending_count(self, *, cleanup_expired: bool = True) -> int:
+        del cleanup_expired
         row = None
         try:
             with closing(sqlite3.connect(self._db_uri(), timeout=0.0, uri=True)) as conn:
@@ -249,7 +250,7 @@ class _ExternalOwnerJobQueue:
             legacy_expires_at=row["legacy_expires_at"],
         )
 
-    def close(self, *args, **kwargs) -> None:
+    def close(self, *_args, **_kwargs) -> None:
         return None
 
 

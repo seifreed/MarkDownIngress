@@ -259,7 +259,6 @@ class InFlightRegistry:
         self,
         entry: InFlightEntry,
         request_key: str,
-        to_notify: list[InFlightEntry],
     ) -> tuple[bool, int]:
         """Called under self._lock. Acquires entry.condition to detect double-release.
 
@@ -292,9 +291,7 @@ class InFlightRegistry:
             to_notify.extend(self._cleanup_orphaned_entries_locked())
             entry = self._requests.get(request_key)
             if entry is not None:
-                should_bail, followers = self._handle_double_release_locked(
-                    entry, request_key, to_notify
-                )
+                should_bail, followers = self._handle_double_release_locked(entry, request_key)
                 if should_bail:
                     double_release_followers = followers
             # Note: shared_count will be read inside entry.condition to avoid race.

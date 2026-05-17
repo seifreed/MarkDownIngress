@@ -130,7 +130,6 @@ def apply_scalar_list_and_custom_overrides(
     config: Any,
     env_mapping: dict,
     explicit: set,
-    previous_values: dict,
 ) -> None:
     """Apply scalar, list, and custom-pattern env var overrides to config in-place."""
     _apply_env_mapping_overrides(config, env_mapping, explicit)
@@ -440,7 +439,7 @@ def apply_env_overrides(config: Any, env_mapping: EnvVarMapping) -> Any:
     previous_values = {
         attr_name: getattr(config, attr_name) for _, (attr_name, _) in env_mapping.items()
     }
-    apply_scalar_list_and_custom_overrides(config, env_mapping, explicit, previous_values)
+    apply_scalar_list_and_custom_overrides(config, env_mapping, explicit)
     validate_categorical_fields(config, previous_values, previous_explicit, explicit)
     validate_numeric_fields(config, previous_values, previous_explicit, explicit)
     config._explicit_keys = frozenset(explicit)

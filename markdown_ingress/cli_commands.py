@@ -139,7 +139,7 @@ async def process_batch_with_progress(processor, urls):
     ) as progress:
         task = progress.add_task("[cyan]Processing URLs...", total=len(urls))
 
-        def on_progress(current, total, url):
+        def on_progress(current, _total, _url):
             progress.update(task, completed=current)
 
         processor.on_progress = on_progress
@@ -246,7 +246,7 @@ async def ingest_many_with_progress(args, urls):
     ) as progress:
         task = progress.add_task("[cyan]Processing URLs...", total=len(urls))
 
-        def on_progress(current, total, url):
+        def on_progress(current, _total, _url):
             progress.update(task, completed=current)
 
         return await ingest_many_async(
