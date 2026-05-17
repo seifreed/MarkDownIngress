@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from markdown_ingress.application.batch_state import _CostBudget
@@ -41,6 +42,18 @@ from markdown_ingress.models import FetchResult, SafeDocument
 _logger = logging.getLogger(__name__)
 
 _RENDER_COST_BUDGET_CEILING: int = 5
+
+
+@dataclass(frozen=True)
+class _RenderAttemptContext:
+    url: str
+    config: IngestConfig
+    render_config: RenderConfig
+    screenshot_temp_path: str | None
+    screenshot_was_temp: bool
+    budget: _CostBudget
+    timed_stage: Callable[[str, Callable[[], Any]], Any]
+    operational_flags: list[str]
 
 
 class _FetchPipeline:
@@ -145,24 +158,21 @@ class _FetchPipeline:
 
     def _execute_fast_degraded_fallback(
         self,
-        url: str,
-        config: IngestConfig,
+        context: _RenderAttemptContext,
         render_exc: Exception,
-        budget: _CostBudget,
-        timed_stage: Callable[[str, Callable[[], Any]], Any],
-        operational_flags: list[str],
     ) -> FetchResult:
         try:
-            budget.consume(1, "degraded fast fallback from render")
+            context.budget.consume(1, "degraded fast fallback from render")
         except RuntimeError:
             _logger.warning(
                 "Budget exceeded during degraded fallback; proceeding without budget charge"
             )
-        fetcher = self._get_shared_fetcher(config)
+        fetcher = self._get_shared_fetcher(context.config)
         fetch_result = cast(
-            FetchResult, timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(url))
+            FetchResult,
+            context.timed_stage("fetch_fast_degraded", lambda: fetcher.fetch_sync(context.url)),
         )
-        operational_flags.extend(
+        context.operational_flags.extend(
             [
                 "render_failed_fast_degraded_fallback",
                 f"render_error:{type(render_exc).__name__}",
@@ -175,63 +185,37 @@ class _FetchPipeline:
 
     def _handle_render_failure(
         self,
-        url: str,
-        config: IngestConfig,
+        context: _RenderAttemptContext,
         render_exc: Exception,
-        screenshot_temp_path: str | None,
-        screenshot_was_temp: bool,
-        budget: _CostBudget,
-        timed_stage: Callable[[str, Callable[[], Any]], Any],
-        operational_flags: list[str],
     ) -> FetchResult:
-        if screenshot_was_temp and screenshot_temp_path is not None:
-            _cleanup_screenshot(screenshot_temp_path, logger=_logger)
+        if context.screenshot_was_temp and context.screenshot_temp_path is not None:
+            _cleanup_screenshot(context.screenshot_temp_path, logger=_logger)
         if not _should_attempt_fast_degraded_fallback(render_exc):
             raise render_exc
-        return self._execute_fast_degraded_fallback(
-            url, config, render_exc, budget, timed_stage, operational_flags
-        )
+        return self._execute_fast_degraded_fallback(context, render_exc)
 
-    def _run_render_or_degrade(
-        self,
-        url: str,
-        config: IngestConfig,
-        render_config: RenderConfig,
-        screenshot_temp_path: str | None,
-        screenshot_was_temp: bool,
-        budget: _CostBudget,
-        timed_stage: Callable[[str, Callable[[], Any]], Any],
-        operational_flags: list[str],
-    ) -> FetchResult:
+    def _run_render_or_degrade(self, context: _RenderAttemptContext) -> FetchResult:
         """Run the Playwright render; fall back to a plain HTTP fetch on retryable failure."""
-        renderer = self._renderer_factory(render_config)
+        renderer = self._renderer_factory(context.render_config)
         try:
             fetch_result = cast(
-                FetchResult, timed_stage("fetch_render", lambda: renderer.render_sync(url))
+                FetchResult,
+                context.timed_stage("fetch_render", lambda: renderer.render_sync(context.url)),
             )
-            if screenshot_was_temp:
+            if context.screenshot_was_temp:
                 reported_screenshot_path = fetch_result.metadata.get("screenshot_path")
                 if reported_screenshot_path:
                     if (
-                        screenshot_temp_path is not None
-                        and str(reported_screenshot_path) != screenshot_temp_path
+                        context.screenshot_temp_path is not None
+                        and str(reported_screenshot_path) != context.screenshot_temp_path
                     ):
-                        _cleanup_screenshot(screenshot_temp_path)
+                        _cleanup_screenshot(context.screenshot_temp_path)
                     fetch_result.metadata[SCREENSHOT_TEMP] = True
                 else:
-                    _cleanup_screenshot(screenshot_temp_path)
+                    _cleanup_screenshot(context.screenshot_temp_path)
             return fetch_result
         except Exception as render_exc:
-            return self._handle_render_failure(
-                url,
-                config,
-                render_exc,
-                screenshot_temp_path,
-                screenshot_was_temp,
-                budget,
-                timed_stage,
-                operational_flags,
-            )
+            return self._handle_render_failure(context, render_exc)
 
     def _fetch_render(
         self,
@@ -263,14 +247,16 @@ class _FetchPipeline:
             dns_pins,
         )
         return self._run_render_or_degrade(
-            render_url,
-            config,
-            render_config,
-            screenshot_temp_path,
-            screenshot_was_temp,
-            budget,
-            timed_stage,
-            operational_flags,
+            _RenderAttemptContext(
+                url=render_url,
+                config=config,
+                render_config=render_config,
+                screenshot_temp_path=screenshot_temp_path,
+                screenshot_was_temp=screenshot_was_temp,
+                budget=budget,
+                timed_stage=timed_stage,
+                operational_flags=operational_flags,
+            )
         )
 
     def _fetch_fast(
