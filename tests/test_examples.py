@@ -15,6 +15,10 @@ import pytest
     [
         Path("examples/advanced_stealth_example.py"),
         Path("examples/demo_resource_blocking.py"),
+        Path("examples/extreme_mode_example.py"),
+        Path("examples/library_batch_async.py"),
+        Path("examples/library_usage.py"),
+        Path("examples/retry_examples.py"),
     ],
 )
 def test_import_safe_examples_load(example_path: Path) -> None:
