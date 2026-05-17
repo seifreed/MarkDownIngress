@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     LEGACY_UNKNOWN_TTL_SECONDS,
@@ -41,7 +41,6 @@ from markdown_ingress.api_server_env import (
     _read_positive_int_env,
 )
 from markdown_ingress.api_server_handlers import (
-    _is_queue_unavailable_error,
     handle_batch_status,
     handle_batch_submit,
     handle_extractor_comparison,
@@ -51,18 +50,6 @@ from markdown_ingress.api_server_handlers import (
     handle_sync_batch,
 )
 from markdown_ingress.api_server_legacy_routes import register_legacy_routes
-from markdown_ingress.api_server_models import (
-    BatchIngestRequest,
-    BatchIngestResponse,
-    BatchJobAccepted,
-    BatchJobResponse,
-    ExtractorComparisonResponse,
-    HTMLCompareRequest,
-    IngestRequest,
-    IngestResponse,
-    RetryIngestRequest,
-    SecurityReportResponse,
-)
 from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
     _close_queue_for_repair,
@@ -81,6 +68,7 @@ from markdown_ingress.api_server_responses import (
     build_root_payload,
     build_stats_payload,
 )
+from markdown_ingress.api_server_routes import ApiRouteProviders, register_api_routes
 from markdown_ingress.api_server_snapshot import (
     JobSubsystemSnapshot as _JobSubsystemSnapshot,
 )
@@ -627,118 +615,47 @@ def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, A
     return CompareExtractorsUseCase().execute(html, model=model)
 
 
-@app.post(
-    "/api/v1/ingest",
-    response_model=IngestResponse,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
+_api_routes = register_api_routes(
+    app,
+    require_api_key=_require_api_key,
+    require_rate_limit=_require_rate_limit,
+    providers=ApiRouteProviders(
+        api_version=lambda: API_VERSION,
+        ingest=lambda: ingest,
+        retry_ingest=lambda: retry_ingest,
+        ingest_many=lambda: ingest_many,
+        generate_security_report=lambda: generate_security_report,
+        get_ingest_stats=lambda: get_ingest_stats,
+        get_job_queue=lambda: _get_job_queue,
+        get_job_record=lambda: _get_job_record,
+        get_job_ttl_seconds=lambda: JOB_TTL_SECONDS,
+        snapshot_job_subsystem=lambda: _snapshot_job_subsystem,
+        compare_extractors=lambda: compare_extractors,
+        validate_batch_request_ssrf_async=lambda: validate_batch_request_ssrf_async,
+        handle_ingest=lambda: handle_ingest,
+        handle_retry_ingest=lambda: handle_retry_ingest,
+        handle_sync_batch=lambda: handle_sync_batch,
+        handle_batch_submit=lambda: handle_batch_submit,
+        handle_batch_status=lambda: handle_batch_status,
+        handle_security_report=lambda: handle_security_report,
+        handle_extractor_comparison=lambda: handle_extractor_comparison,
+        build_stats_payload=lambda: build_stats_payload,
+        build_health_payload=lambda: build_health_payload,
+        build_detailed_health_payload=lambda: build_detailed_health_payload,
+        build_root_payload=lambda: build_root_payload,
+    ),
 )
-async def ingest_endpoint(request: IngestRequest):
-    """Ingest a single URL and return structured markdown plus optional blocks/chunks."""
-    return await handle_ingest(request, ingest)
-
-
-@app.post(
-    "/api/v1/ingest/retry",
-    response_model=IngestResponse,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-)
-async def retry_ingest_endpoint(request: RetryIngestRequest):
-    """Ingest with automatic retry logic and timeout escalation."""
-    return await handle_retry_ingest(request, retry_ingest)
-
-
-@app.post(
-    "/api/v1/ingest/batch",
-    response_model=BatchIngestResponse,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-)
-async def batch_ingest_endpoint(request: BatchIngestRequest):
-    """Process a batch synchronously for simple clients."""
-    await validate_batch_request_ssrf_async(request)
-    return await handle_sync_batch(request, ingest_many)
-
-
-@app.post(
-    "/api/v1/jobs/batch",
-    response_model=BatchJobAccepted,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-)
-async def batch_job_submit(request: BatchIngestRequest):
-    """Queue a batch ingestion job and return a polling handle."""
-    await validate_batch_request_ssrf_async(request)
-    try:
-        job_queue = _get_job_queue()
-    except (RuntimeError, OSError, ValueError) as exc:
-        if _is_queue_unavailable_error(exc):
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        raise
-    return await handle_batch_submit(
-        request,
-        ingest_many,
-        job_queue,
-        getattr(job_queue, "ttl_seconds", JOB_TTL_SECONDS),
-    )
-
-
-@app.get(
-    "/api/v1/jobs/{job_id}",
-    response_model=BatchJobResponse,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-)
-async def batch_job_status(job_id: str):
-    """Poll an async batch job."""
-    return await handle_batch_status(job_id, _get_job_record)
-
-
-@app.post(
-    "/api/v1/security/report",
-    response_model=SecurityReportResponse,
-    dependencies=[Depends(_require_api_key), Depends(_require_rate_limit)],
-)
-async def security_report_endpoint(request: IngestRequest):
-    """Generate a detailed security report."""
-    return await handle_security_report(request, generate_security_report)
-
-
-@app.post(
-    "/api/v1/evaluate/extractors",
-    response_model=ExtractorComparisonResponse,
-    dependencies=[Depends(_require_api_key)],
-)
-async def extractor_comparison_endpoint(request: HTMLCompareRequest):
-    """Compare supported extractors against a raw HTML payload."""
-    return await handle_extractor_comparison(request, compare_extractors)
-
-
-@app.get("/api/v1/stats", dependencies=[Depends(_require_api_key)])
-async def stats_endpoint():
-    """Expose process-level observability stats."""
-    snapshot = _snapshot_job_subsystem(start_repair=False)
-    return build_stats_payload(
-        api_version=API_VERSION,
-        ingest_stats=get_ingest_stats(),
-        snapshot=snapshot,
-    )
-
-
-@app.get("/api/v1/health")
-async def health():
-    """Public health check endpoint — does NOT expose internal paths/state."""
-    snapshot = _snapshot_job_subsystem(start_repair=False)
-    return build_health_payload(api_version=API_VERSION, snapshot=snapshot)
-
-
-@app.get("/api/v1/health/detailed", dependencies=[Depends(_require_api_key)])
-async def health_detailed():
-    """Authenticated health check with full job-queue observability."""
-    snapshot = _snapshot_job_subsystem(start_repair=False)
-    return build_detailed_health_payload(api_version=API_VERSION, snapshot=snapshot)
-
-
-@app.get("/")
-async def root():
-    """Public root endpoint — minimal metadata only."""
-    return build_root_payload(api_version=API_VERSION)
+ingest_endpoint = _api_routes.ingest_endpoint
+retry_ingest_endpoint = _api_routes.retry_ingest_endpoint
+batch_ingest_endpoint = _api_routes.batch_ingest_endpoint
+batch_job_submit = _api_routes.batch_job_submit
+batch_job_status = _api_routes.batch_job_status
+security_report_endpoint = _api_routes.security_report_endpoint
+extractor_comparison_endpoint = _api_routes.extractor_comparison_endpoint
+stats_endpoint = _api_routes.stats_endpoint
+health = _api_routes.health
+health_detailed = _api_routes.health_detailed
+root = _api_routes.root
 
 
 # Compatibility aliases for existing clients/tests.
