@@ -32,11 +32,10 @@ async def capture_screenshot(page, screenshot: bool | str | None) -> str | None:
         return None
 
     if screenshot is True:
-        temp_file = tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             suffix=".png", delete=False, prefix="mdingress_screenshot_"
-        )
-        screenshot_path = temp_file.name
-        temp_file.close()
+        ) as temp_file:
+            screenshot_path = temp_file.name
         with _screenshots_lock:
             _active_screenshots.add(screenshot_path)
     else:

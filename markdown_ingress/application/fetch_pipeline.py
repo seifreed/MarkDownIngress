@@ -145,13 +145,12 @@ class _FetchPipeline:
         screenshot_temp_path: str | None = None
         screenshot_was_temp = False
         if render_config.screenshot is True:
-            tmp_file = tempfile.NamedTemporaryFile(
+            with tempfile.NamedTemporaryFile(
                 suffix=".png",
                 delete=False,
                 prefix="mdingress_screenshot_",
-            )
-            screenshot_temp_path = tmp_file.name
-            tmp_file.close()
+            ) as tmp_file:
+                screenshot_temp_path = tmp_file.name
             render_config.screenshot = screenshot_temp_path
             screenshot_was_temp = True
         return render_config, screenshot_temp_path, screenshot_was_temp
