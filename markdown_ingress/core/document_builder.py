@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import copy
-import logging
 import os
 from collections.abc import Callable
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.document_assembly import _build_safe_document
+from markdown_ingress.core.document_plugins import (
+    DocumentPluginContext,
+    create_document_plugin_context,
+    load_document_plugins,
+    unload_document_plugins,
+)
+from markdown_ingress.core.document_policy import build_policy_engine
 from markdown_ingress.core.document_security_patterns import (
     _apply_custom_pattern_analysis,
 )
@@ -21,8 +26,7 @@ from markdown_ingress.core.ingest_stats import timed_stage_with_snapshot
 from markdown_ingress.core.interfaces import IExtractor, IMarkdownConverter, ITokenEstimator
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
-from markdown_ingress.core.plugin import PluginLoader
-from markdown_ingress.core.policy import PolicyBlockedError, PolicyEngine
+from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.core.scoring import Scorer
 from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.structured import (
@@ -30,8 +34,6 @@ from markdown_ingress.core.structured import (
     HTMLStructureExtractor,
 )
 from markdown_ingress.models import FetchResult, SafeDocument
-
-_logger = logging.getLogger(__name__)
 
 _extractor_factory: Callable[[bool], IExtractor] | None = None
 _md_converter_factory: Callable[[], IMarkdownConverter] | None = None
@@ -47,41 +49,6 @@ def register_document_builder_factories(
     _extractor_factory = extractor_factory
     _md_converter_factory = md_converter_factory
     _token_estimator_factory = token_estimator_factory
-
-
-def build_policy_engine(
-    policy_name: str, matched_domain_policy: DomainPolicy | None
-) -> PolicyEngine:
-    """Create the policy engine, applying optional domain-level threshold overrides."""
-    if matched_domain_policy is None:
-        return PolicyEngine.from_name(policy_name)
-    if (
-        matched_domain_policy.block_threshold is None
-        and matched_domain_policy.warn_threshold is None
-    ):
-        return PolicyEngine.from_name(policy_name)
-
-    base = PolicyEngine.from_name(policy_name).policy
-    custom = copy.deepcopy(base)
-    if matched_domain_policy.block_threshold is not None:
-        custom.block_threshold = matched_domain_policy.block_threshold
-    if matched_domain_policy.warn_threshold is not None:
-        custom.warn_threshold = matched_domain_policy.warn_threshold
-    # Keep a warning band below the block threshold when policy values conflict.
-    # If warn_threshold is >= block_threshold, clamp it just below the block level
-    # so warning-only scores still exist instead of collapsing straight to block.
-    if custom.warn_threshold >= custom.block_threshold:
-        if custom.block_threshold > 0.0:
-            adjusted = custom.block_threshold - 0.01
-            if adjusted < 0.0:
-                adjusted = custom.block_threshold * 0.9
-            if adjusted < 0.0:
-                adjusted = 0.0
-            custom.warn_threshold = adjusted
-        else:
-            # block_threshold=0.0 means block everything; warn_threshold collapses to match.
-            custom.warn_threshold = 0.0
-    return PolicyEngine(policy=custom)
 
 
 def _resolve_pipeline_dependencies(orchestrator, config: IngestConfig):
@@ -279,31 +246,6 @@ def _run_security_analysis(
     return security_engine, policy_engine, security_result
 
 
-def _handle_plugin_unload_errors(
-    plugin_loader: PluginLoader | None,
-    document: SafeDocument | None,
-    fetch_result: FetchResult,
-) -> None:
-    """Unload plugins and attach any unload errors to the document or fetch metadata."""
-    if plugin_loader is None:
-        return
-    unload_errors: list[str] = []
-    for plugin_name in list(plugin_loader.plugins):
-        try:
-            plugin_loader.unload_plugin(plugin_name)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except Exception as exc:  # pragma: no cover - defensive logging path
-            unload_errors.append(f"{plugin_name}: {type(exc).__name__}: {exc}")
-    if unload_errors:
-        for message in unload_errors:
-            _logger.error("Plugin unload failed after request completion: %s", message)
-        if document is not None:
-            document.metadata.setdefault("warnings", []).extend(unload_errors)
-        else:
-            fetch_result.metadata.setdefault("warnings", []).extend(unload_errors)
-
-
 def _cleanup_screenshot_on_failure(
     document: SafeDocument | None,
     fetch_result: FetchResult,
@@ -326,7 +268,7 @@ def process_fetched_content(
     operational_flags: list[str] | None = None,
 ) -> SafeDocument:
     """Transform already-fetched HTML into the final SafeDocument."""
-    plugin_loader: PluginLoader | None = None
+    plugin_context: DocumentPluginContext | None = None
     document: SafeDocument | None = None
 
     extractor, md_converter, hasher, token_estimator, scorer = _resolve_pipeline_dependencies(
@@ -367,18 +309,13 @@ def process_fetched_content(
         config, extraction_result, security_metadata, stage_timings, matched_domain_policy
     )
 
-    extra_patterns: list[str | tuple[str, float]] = list(config.custom_patterns)
-    plugins_loaded = 0
+    plugin_context = create_document_plugin_context(config.custom_patterns)
     try:
-        if config.plugin_dirs:
-            plugin_loader = PluginLoader()
-            for plugin_dir in config.plugin_dirs:
-                plugins_loaded += plugin_loader.load_from_directory(plugin_dir)
-            extra_patterns.extend(plugin_loader.get_all_patterns())
+        load_document_plugins(plugin_context, config.plugin_dirs)
 
-        if extra_patterns:
+        if plugin_context.extra_patterns:
             security_result = _apply_custom_pattern_analysis(
-                extra_patterns,
+                plugin_context.extra_patterns,
                 security_result,
                 extraction_result,
                 security_metadata,
@@ -405,8 +342,8 @@ def process_fetched_content(
                 matched_domain_policy=matched_domain_policy,
                 operational_flags=operational_flags,
                 domain_rule_stats=domain_rule_stats,
-                extra_patterns=extra_patterns,
-                plugins_loaded=plugins_loaded,
+                extra_patterns=plugin_context.extra_patterns,
+                plugins_loaded=plugin_context.plugins_loaded,
                 stage_timings=stage_timings,
                 policy_engine=policy_engine,
             )
@@ -416,5 +353,6 @@ def process_fetched_content(
             raise
         return document
     finally:
-        _handle_plugin_unload_errors(plugin_loader, document, fetch_result)
+        plugin_loader = plugin_context.loader if plugin_context is not None else None
+        unload_document_plugins(plugin_loader, document, fetch_result)
         _cleanup_screenshot_on_failure(document, fetch_result)
