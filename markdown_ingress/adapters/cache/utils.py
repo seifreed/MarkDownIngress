@@ -2,6 +2,7 @@
 Utility helpers for cache backend identity and TTL validation.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -46,57 +47,65 @@ def _collect_public_identity_attrs(cache_backend: object) -> dict[str, Any]:
     This covers both normal ``__dict__``-based objects and slot-based objects
     so custom cache backends do not collapse to a type-only fingerprint.
     """
-    attrs: dict[str, Any] = {}
+    attrs = _collect_dict_identity_attrs(cache_backend)
+    _collect_slot_identity_attrs(cache_backend, attrs, include_private=False)
+    _collect_slot_identity_attrs(cache_backend, attrs, include_private=True)
+    return {key: attrs[key] for key in sorted(attrs)}
 
+
+def _collect_dict_identity_attrs(cache_backend: object) -> dict[str, Any]:
+    attrs: dict[str, Any] = {}
     try:
         for name, value in vars(cache_backend).items():
-            if (
-                not name.startswith("_")
-                and not callable(value)
-                and _is_stable_identity_value(value)
-            ):
+            if _is_public_dict_identity_attr(name, value):
                 attrs[name] = _normalize_identity_value(value)
     except TypeError:
         pass
+    return attrs
 
+
+def _is_public_dict_identity_attr(name: str, value: Any) -> bool:
+    return not name.startswith("_") and not callable(value) and _is_stable_identity_value(value)
+
+
+def _collect_slot_identity_attrs(
+    cache_backend: object,
+    attrs: dict[str, Any],
+    *,
+    include_private: bool,
+) -> None:
+    for slot in _iter_declared_slots(cache_backend):
+        if _skip_slot(slot, attrs, include_private=include_private):
+            continue
+        try:
+            value = getattr(cache_backend, slot)
+        except AttributeError:
+            continue
+        if _slot_value_is_collectable(value, include_private=include_private):
+            attrs[slot] = _normalize_identity_value(value)
+
+
+def _iter_declared_slots(cache_backend: object) -> Iterator[str]:
     for cls in type(cache_backend).__mro__:
         slots = getattr(cls, "__slots__", ())
         if isinstance(slots, str):
-            slots = (slots,)
-        for slot in slots:
-            if slot in {"__dict__", "__weakref__"} or slot.startswith("_"):
-                continue
-            if slot in attrs:
-                continue
-            try:
-                value = getattr(cache_backend, slot)
-            except AttributeError:
-                continue
-            if callable(value):
-                continue
-            attrs[slot] = _normalize_identity_value(value)
+            yield slots
+            continue
+        yield from slots
 
-    # Private slot values are only included when they are simple, stable data.
-    # This captures semantically meaningful slot-only backends while avoiding
-    # runtime objects such as locks, sockets, or database connections.
-    for cls in type(cache_backend).__mro__:
-        slots = getattr(cls, "__slots__", ())
-        if isinstance(slots, str):
-            slots = (slots,)
-        for slot in slots:
-            if not slot.startswith("_") or slot in {"__dict__", "__weakref__"}:
-                continue
-            if slot in attrs:
-                continue
-            try:
-                value = getattr(cache_backend, slot)
-            except AttributeError:
-                continue
-            if callable(value) or not _is_stable_identity_value(value):
-                continue
-            attrs[slot] = _normalize_identity_value(value)
 
-    return {key: attrs[key] for key in sorted(attrs)}
+def _skip_slot(slot: str, attrs: dict[str, Any], *, include_private: bool) -> bool:
+    if slot in {"__dict__", "__weakref__"} or slot in attrs:
+        return True
+    if include_private:
+        return not slot.startswith("_")
+    return slot.startswith("_")
+
+
+def _slot_value_is_collectable(value: Any, *, include_private: bool) -> bool:
+    if callable(value):
+        return False
+    return not include_private or _is_stable_identity_value(value)
 
 
 def _validate_ttl_value(ttl: int, *, field_name: str) -> int:
