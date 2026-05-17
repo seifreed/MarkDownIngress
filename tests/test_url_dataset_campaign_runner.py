@@ -161,6 +161,34 @@ def test_collect_available_urls_reuses_persisted_pool(monkeypatch, tmp_path: Pat
     assert availability_pool_path().exists()
 
 
+def test_collect_available_urls_closes_fetcher(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("tests.url_dataset_campaign.output_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tests.url_dataset_campaign.load_unique_urls",
+        lambda limit: ["https://good.example/1"],
+    )
+    closed: list[bool] = []
+
+    class FakeFetcher:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fetch_sync(self, _url: str):
+            return object()
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr("tests.url_dataset_campaign.Fetcher", FakeFetcher)
+
+    selected, _, _, _ = asyncio.run(
+        collect_available_urls(total_limit=1, concurrency=1, timeout=1.0)
+    )
+
+    assert selected == ["https://good.example/1"]
+    assert closed == [True]
+
+
 def test_load_availability_pool_uses_latest_status_per_url(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tests.url_dataset_campaign.output_dir", lambda: tmp_path)
     pool_path = availability_pool_path()

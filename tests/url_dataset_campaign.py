@@ -514,29 +514,32 @@ async def collect_available_urls(
             except Exception as exc:
                 return url, classify_error(exc)
 
-    for start in range(0, len(unchecked), max(32, concurrency * 2)):
-        batch = unchecked[start : start + max(32, concurrency * 2)]
-        results = await asyncio.gather(*(check_url(url) for url in batch))
-        records: list[dict[str, str]] = []
-        for url, error_class in results:
-            checked += 1
-            if error_class is None:
-                available.append(url)
-                availability_error_types["available"] += 1
-                records.append({"url": url, "status": "available"})
-            else:
-                availability_error_types[error_class] += 1
-                records.append({"url": url, "status": error_class})
-        _append_availability_records(records)
-        if progress_callback is not None:
-            progress_callback(
-                availability_checked=checked,
-                availability_error_types=Counter(availability_error_types),
-                dropped_url_types=dropped_url_types,
-                selected_count=min(len(available), total_limit),
-            )
-        if len(available) >= total_limit:
-            break
+    try:
+        for start in range(0, len(unchecked), max(32, concurrency * 2)):
+            batch = unchecked[start : start + max(32, concurrency * 2)]
+            results = await asyncio.gather(*(check_url(url) for url in batch))
+            records: list[dict[str, str]] = []
+            for url, error_class in results:
+                checked += 1
+                if error_class is None:
+                    available.append(url)
+                    availability_error_types["available"] += 1
+                    records.append({"url": url, "status": "available"})
+                else:
+                    availability_error_types[error_class] += 1
+                    records.append({"url": url, "status": error_class})
+            _append_availability_records(records)
+            if progress_callback is not None:
+                progress_callback(
+                    availability_checked=checked,
+                    availability_error_types=Counter(availability_error_types),
+                    dropped_url_types=dropped_url_types,
+                    selected_count=min(len(available), total_limit),
+                )
+            if len(available) >= total_limit:
+                break
+    finally:
+        fetcher.close()
 
     return available[:total_limit], dropped_url_types, availability_error_types, checked
 
