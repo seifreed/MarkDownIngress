@@ -9,6 +9,8 @@ requiring external network access.
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -303,6 +305,32 @@ def test_javascript_injection_content():
     assert "this.width <= 280 && this.height <= 280" in js
 
     print("✓ JavaScript injection content tests passed\n")
+
+
+@pytest.mark.asyncio
+async def test_stealth_pre_nav_injection_runs_without_page_errors():
+    """The injected stealth payload must not abort on native browser properties."""
+    async_api = pytest.importorskip("playwright.async_api")
+    from markdown_ingress.core.stealth.js_injection import inject_stealth_pre_nav
+
+    async with async_api.async_playwright() as playwright:
+        try:
+            browser = await playwright.chromium.launch(headless=True)
+        except Exception as exc:
+            pytest.skip(f"Chromium is not available: {exc}")
+
+        page = await browser.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+        try:
+            await inject_stealth_pre_nav(page)
+            await page.goto("data:text/html,<html><body>ok</body></html>")
+            assert page_errors == []
+            assert await page.evaluate("navigator.webdriver") is None
+            assert await page.evaluate("navigator.plugins.length") == 3
+        finally:
+            await browser.close()
 
 
 def test_browser_args_validity():

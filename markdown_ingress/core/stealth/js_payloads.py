@@ -40,7 +40,7 @@ const navigatorProxy = new Proxy(originalNavigator, {
         if (key === 'webdriver') {
             return undefined;
         }
-        const value = Reflect.get(target, key, receiver);
+        const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;
     },
     getOwnPropertyDescriptor(target, key) {
@@ -413,13 +413,17 @@ Error.prepareStackTrace = function(error, stack) {
 // ============================================================================
 
 // Patch iframe detection
-Object.defineProperty(window, 'top', {
-    get: () => window,
-});
+try {
+    Object.defineProperty(window, 'top', {
+        get: () => window,
+    });
+} catch (e) {}
 
-Object.defineProperty(window, 'frameElement', {
-    get: () => null,
-});
+try {
+    Object.defineProperty(window, 'frameElement', {
+        get: () => null,
+    });
+} catch (e) {}
 
 // ============================================================================
 // Console Debug Protection
