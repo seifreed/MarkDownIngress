@@ -108,17 +108,18 @@ class Scorer:
             return True
         return score >= threshold
 
-    def get_recommendation(self, analysis: InjectionAnalysis) -> str:
+    def get_recommendation(self, analysis: InjectionAnalysis | float) -> str:
         """
         Get human-readable recommendation based on analysis.
 
         Args:
-            analysis: Injection analysis result
+            analysis: Injection analysis result or raw injection score
 
         Returns:
             Recommendation string
         """
-        risk_level = self.get_risk_level(analysis.score)
+        score = analysis.score if isinstance(analysis, InjectionAnalysis) else analysis
+        risk_level = self.get_risk_level(score)
 
         recommendations = {
             "safe": "Content appears safe for LLM ingestion.",

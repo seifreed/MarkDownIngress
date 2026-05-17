@@ -35,9 +35,11 @@ async def main() -> None:
     print(f"Successful: {result.successful}")
     print(f"Failed: {result.failed}")
 
-    for url, doc in zip(urls, result.documents, strict=False):
+    errors_by_index = {error.index: error.error for error in result.error_items}
+
+    for index, (url, doc) in enumerate(zip(urls, result.documents, strict=False)):
         if doc is None:
-            print(f"FAIL {url}: {result.errors[url]}")
+            print(f"FAIL {url}: {errors_by_index.get(index, 'unknown error')}")
             continue
         print(f"OK {url}: {doc.token_estimate} tokens")
 

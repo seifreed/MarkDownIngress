@@ -344,6 +344,14 @@ def test_scorer_get_recommendation_all_levels():
     assert "critical" in scorer.get_recommendation(make_analysis(0.9)).lower()
 
 
+def test_scorer_get_recommendation_accepts_raw_score():
+    from markdown_ingress.core.scoring import Scorer
+
+    scorer = Scorer()
+
+    assert "medium" in scorer.get_recommendation(0.5).lower()
+
+
 def test_scorer_get_risk_level_edge_case():
     """scoring.py line 41: exactly 1.0"""
     from markdown_ingress.core.scoring import Scorer

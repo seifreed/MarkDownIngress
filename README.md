@@ -311,10 +311,11 @@ safe_docs = [
     for doc in result.documents
     if doc is not None and doc.injection_score < 0.3
 ]
+errors_by_index = {error.index: error.error for error in result.error_items}
 
-for url, doc in zip(urls, result.documents, strict=False):
+for index, (url, doc) in enumerate(zip(urls, result.documents, strict=False)):
     if doc is None:
-        print(f"✗ {url}: {result.errors[url]}")
+        print(f"✗ {url}: {errors_by_index.get(index, 'unknown error')}")
     else:
         print(f"✓ {url}: {doc.token_estimate} tokens")
 
@@ -420,6 +421,7 @@ print(f"Structural hash: {report.structural_hash}")
 from markdown_ingress.core.hashing import Hasher
 
 hasher = Hasher()
+markdown = "# Title\n\nSome content"
 
 # Content hash (exact match required)
 content_hash = hasher.hash_content(markdown)
@@ -496,8 +498,9 @@ print(results[0].extractor_comparison)
 
 ```python
 from markdown_ingress import compare_extractors
+from pathlib import Path
 
-html = open("page.html").read()
+html = Path("page.html").read_text(encoding="utf-8")
 comparison = compare_extractors(html)
 
 print(comparison["readability"]["token_estimate"])

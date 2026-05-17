@@ -45,6 +45,17 @@ def test_readme_python_code_blocks_parse() -> None:
     assert failures == []
 
 
+def test_public_examples_do_not_index_batch_errors_by_url() -> None:
+    public_examples = [
+        Path("README.md"),
+        Path("examples/library_batch_async.py"),
+    ]
+
+    for path in public_examples:
+        text = path.read_text(encoding="utf-8")
+        assert ".errors[" not in text, path
+
+
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
