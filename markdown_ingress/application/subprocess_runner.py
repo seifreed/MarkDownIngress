@@ -8,7 +8,7 @@ import multiprocessing
 import os
 import queue as queue_module
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from markdown_ingress.application.exceptions import _copy_batch_exception, _make_picklable
 
@@ -88,52 +88,61 @@ def _terminate_batch_process(process) -> None:
         process.join(timeout=1.0)
 
 
-async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
-    """Poll the subprocess result queue until the worker finishes or an error occurs."""
+def _read_subprocess_payload(queue, timeout: float | None = None) -> tuple[str, Any] | None:
+    try:
+        if timeout is not None:
+            return cast(tuple[str, Any], queue.get(timeout=timeout))
+        return cast(tuple[str, Any], queue.get_nowait())
+    except queue_module.Empty:
+        return None
+
+
+def _raise_malformed_exception_payload(url: str) -> NoReturn:
+    raise RuntimeError(f"Batch worker returned a malformed exception payload for {url}")
+
+
+def _raise_exception_payload(value: object, url: str) -> NoReturn:
+    if not isinstance(value, dict):
+        _raise_malformed_exception_payload(url)
+    error_type = value.get("type")
+    message = value.get("message")
+    if not isinstance(error_type, str) or not isinstance(message, str):
+        _raise_malformed_exception_payload(url)
+    raise RuntimeError(f"{error_type}: {message}")
+
+
+def _handle_subprocess_payload(process, payload: object, url: str) -> SafeDocument:
     from markdown_ingress.models import SafeDocument
 
-    def read_payload(timeout: float | None = None) -> tuple[str, Any] | None:
-        try:
-            if timeout is not None:
-                return cast(tuple[str, Any], queue.get(timeout=timeout))
-            return cast(tuple[str, Any], queue.get_nowait())
-        except queue_module.Empty:
-            return None
+    if not isinstance(payload, tuple) or len(payload) != 2:
+        raise RuntimeError(f"Batch worker returned a malformed payload for {url}")
+    kind, value = payload
+    process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
+    if kind == "result":
+        if not isinstance(value, SafeDocument):
+            raise RuntimeError(
+                f"Batch worker returned a non-document result for {url}: " f"{type(value).__name__}"
+            )
+        return value
+    if kind == "exception":
+        if isinstance(value, BaseException):
+            raise value
+        raise RuntimeError(str(value))
+    if kind == "exception_payload":
+        _raise_exception_payload(value, url)
+    raise RuntimeError(f"Batch worker returned an unknown payload for {url}")
 
-    def handle_payload(payload: object) -> SafeDocument:
-        if not isinstance(payload, tuple) or len(payload) != 2:
-            raise RuntimeError(f"Batch worker returned a malformed payload for {url}")
-        kind, value = payload
-        process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
-        if kind == "result":
-            if not isinstance(value, SafeDocument):
-                raise RuntimeError(
-                    f"Batch worker returned a non-document result for {url}: "
-                    f"{type(value).__name__}"
-                )
-            return value
-        if kind == "exception":
-            if isinstance(value, BaseException):
-                raise value
-            raise RuntimeError(str(value))
-        if kind == "exception_payload":
-            if not isinstance(value, dict):
-                raise RuntimeError(f"Batch worker returned a malformed exception payload for {url}")
-            error_type = value.get("type")
-            message = value.get("message")
-            if not isinstance(error_type, str) or not isinstance(message, str):
-                raise RuntimeError(f"Batch worker returned a malformed exception payload for {url}")
-            raise RuntimeError(f"{error_type}: {message}")
-        raise RuntimeError(f"Batch worker returned an unknown payload for {url}")
 
+async def _poll_subprocess_queue(process, queue, url: str) -> SafeDocument:
+    """Poll the subprocess result queue until the worker finishes or an error occurs."""
     while True:
-        payload = read_payload()
+        payload = _read_subprocess_payload(queue)
         if payload is not None:
-            return handle_payload(payload)
+            return _handle_subprocess_payload(process, payload, url)
         if not process.is_alive():
             process.join(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
-            payload = read_payload(timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
+            payload = _read_subprocess_payload(queue, timeout=_SUBPROCESS_JOIN_TIMEOUT_S)
             if payload is not None:
-                return handle_payload(payload)
+                return _handle_subprocess_payload(process, payload, url)
             raise RuntimeError(f"Batch worker exited without returning a result for {url}")
         await asyncio.sleep(_BATCH_POLL_INTERVAL_S)
