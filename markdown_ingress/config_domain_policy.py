@@ -49,88 +49,13 @@ class DomainPolicy:
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
-        self.domain = _ensure_str("DomainPolicy.domain", self.domain)
-        self.include_subdomains = _ensure_bool(
-            "DomainPolicy.include_subdomains", self.include_subdomains
-        )
-        if self.mode is not None:
-            if not isinstance(self.mode, str):
-                raise ValueError(
-                    f"DomainPolicy.mode must be a string, got {type(self.mode).__name__}"
-                )
-            if self.mode not in ("fast", "render", "auto"):
-                raise ValueError(
-                    f"Invalid DomainPolicy.mode '{self.mode}'. "
-                    "Must be one of: fast, render, auto"
-                )
-        self.timeout = _ensure_optional_finite_float("DomainPolicy.timeout", self.timeout)
-        self.auto_render_threshold = _ensure_optional_int(
-            "DomainPolicy.auto_render_threshold", self.auto_render_threshold
-        )
-        self.strict = _ensure_optional_bool("DomainPolicy.strict", self.strict)
-        self.policy_name = _ensure_optional_str("DomainPolicy.policy_name", self.policy_name)
-        self.block_threshold = _ensure_optional_finite_float(
-            "DomainPolicy.block_threshold", self.block_threshold
-        )
-        self.warn_threshold = _ensure_optional_finite_float(
-            "DomainPolicy.warn_threshold", self.warn_threshold
-        )
-        self.request_interval = _ensure_optional_finite_float(
-            "DomainPolicy.request_interval", self.request_interval
-        )
-        self.render_cost_budget = _ensure_optional_int(
-            "DomainPolicy.render_cost_budget", self.render_cost_budget
-        )
-        self.extract_metadata = _ensure_optional_bool(
-            "DomainPolicy.extract_metadata", self.extract_metadata
-        )
-        self.extract_links = _ensure_optional_bool("DomainPolicy.extract_links", self.extract_links)
-        self.output_profile = _ensure_optional_str(
-            "DomainPolicy.output_profile", self.output_profile
-        )
-        self.notes = _ensure_optional_str("DomainPolicy.notes", self.notes)
-        if not self.domain or not self.domain.strip():
-            raise ValueError("DomainPolicy.domain cannot be empty")
+        _normalize_policy_scalar_fields(self)
+        _validate_policy_mode(self.mode)
+        _validate_required_domain(self.domain)
         _validate_output_profile_name(self.output_profile)
-        self.allowed_tags = _validate_optional_string_list("allowed_tags", self.allowed_tags)
-        self.blocked_tags = _validate_optional_string_list("blocked_tags", self.blocked_tags)
-        self.blocked_selectors = _validate_optional_string_list(
-            "blocked_selectors", self.blocked_selectors
-        )
-        self.unwrap_selectors = _validate_optional_string_list(
-            "unwrap_selectors", self.unwrap_selectors
-        )
-        if self.policy_name is not None and self.policy_name not in VALID_POLICY_NAMES:
-            raise ValueError(
-                f"Invalid policy_name '{self.policy_name}'. "
-                f"Must be one of: {', '.join(VALID_POLICY_NAMES)}"
-            )
-        if self.block_threshold is not None and not 0.0 <= self.block_threshold <= 1.0:
-            raise ValueError(
-                "DomainPolicy.block_threshold must be between 0.0 and 1.0, "
-                f"got {self.block_threshold}"
-            )
-        if self.warn_threshold is not None and not 0.0 <= self.warn_threshold <= 1.0:
-            raise ValueError(
-                "DomainPolicy.warn_threshold must be between 0.0 and 1.0, "
-                f"got {self.warn_threshold}"
-            )
-        if self.timeout is not None and self.timeout <= 0.0:
-            raise ValueError(f"DomainPolicy.timeout must be > 0.0, got {self.timeout}")
-        if self.auto_render_threshold is not None and self.auto_render_threshold < 1:
-            raise ValueError(
-                "DomainPolicy.auto_render_threshold must be >= 1, "
-                f"got {self.auto_render_threshold}"
-            )
-        if self.request_interval is not None and self.request_interval < 0.0:
-            raise ValueError(
-                "DomainPolicy.request_interval must be >= 0.0, " f"got {self.request_interval}"
-            )
-        if self.render_cost_budget is not None and self.render_cost_budget < 1:
-            raise ValueError(
-                "DomainPolicy.render_cost_budget must be >= 1 when provided, "
-                f"got {self.render_cost_budget}"
-            )
+        _normalize_policy_dom_fields(self)
+        _validate_policy_name(self.policy_name)
+        _validate_policy_ranges(self)
 
     def matches(self, url: str) -> bool:
         """Return whether this policy applies to the URL hostname.
@@ -149,6 +74,100 @@ class DomainPolicy:
         if self.include_subdomains:
             return host == domain_normalized or host.endswith(f".{domain_normalized}")
         return host == domain_normalized
+
+
+def _normalize_policy_scalar_fields(policy: DomainPolicy) -> None:
+    policy.domain = _ensure_str("DomainPolicy.domain", policy.domain)
+    policy.include_subdomains = _ensure_bool(
+        "DomainPolicy.include_subdomains", policy.include_subdomains
+    )
+    policy.timeout = _ensure_optional_finite_float("DomainPolicy.timeout", policy.timeout)
+    policy.auto_render_threshold = _ensure_optional_int(
+        "DomainPolicy.auto_render_threshold", policy.auto_render_threshold
+    )
+    policy.strict = _ensure_optional_bool("DomainPolicy.strict", policy.strict)
+    policy.policy_name = _ensure_optional_str("DomainPolicy.policy_name", policy.policy_name)
+    policy.block_threshold = _ensure_optional_finite_float(
+        "DomainPolicy.block_threshold", policy.block_threshold
+    )
+    policy.warn_threshold = _ensure_optional_finite_float(
+        "DomainPolicy.warn_threshold", policy.warn_threshold
+    )
+    policy.request_interval = _ensure_optional_finite_float(
+        "DomainPolicy.request_interval", policy.request_interval
+    )
+    policy.render_cost_budget = _ensure_optional_int(
+        "DomainPolicy.render_cost_budget", policy.render_cost_budget
+    )
+    policy.extract_metadata = _ensure_optional_bool(
+        "DomainPolicy.extract_metadata", policy.extract_metadata
+    )
+    policy.extract_links = _ensure_optional_bool("DomainPolicy.extract_links", policy.extract_links)
+    policy.output_profile = _ensure_optional_str(
+        "DomainPolicy.output_profile", policy.output_profile
+    )
+    policy.notes = _ensure_optional_str("DomainPolicy.notes", policy.notes)
+
+
+def _validate_policy_mode(mode: object | None) -> None:
+    if mode is None:
+        return
+    if not isinstance(mode, str):
+        raise ValueError(f"DomainPolicy.mode must be a string, got {type(mode).__name__}")
+    if mode not in ("fast", "render", "auto"):
+        raise ValueError(
+            f"Invalid DomainPolicy.mode '{mode}'. " "Must be one of: fast, render, auto"
+        )
+
+
+def _validate_required_domain(domain: str) -> None:
+    if not domain or not domain.strip():
+        raise ValueError("DomainPolicy.domain cannot be empty")
+
+
+def _normalize_policy_dom_fields(policy: DomainPolicy) -> None:
+    policy.allowed_tags = _validate_optional_string_list("allowed_tags", policy.allowed_tags)
+    policy.blocked_tags = _validate_optional_string_list("blocked_tags", policy.blocked_tags)
+    policy.blocked_selectors = _validate_optional_string_list(
+        "blocked_selectors", policy.blocked_selectors
+    )
+    policy.unwrap_selectors = _validate_optional_string_list(
+        "unwrap_selectors", policy.unwrap_selectors
+    )
+
+
+def _validate_policy_name(policy_name: str | None) -> None:
+    if policy_name is not None and policy_name not in VALID_POLICY_NAMES:
+        raise ValueError(
+            f"Invalid policy_name '{policy_name}'. "
+            f"Must be one of: {', '.join(VALID_POLICY_NAMES)}"
+        )
+
+
+def _validate_probability_threshold(field_name: str, value: float | None) -> None:
+    if value is not None and not 0.0 <= value <= 1.0:
+        raise ValueError(f"DomainPolicy.{field_name} must be between 0.0 and 1.0, " f"got {value}")
+
+
+def _validate_policy_ranges(policy: DomainPolicy) -> None:
+    _validate_probability_threshold("block_threshold", policy.block_threshold)
+    _validate_probability_threshold("warn_threshold", policy.warn_threshold)
+    if policy.timeout is not None and policy.timeout <= 0.0:
+        raise ValueError(f"DomainPolicy.timeout must be > 0.0, got {policy.timeout}")
+    if policy.auto_render_threshold is not None and policy.auto_render_threshold < 1:
+        raise ValueError(
+            "DomainPolicy.auto_render_threshold must be >= 1, "
+            f"got {policy.auto_render_threshold}"
+        )
+    if policy.request_interval is not None and policy.request_interval < 0.0:
+        raise ValueError(
+            "DomainPolicy.request_interval must be >= 0.0, " f"got {policy.request_interval}"
+        )
+    if policy.render_cost_budget is not None and policy.render_cost_budget < 1:
+        raise ValueError(
+            "DomainPolicy.render_cost_budget must be >= 1 when provided, "
+            f"got {policy.render_cost_budget}"
+        )
 
 
 def _normalize_domain_policies(value: object) -> list[DomainPolicy]:
