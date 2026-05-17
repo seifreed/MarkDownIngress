@@ -555,7 +555,7 @@ markdown-ingress benchmark urls.txt --iterations 5 --compare-extractors
 
 ### Main Function
 
-```python
+```text
 ingest(
     url: str,
     config: IngestConfig | Config | None = None,
@@ -569,7 +569,7 @@ ingest(
 
 ### Async Function
 
-```python
+```text
 async ingest_async(
     url: str,
     config: IngestConfig | Config | None = None,
@@ -583,7 +583,7 @@ async ingest_async(
 
 ### Batch Functions
 
-```python
+```text
 ingest_many(
     urls: Sequence[str],
     config: IngestConfig | Config | None = None,

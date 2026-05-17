@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -27,6 +29,20 @@ def test_public_docs_do_not_contain_local_machine_paths() -> None:
         text = path.read_text(encoding="utf-8")
         assert "/Users/" not in text, path
         assert "file://" not in text, path
+
+
+def test_readme_python_code_blocks_parse() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    failures: list[str] = []
+    for index, match in enumerate(re.finditer(r"```python\n(.*?)\n```", readme, re.S), start=1):
+        snippet = match.group(1)
+        try:
+            ast.parse(snippet)
+        except SyntaxError as exc:
+            failures.append(f"block {index}: line {exc.lineno}: {exc.msg}")
+
+    assert failures == []
 
 
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:
