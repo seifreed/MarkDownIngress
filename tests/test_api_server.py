@@ -62,6 +62,56 @@ def _wait_for_job_queue_repair_thread_to_clear(timeout: float = 5.0) -> None:
     assert api_server._JOB_QUEUE_REPAIR_THREAD is None
 
 
+def _stop_job_queue_background_threads() -> None:
+    """Stop and clear the api_server job-queue watchdog/repair daemon threads.
+
+    These daemon threads are started lazily on first job-queue use and are
+    process-global. Without explicit teardown they leak across tests: a
+    surviving watchdog tick calls ``_maybe_start_job_queue_repair`` which can
+    invoke a *monkeypatched* repair hook inside an unrelated test (for example
+    the health endpoint test asserts repair is NOT started), producing
+    order-dependent failures. This mirrors the thread teardown that
+    ``api_server._init_job_queue`` performs on reload.
+    """
+    with api_server._JOB_QUEUE_LOCK:
+        pending = (
+            (api_server._JOB_QUEUE_REPAIR_STOP, api_server._JOB_QUEUE_REPAIR_THREAD),
+            (api_server._JOB_QUEUE_WATCHDOG_STOP, api_server._JOB_QUEUE_WATCHDOG_THREAD),
+        )
+
+    # Best-effort, duck-typed teardown: tests routinely install lightweight
+    # fakes/mocks in these globals, so never assume a real threading.Thread.
+    # Signal and join outside the lock — the watchdog tick acquires
+    # _JOB_QUEUE_LOCK, so holding it here while joining would deadlock.
+    for stop_event, thread in pending:
+        set_event = getattr(stop_event, "set", None)
+        if callable(set_event):
+            set_event()
+        join = getattr(thread, "join", None)
+        if not callable(join):
+            continue
+        is_alive = getattr(thread, "is_alive", None)
+        try:
+            alive = is_alive() if callable(is_alive) else True
+        except (RuntimeError, AssertionError, AttributeError):
+            alive = False
+        if alive:
+            join(timeout=5.0)
+
+    with api_server._JOB_QUEUE_LOCK:
+        api_server._JOB_QUEUE_REPAIR_THREAD = None
+        api_server._JOB_QUEUE_REPAIR_STOP = None
+        api_server._JOB_QUEUE_WATCHDOG_THREAD = None
+        api_server._JOB_QUEUE_WATCHDOG_STOP = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_job_queue_background_threads():
+    """Guarantee no job-queue watchdog/repair thread leaks between tests."""
+    yield
+    _stop_job_queue_background_threads()
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -2229,6 +2279,42 @@ def test_health_endpoint_reports_degraded_job_queue_state(monkeypatch):
     assert data["job_queue"]["pending_visible_total"] == 3
     assert data["job_queue"]["legacy_visible_queues"] == 1
     assert repair_started["called"] is False
+
+
+def test_job_queue_watchdog_does_not_leak_repair_across_tests(monkeypatch):
+    """Regression: a leaked watchdog thread must not survive into other tests.
+
+    Without `_stop_job_queue_background_threads`, the watchdog daemon started
+    here keeps ticking and invoking the (monkeypatched) repair hook, which is
+    exactly what made `test_health_endpoint_reports_degraded_job_queue_state`
+    fail order-dependently in the full suite. This proves both the hazard and
+    that the cleanup neutralizes it deterministically.
+    """
+    repair_calls: list[int] = []
+
+    class ClosingQueue:
+        state = "closing"
+        db_path = "current.sqlite3"
+
+        def pending_count(self, cleanup_expired=True):
+            return 1
+
+    _stop_job_queue_background_threads()  # clean baseline regardless of order
+    monkeypatch.setattr(api_server, "JOB_QUEUE", ClosingQueue())
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_STOP", None)
+    monkeypatch.setattr(api_server, "_start_job_queue_repair_loop", lambda: repair_calls.append(1))
+
+    api_server._start_job_queue_watchdog()
+    # The running watchdog DOES trigger repair on a closing queue — the hazard.
+    time.sleep(1.0)  # > 0.5s watchdog tick interval
+    assert repair_calls, "watchdog should trigger repair while alive (hazard exists)"
+
+    _stop_job_queue_background_threads()
+    assert api_server._JOB_QUEUE_WATCHDOG_THREAD is None
+    settled = len(repair_calls)
+    time.sleep(1.0)
+    assert len(repair_calls) == settled, "no repair calls may occur after cleanup"
 
 
 @patch("markdown_ingress.api_server.get_ingest_stats")
