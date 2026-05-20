@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Iterator
 from typing import Any
 
 _MAX_JSONLD_ITEMS = 10_000
+_JSONLD_PARSE_RECURSION_LIMIT = 5_000
 
 
 def iter_jsonld_items(data: Any) -> Iterator[dict[str, Any]]:
@@ -39,9 +41,29 @@ def iter_jsonld_items(data: Any) -> Iterator[dict[str, Any]]:
 
 def _load_jsonld_script(script: Any) -> Any | None:
     try:
-        return json.loads(script.text())
-    except (json.JSONDecodeError, AttributeError, RecursionError):
+        text = script.text()
+    except AttributeError:
         return None
+    try:
+        return json.loads(text)
+    except RecursionError:
+        return _load_jsonld_script_with_higher_recursion_limit(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _load_jsonld_script_with_higher_recursion_limit(text: str) -> Any | None:
+    previous_limit = sys.getrecursionlimit()
+    if previous_limit >= _JSONLD_PARSE_RECURSION_LIMIT:
+        return None
+
+    try:
+        sys.setrecursionlimit(_JSONLD_PARSE_RECURSION_LIMIT)
+        return json.loads(text)
+    except (json.JSONDecodeError, RecursionError):
+        return None
+    finally:
+        sys.setrecursionlimit(previous_limit)
 
 
 def parse_author_from_jsonld_script(script: Any) -> str | None:

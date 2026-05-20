@@ -106,15 +106,26 @@ def test_ci_workflow_covers_public_docs_examples_and_local_gate() -> None:
 def test_ci_security_job_audits_project_dependencies() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    project_install = 'pip install -e ".[all]" bandit[toml] pip-audit'
-    dependency_audit = "run: pip-audit"
+    project_install = 'pip install -e ".[api,render]" bandit[toml] pip-audit'
+    dependency_audit = "run: pip-audit . --skip-editable --progress-spinner off"
 
     assert project_install in workflow
+    assert 'pip install -e ".[all]" bandit[toml] pip-audit' not in workflow
     assert "pip install bandit[toml] safety" not in workflow
     assert "safety check" not in workflow
     assert "bandit -q -r markdown_ingress" in workflow
     assert dependency_audit in workflow
     assert workflow.index(project_install) < workflow.index(dependency_audit)
+
+
+def test_dev_extra_does_not_install_optional_nova_stack_by_default() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    optional_dependencies = pyproject["project"]["optional-dependencies"]
+
+    assert "nova-hunting>=0.1.0" not in optional_dependencies["dev"]
+    assert "nova-hunting>=0.1.0" in optional_dependencies["security"]
+    assert "nova-hunting>=0.1.0" in optional_dependencies["all"]
 
 
 def test_publish_workflow_verifies_before_upload() -> None:

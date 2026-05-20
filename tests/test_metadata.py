@@ -434,13 +434,13 @@ def test_extract_jsonld_author_and_modified_date_from_graph():
 
 
 def test_extract_jsonld_deep_graph_does_not_crash_metadata_extraction():
-    data = {"author": {"name": "Deep Author"}}
+    jsonld = json.dumps({"author": {"name": "Deep Author"}})
     for _ in range(1500):
-        data = {"@graph": data}
+        jsonld = f'{{"@graph":{jsonld}}}'
     html = f"""
     <html>
     <head>
-        <script type="application/ld+json">{json.dumps(data)}</script>
+        <script type="application/ld+json">{jsonld}</script>
     </head>
     <body>Content</body>
     </html>

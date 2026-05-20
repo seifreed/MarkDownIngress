@@ -32,6 +32,9 @@ def test_https_dns_pinning_uses_original_hostname_for_sni(monkeypatch):
             captured["socket_closed"] = True
 
     class FakeContext:
+        verify_mode = http_notifier_module.ssl.CERT_REQUIRED
+        check_hostname = True
+
         def wrap_socket(self, sock, server_hostname=None):
             captured["server_hostname"] = server_hostname
             return sock
@@ -75,6 +78,9 @@ def test_https_dns_pinning_idna_encodes_original_hostname_for_sni(monkeypatch):
             captured["socket_closed"] = True
 
     class FakeContext:
+        verify_mode = http_notifier_module.ssl.CERT_REQUIRED
+        check_hostname = True
+
         def wrap_socket(self, sock, server_hostname=None):
             captured["server_hostname"] = server_hostname
             return sock

@@ -589,14 +589,12 @@ def _ensure_job_queue_initialized():
         if JOB_QUEUE is not None:
             _job_queue_initialized = True
             _job_queue_init_failed_at = None
-            _maybe_start_job_queue_repair()
             _start_job_queue_watchdog()
             return
         try:
             JOB_QUEUE = _init_job_queue(globals().get("JOB_QUEUE"))
             _job_queue_initialized = True
             _job_queue_init_failed_at = None
-            _maybe_start_job_queue_repair()
             _start_job_queue_watchdog()
         except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error):
             # Catch specific exceptions. Do NOT set _job_queue_initialized = True
@@ -609,7 +607,6 @@ def _ensure_job_queue_initialized():
 def _get_job_queue():
     # Ensure job queue is initialized before use (lazy initialization)
     _ensure_job_queue_initialized()
-    _maybe_start_job_queue_repair()
     with _JOB_QUEUE_LOCK:
         queue = JOB_QUEUE
         if queue is None:
@@ -617,11 +614,18 @@ def _get_job_queue():
         if getattr(queue, "state", None) not in _REPAIRABLE_QUEUE_STATES:
             return queue
         if getattr(queue, "state", None) == "external_owner":
-            return queue
-        # BUG FIX #1: Capture the queue reference before releasing lock.
-        # This prevents TOCTOU race where JOB_QUEUE changes between
-        # releasing the lock and attempting repair/rebuild.
-        queue_to_repair = queue
+            queue_to_return = queue
+        else:
+            # BUG FIX #1: Capture the queue reference before releasing lock.
+            # This prevents TOCTOU race where JOB_QUEUE changes between
+            # releasing the lock and attempting repair/rebuild.
+            queue_to_repair = queue
+            queue_to_return = None
+
+    if queue_to_return is not None:
+        _maybe_start_job_queue_repair()
+        return queue_to_return
+
     try:
         _close_queue_for_repair(queue_to_repair)
     except (RuntimeError, TypeError) as exc:
@@ -631,7 +635,11 @@ def _get_job_queue():
                 current = JOB_QUEUE
                 if current is None:
                     raise RuntimeError("Job queue is unavailable") from exc
-                return current
+            else:
+                current = None
+        if current is not None:
+            _maybe_start_job_queue_repair()
+            return current
         raise
     # Pass the queue we attempted to repair, rebuild will handle TOCTOU internally
     return _build_replacement_queue_or_current(queue_to_repair)

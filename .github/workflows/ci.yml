@@ -81,13 +81,13 @@ jobs:
     - name: Install security tools
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[all]" bandit[toml] pip-audit
+        pip install -e ".[api,render]" bandit[toml] pip-audit
     
     - name: Run bandit security linter
       run: bandit -q -r markdown_ingress
 
     - name: Run dependency vulnerability audit
-      run: pip-audit
+      run: pip-audit . --skip-editable --progress-spinner off
 
   build:
     name: Build Distribution
