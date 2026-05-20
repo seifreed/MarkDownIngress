@@ -1559,6 +1559,23 @@ def test_versioned_extractor_evaluation_endpoint(mock_compare):
     assert data["results"]["trafilatura"]["available"] is False
 
 
+def test_versioned_extractor_evaluation_endpoint_is_rate_limited(monkeypatch):
+    def deny_request(_client_id):
+        return False, 7
+
+    monkeypatch.setattr(api_server, "_check_rate_limit", deny_request)
+    monkeypatch.setattr(
+        api_server,
+        "compare_extractors",
+        lambda html, model="gpt-4": {"readability": {"available": True}},
+    )
+
+    response = client.post("/api/v1/evaluate/extractors", json={"html": "<html></html>"})
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "7"
+
+
 class _ImmediateThread:
     def __init__(self, target=None, daemon=None, args=(), kwargs=None):
         self._target = target

@@ -247,7 +247,7 @@ def register_api_routes(
     app.post(
         "/api/v1/evaluate/extractors",
         response_model=ExtractorComparisonResponse,
-        dependencies=[Depends(require_api_key)],
+        dependencies=protected_dependencies,
     )(extractor_comparison_endpoint)
     app.get("/api/v1/stats", dependencies=[Depends(require_api_key)])(stats_endpoint)
     app.get("/api/v1/health")(health)
