@@ -176,39 +176,55 @@ class HTMLStructureExtractor:
         return "\n".join(lines)
 
     def _append_list_lines(self, element: Tag, lines: list[str], *, depth: int) -> None:
-        ordered = element.name == "ol"
-        indent = "  " * depth
-        for index, item in enumerate(element.find_all("li", recursive=False), start=1):
+        stack: list[tuple[Tag, int, list[Tag], int]] = [
+            (element, depth, list(element.find_all("li", recursive=False)), 0)
+        ]
+        while stack:
+            list_element, current_depth, items, item_index = stack.pop()
+            if item_index >= len(items):
+                continue
+
+            item = items[item_index]
+            stack.append((list_element, current_depth, items, item_index + 1))
+
+            ordered = list_element.name == "ol"
+            indent = "  " * current_depth
+            index = item_index + 1
             prefix = f"{index}." if ordered else "-"
             direct_text, nested_lists = self._list_item_content(item)
             line = f"{indent}{prefix}"
             if direct_text:
                 line = f"{line} {direct_text}"
             lines.append(line)
-            for nested_list in nested_lists:
-                self._append_list_lines(nested_list, lines, depth=depth + 1)
+            for nested_list in reversed(nested_lists):
+                stack.append(
+                    (
+                        nested_list,
+                        current_depth + 1,
+                        list(nested_list.find_all("li", recursive=False)),
+                        0,
+                    )
+                )
 
     @staticmethod
     def _list_item_content(item: Tag) -> tuple[str, list[Tag]]:
         parts: list[str] = []
         nested_lists: list[Tag] = []
 
-        def walk(node: PageElement) -> None:
+        stack: list[PageElement] = list(reversed(list(item.children)))
+        while stack:
+            node = stack.pop()
             if isinstance(node, NavigableString):
                 value = " ".join(str(node).split())
                 if value:
                     parts.append(value)
-                return
+                continue
             if not isinstance(node, Tag):
-                return
+                continue
             if node.name in {"ul", "ol"}:
                 nested_lists.append(node)
-                return
-            for child in node.children:
-                walk(child)
-
-        for child in item.children:
-            walk(child)
+                continue
+            stack.extend(reversed(list(node.children)))
         return " ".join(parts), nested_lists
 
     def _detect_code_language(self, element: Tag) -> str | None:

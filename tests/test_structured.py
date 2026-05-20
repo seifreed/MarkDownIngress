@@ -155,6 +155,38 @@ def test_html_structure_extractor_preserves_nested_list_hierarchy_inside_wrapper
     assert "Parent Child" not in blocks[0].text
 
 
+def test_html_structure_extractor_deep_nested_lists_do_not_crash():
+    depth = 1200
+    html = (
+        "<html><body><article><ul>"
+        + "".join("<li>Item<ul>" for _ in range(depth))
+        + "".join("</ul></li>" for _ in range(depth))
+        + "</ul></article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert len(blocks) == 1
+    assert blocks[0].block_type == "list"
+    assert "- Item" in blocks[0].text
+
+
+def test_html_structure_extractor_deep_wrapped_list_text_does_not_crash():
+    depth = 1200
+    html = (
+        "<html><body><article><ul><li>"
+        + ("<span>" * depth)
+        + "Item"
+        + ("</span>" * depth)
+        + "</li></ul></article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert len(blocks) == 1
+    assert blocks[0].text == "- Item"
+
+
 def test_html_structure_extractor_preserves_nested_ordered_list_hierarchy():
     html = """
     <html><body><article>
