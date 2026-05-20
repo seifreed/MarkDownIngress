@@ -6,27 +6,41 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
+_MAX_JSONLD_ITEMS = 10_000
+
 
 def iter_jsonld_items(data: Any) -> Iterator[dict[str, Any]]:
     """Yield JSON-LD object candidates from root lists and @graph containers."""
-    if isinstance(data, dict):
-        yield data
-        graph = data.get("@graph")
-        if isinstance(graph, list):
-            for item in graph:
-                yield from iter_jsonld_items(item)
-        elif isinstance(graph, dict):
-            yield from iter_jsonld_items(graph)
-        return
-    if isinstance(data, list):
-        for item in data:
-            yield from iter_jsonld_items(item)
+    stack: list[Any] = [data]
+    seen_containers: set[int] = set()
+    yielded = 0
+
+    while stack and yielded < _MAX_JSONLD_ITEMS:
+        current = stack.pop()
+        if isinstance(current, (dict, list)):
+            container_id = id(current)
+            if container_id in seen_containers:
+                continue
+            seen_containers.add(container_id)
+
+        if isinstance(current, dict):
+            yield current
+            yielded += 1
+            graph = current.get("@graph")
+            if isinstance(graph, list):
+                stack.extend(reversed(graph))
+            elif isinstance(graph, dict):
+                stack.append(graph)
+            continue
+
+        if isinstance(current, list):
+            stack.extend(reversed(current))
 
 
 def _load_jsonld_script(script: Any) -> Any | None:
     try:
         return json.loads(script.text())
-    except (json.JSONDecodeError, AttributeError):
+    except (json.JSONDecodeError, AttributeError, RecursionError):
         return None
 
 

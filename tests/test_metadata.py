@@ -2,6 +2,8 @@
 Tests for metadata extraction
 """
 
+import json
+
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
 
 
@@ -429,6 +431,25 @@ def test_extract_jsonld_author_and_modified_date_from_graph():
     metadata = extractor.extract(html, "https://example.com")
     assert metadata["author"] == "Graph Author"
     assert metadata["modified_date"] == "2024-01-20"
+
+
+def test_extract_jsonld_deep_graph_does_not_crash_metadata_extraction():
+    data = {"author": {"name": "Deep Author"}}
+    for _ in range(1500):
+        data = {"@graph": data}
+    html = f"""
+    <html>
+    <head>
+        <script type="application/ld+json">{json.dumps(data)}</script>
+    </head>
+    <body>Content</body>
+    </html>
+    """
+
+    extractor = MetadataExtractor()
+    metadata = extractor.extract(html, "https://example.com")
+
+    assert metadata["author"] == "Deep Author"
 
 
 def test_missing_metadata_returns_none():
