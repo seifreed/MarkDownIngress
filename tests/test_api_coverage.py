@@ -887,6 +887,7 @@ def test_ingest_config_override_cache_non_none(local_server):
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
+    cache = None
     try:
         cache = SQLiteCache(db_path=db_path)
         config = IngestConfig(mode="fast", timeout=5.0)
@@ -907,6 +908,8 @@ def test_ingest_config_override_cache_non_none(local_server):
         )
         assert cached.metadata["cache_hit"] is True
     finally:
+        if cache is not None:
+            cache.close()
         os.unlink(db_path)
 
 

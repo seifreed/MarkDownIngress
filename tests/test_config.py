@@ -84,6 +84,7 @@ class TestConfig:
 
     def test_create_cache_expands_tilde_for_sqlite_backend(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         config = Config(cache_enabled=True, cache_type="sqlite", cache_path="~/.cache/mdi.sqlite")
 
         cache = config.create_cache()
