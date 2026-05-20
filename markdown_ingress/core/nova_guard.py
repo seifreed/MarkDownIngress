@@ -5,7 +5,9 @@ This integration is optional and degrades safely when NOVA rules are not configu
 """
 
 import logging
+from importlib import import_module
 from pathlib import Path
+from typing import Any
 
 from markdown_ingress.core.nova_rules import (
     extract_rule_blocks,
@@ -23,8 +25,13 @@ from markdown_ingress.core.security_validation import (
 
 logger = logging.getLogger(__name__)
 
+NovaMatcher: Any
+NovaParser: Any
+
 try:
-    from nova import NovaMatcher, NovaParser  # type: ignore[import-untyped]
+    _nova_module = import_module("nova")
+    NovaMatcher = getattr(_nova_module, "NovaMatcher")
+    NovaParser = getattr(_nova_module, "NovaParser")
 
     NOVA_AVAILABLE = True
 except ImportError:  # pragma: no cover

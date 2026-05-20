@@ -128,6 +128,18 @@ def test_dev_extra_does_not_install_optional_nova_stack_by_default() -> None:
     assert "nova-hunting>=0.1.0" in optional_dependencies["all"]
 
 
+def test_optional_nova_dependency_is_not_statically_imported() -> None:
+    tree = ast.parse(Path("markdown_ingress/core/nova_guard.py").read_text(encoding="utf-8"))
+
+    static_nova_imports = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "nova"
+    ]
+
+    assert static_nova_imports == []
+
+
 def test_publish_workflow_verifies_before_upload() -> None:
     workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
     upload_index = workflow.index("twine upload dist/*")
