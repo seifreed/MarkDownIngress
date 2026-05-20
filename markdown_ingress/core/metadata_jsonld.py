@@ -9,6 +9,7 @@ from typing import Any
 
 _MAX_JSONLD_ITEMS = 10_000
 _JSONLD_PARSE_RECURSION_LIMIT = 5_000
+_JSON_DECODER = json.JSONDecoder()
 
 
 def iter_jsonld_items(data: Any) -> Iterator[dict[str, Any]]:
@@ -55,15 +56,64 @@ def _load_jsonld_script(script: Any) -> Any | None:
 def _load_jsonld_script_with_higher_recursion_limit(text: str) -> Any | None:
     previous_limit = sys.getrecursionlimit()
     if previous_limit >= _JSONLD_PARSE_RECURSION_LIMIT:
-        return None
+        return _load_deep_graph_jsonld_text(text)
 
     try:
         sys.setrecursionlimit(_JSONLD_PARSE_RECURSION_LIMIT)
         return json.loads(text)
     except (json.JSONDecodeError, RecursionError):
-        return None
+        return _load_deep_graph_jsonld_text(text)
     finally:
         sys.setrecursionlimit(previous_limit)
+
+
+def _load_deep_graph_jsonld_text(text: str) -> Any | None:
+    current = text.strip()
+    peeled = 0
+
+    while peeled < _MAX_JSONLD_ITEMS:
+        inner = _unwrap_single_graph_object(current)
+        if inner is None:
+            break
+        current = inner.strip()
+        peeled += 1
+
+    if peeled == 0:
+        return None
+
+    try:
+        return json.loads(current)
+    except (json.JSONDecodeError, RecursionError):
+        return None
+
+
+def _unwrap_single_graph_object(text: str) -> str | None:
+    current = text.strip()
+    if not current.startswith("{") or not current.endswith("}"):
+        return None
+
+    index = _skip_json_whitespace(current, 1)
+    try:
+        key, key_end = _JSON_DECODER.raw_decode(current[index:])
+    except json.JSONDecodeError:
+        return None
+    if key != "@graph":
+        return None
+
+    index = _skip_json_whitespace(current, index + key_end)
+    if index >= len(current) or current[index] != ":":
+        return None
+    index = _skip_json_whitespace(current, index + 1)
+    inner_end = len(current) - 1
+    if index >= inner_end:
+        return None
+    return current[index:inner_end]
+
+
+def _skip_json_whitespace(text: str, index: int) -> int:
+    while index < len(text) and text[index] in " \t\r\n":
+        index += 1
+    return index
 
 
 def parse_author_from_jsonld_script(script: Any) -> str | None:

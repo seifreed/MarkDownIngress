@@ -5,6 +5,7 @@ Tests for metadata extraction
 import json
 
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
+from markdown_ingress.core.metadata_jsonld import _load_deep_graph_jsonld_text
 
 
 def test_extract_author_from_meta():
@@ -450,6 +451,16 @@ def test_extract_jsonld_deep_graph_does_not_crash_metadata_extraction():
     metadata = extractor.extract(html, "https://example.com")
 
     assert metadata["author"] == "Deep Author"
+
+
+def test_deep_jsonld_graph_loader_peels_graph_wrappers_iteratively():
+    jsonld = json.dumps({"author": {"name": "Fallback Author"}})
+    for _ in range(1500):
+        jsonld = f'{{ "@graph" : {jsonld} }}'
+
+    data = _load_deep_graph_jsonld_text(jsonld)
+
+    assert data == {"author": {"name": "Fallback Author"}}
 
 
 def test_missing_metadata_returns_none():
