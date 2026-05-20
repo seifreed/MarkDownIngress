@@ -1149,6 +1149,41 @@ def test_batch_endpoint_preserves_duplicate_url_errors_by_position(mock_ingest_m
 
 
 @patch("markdown_ingress.api_server.ingest_many")
+def test_batch_endpoint_masks_sensitive_per_item_value_errors(mock_ingest_many):
+    class FakeBatchResult:
+        successful = 0
+        failed = 1
+        documents = [None]
+        errors = []
+        error_items = [
+            BatchErrorItem(
+                index=0,
+                url="https://example.com/",
+                error=(
+                    "URL hostname resolves to blocked IP (SSRF protection): "
+                    "secret.internal -> 10.0.0.5"
+                ),
+                error_type="ValueError",
+                traceback="Traceback from /Users/service/private.py",
+            )
+        ]
+
+    mock_ingest_many.return_value = FakeBatchResult()
+
+    response = client.post(
+        "/api/v1/ingest/batch",
+        json={"urls": ["https://example.com"], "mode": "fast"},
+    )
+
+    assert response.status_code == 200
+    row = response.json()["results"][0]
+    assert row["error"] == "Invalid request"
+    assert "10.0.0.5" not in row["error"]
+    assert "secret.internal" not in row["error"]
+    assert "traceback" not in row
+
+
+@patch("markdown_ingress.api_server.ingest_many")
 def test_batch_endpoint_legacy_errors_by_url_preserve_duplicate_order(mock_ingest_many):
     class FakeBatchResult:
         successful = 0

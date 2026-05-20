@@ -14,6 +14,41 @@ from markdown_ingress.api_server_models import (
 )
 from markdown_ingress.models import SafeDocument, SecurityReport
 
+_SENSITIVE_BATCH_ERROR_TYPES = frozenset(
+    {
+        "ValueError",
+        "RuntimeError",
+        "OSError",
+        "FileNotFoundError",
+        "PermissionError",
+        "OperationalError",
+    }
+)
+_SENSITIVE_BATCH_ERROR_MARKERS = (
+    "ssrf protection",
+    "blocked ip",
+    "blocked range",
+    "resolves to blocked",
+    "database password",
+)
+
+
+def _public_batch_error_detail(error: str | None, error_type: str | None = None) -> str | None:
+    """Return a client-safe per-row batch error message."""
+    if error is None:
+        return None
+    normalized_type = (error_type or "").rsplit(".", 1)[-1]
+    if normalized_type == "PolicyBlockedError":
+        return "Content blocked by security policy"
+    if normalized_type == "ValueError":
+        return "Invalid request"
+    if normalized_type in _SENSITIVE_BATCH_ERROR_TYPES:
+        return "Internal server error"
+    lowered = error.lower()
+    if any(marker in lowered for marker in _SENSITIVE_BATCH_ERROR_MARKERS):
+        return "Invalid request"
+    return error
+
 
 def to_document_response(doc: SafeDocument) -> IngestResponse:
     return IngestResponse(
@@ -76,7 +111,7 @@ def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[st
         fallback = getattr(result, "errors", [])
         raw_error_items = fallback if isinstance(fallback, list) else []
     error_by_index = {
-        item.index: item.error
+        item.index: _public_batch_error_detail(item.error, getattr(item, "error_type", None))
         for item in raw_error_items
         if hasattr(item, "index") and hasattr(item, "error")
     }
@@ -92,10 +127,10 @@ def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[st
             offset = errors_by_url_offsets.get(url, 0)
             if offset < len(options):
                 errors_by_url_offsets[url] = offset + 1
-                return options[offset]
+                return _public_batch_error_detail(options[offset])
             return None
         if isinstance(legacy_errors, dict):
-            return legacy_errors.get(url)
+            return _public_batch_error_detail(legacy_errors.get(url))
         return None
 
     rows = []
