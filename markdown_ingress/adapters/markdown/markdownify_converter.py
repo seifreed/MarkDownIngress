@@ -11,6 +11,7 @@ from markdownify import markdownify as md
 from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 from markdown_ingress.core.interfaces import IMarkdownConverter
 from markdown_ingress.core.structured import render_code_fence, render_markdown_table
+from markdown_ingress.core.url_safety import dangerous_url_scheme
 
 
 class MarkdownConverter(IMarkdownConverter):
@@ -55,6 +56,9 @@ class MarkdownConverter(IMarkdownConverter):
             if not isinstance(original_href, str):
                 continue
             normalized_href = self.normalizer.normalize_url(original_href)
+            if dangerous_url_scheme(normalized_href) is not None:
+                del link["href"]
+                continue
             link["href"] = normalized_href
 
     def _protect_code_blocks(self, soup: Any, placeholders: dict[str, str]) -> None:

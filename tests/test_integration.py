@@ -122,3 +122,27 @@ def test_markdown_converter_ignores_non_string_href_attributes(monkeypatch):
 
     assert prepared == '<a href="https://example.test/?utm_source=x">example</a>'
     assert placeholders == {}
+
+
+def test_markdown_converter_removes_obfuscated_dangerous_links():
+    converter = MarkdownConverter()
+    html = """
+    <p>
+        <a href="jav\u200bascript:alert(1)">Hidden JS</a>
+        <a href="\uff4aavascript:alert(1)">Fullwidth JS</a>
+        <a href="vb\u200bscript:msgbox(1)">Hidden VB</a>
+        <a href="da\u200bta:text/html,<script>alert(1)</script>">Hidden data</a>
+        <a href="https://example.test/?utm_source=x&ok=1">Safe</a>
+    </p>
+    """
+
+    markdown = converter.convert(html)
+
+    assert "[Hidden JS]" not in markdown
+    assert "[Fullwidth JS]" not in markdown
+    assert "[Hidden VB]" not in markdown
+    assert "[Hidden data]" not in markdown
+    assert "javascript:" not in markdown.lower()
+    assert "vbscript:" not in markdown.lower()
+    assert "data:text/html" not in markdown.lower()
+    assert "[Safe](https://example.test/?ok=1)" in markdown

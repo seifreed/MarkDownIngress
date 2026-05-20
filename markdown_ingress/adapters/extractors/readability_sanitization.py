@@ -8,6 +8,11 @@ from typing import Any
 
 from selectolax.parser import HTMLParser
 
+from markdown_ingress.core.url_safety import (
+    dangerous_url_scheme,
+    normalize_url_value_for_scheme_detection,
+)
+
 logger = logging.getLogger(__name__)
 
 HIDDEN_SELECTORS = (
@@ -40,7 +45,6 @@ HIDDEN_SELECTORS = (
     ".visually-hidden",
 )
 
-_SAFE_DATA_URL_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 _URL_ATTRIBUTES = frozenset(
     {
         "href",
@@ -236,7 +240,10 @@ def _dangerous_attributes_for_node(node: Any, result: dict[str, int]) -> list[st
 
 
 def _srcset_contains_data_url(attr_value: object) -> bool:
-    return any(part.strip().startswith("data:") for part in str(attr_value).split(","))
+    return any(
+        normalize_url_value_for_scheme_detection(part).startswith("data:")
+        for part in str(attr_value).split(",")
+    )
 
 
 def _mark_dangerous_url_attribute(
@@ -245,31 +252,16 @@ def _mark_dangerous_url_attribute(
     attrs_to_remove: list[str],
     result: dict[str, int],
 ) -> None:
-    clean_value = _clean_url_attribute_value(attr_value)
-    if clean_value.startswith("javascript:"):
+    scheme = dangerous_url_scheme(attr_value)
+    if scheme == "javascript":
         attrs_to_remove.append(attr_name)
         result["javascript_urls"] += 1
-    elif clean_value.startswith("vbscript:"):
+    elif scheme == "vbscript":
         attrs_to_remove.append(attr_name)
         result["vbscript_urls"] += 1
-    elif clean_value.startswith("data:") and not _is_safe_data_url(clean_value):
+    elif scheme == "data":
         attrs_to_remove.append(attr_name)
         result["data_urls"] += 1
-
-
-def _clean_url_attribute_value(attr_value: object) -> str:
-    clean_value = str(attr_value).strip().lower()
-    return "".join(c for c in clean_value if c not in "\x00\x1a\t\n\r\x0b\x0c")
-
-
-def _is_safe_data_url(clean_value: str) -> bool:
-    data_content = clean_value[5:]
-    comma_pos = data_content.find(",")
-    media_type_part = data_content[:comma_pos].split(";")[0].strip() if comma_pos != -1 else ""
-    if not media_type_part:
-        # RFC 2397: data:,hello -> media type is text/plain by default.
-        media_type_part = "text/plain"
-    return media_type_part in _SAFE_DATA_URL_MEDIA_TYPES
 
 
 def _remove_attributes(node: Any, attrs_to_remove: list[str]) -> None:

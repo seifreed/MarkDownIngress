@@ -91,6 +91,30 @@ def test_sanitize_dangerous_svg_data_urls_and_srcset():
     assert "javascript:alert(1)" not in result.html
 
 
+def test_sanitize_obfuscated_dangerous_url_schemes():
+    extractor = Extractor()
+    html = """
+    <html>
+    <body>
+        <article>
+            <a href="jav\u200bascript:alert(1)">Hidden JS</a>
+            <a href="\uff4aavascript:alert(1)">Fullwidth JS</a>
+            <a href="vb\u200bscript:msgbox(1)">Hidden VB</a>
+            <a href="da\u200bta:text/html,<script>alert(1)</script>">Hidden data</a>
+            <p>Keep me visible for readability extraction.</p>
+        </article>
+    </body>
+    </html>
+    """
+
+    result = extractor.extract(html, "https://test.com")
+
+    assert "href=" not in result.html
+    assert "javascript:" not in result.html.lower()
+    assert "vbscript:" not in result.html.lower()
+    assert "data:text/html" not in result.html.lower()
+
+
 def test_visible_absolute_positioned_content_is_preserved():
     extractor = Extractor()
     html = """
