@@ -163,12 +163,14 @@ def test_github_workflows_use_node24_ready_action_majors() -> None:
         "actions/checkout@v6",
         "actions/setup-python@v6",
         "actions/upload-artifact@v7",
+        "actions/download-artifact@v8",
         "codecov/codecov-action@v6",
     ]
     deprecated_action_majors = [
         "actions/checkout@v4",
         "actions/setup-python@v5",
         "actions/upload-artifact@v4",
+        "actions/download-artifact@v4",
         "codecov/codecov-action@v4",
     ]
 
@@ -217,7 +219,7 @@ def test_optional_nova_dependency_is_not_statically_imported() -> None:
 
 def test_publish_workflow_verifies_before_upload() -> None:
     workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
-    upload_index = workflow.index("twine upload dist/*")
+    publish_index = workflow.index("pypa/gh-action-pypi-publish@v1.14.0")
 
     required_steps = [
         'pip install -e ".[dev]" bandit[toml] build twine',
@@ -226,10 +228,37 @@ def test_publish_workflow_verifies_before_upload() -> None:
         "mypy markdown_ingress tests",
         "bandit -q -r markdown_ingress",
         'python -m pytest -q -m "not baseline and not campaign"',
+        "python -m build",
+        "twine check dist/*",
+        "actions/upload-artifact@v7",
+        "actions/download-artifact@v8",
     ]
     for step in required_steps:
         assert step in workflow
-        assert workflow.index(step) < upload_index
+        assert workflow.index(step) < publish_index
+
+
+def test_publish_workflow_uses_pypi_trusted_publishing_oidc() -> None:
+    workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
+
+    required_steps = [
+        "publish-pypi:",
+        "needs: release",
+        "environment:",
+        "name: pypi",
+        "url: https://pypi.org/p/markdown-ingress",
+        "id-token: write",
+        "actions/download-artifact@v8",
+        "pypa/gh-action-pypi-publish@v1.14.0",
+    ]
+
+    for step in required_steps:
+        assert step in workflow
+
+    assert "PYPI_TOKEN" not in workflow
+    assert "TWINE_USERNAME" not in workflow
+    assert "TWINE_PASSWORD" not in workflow
+    assert "twine upload" not in workflow
 
 
 def test_publish_workflow_creates_github_release_assets_from_tag() -> None:

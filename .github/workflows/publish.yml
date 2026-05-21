@@ -5,19 +5,16 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build, release, and publish
+  release:
+    name: Build and create GitHub release assets
     runs-on: ubuntu-latest
-    env:
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    permissions:
+      contents: write
     
     steps:
     - uses: actions/checkout@v6
@@ -56,6 +53,13 @@ jobs:
     - name: Check package
       run: twine check dist/*
 
+    - name: Upload package artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: release-distributions
+        path: dist/
+        if-no-files-found: error
+
     - name: Create GitHub release assets
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,10 +74,23 @@ jobs:
             --title "$tag" \
             --generate-notes
         fi
-    
-    - name: Publish to PyPI
-      if: env.PYPI_TOKEN != ''
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ env.PYPI_TOKEN }}
-      run: twine upload dist/*
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/markdown-ingress
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download package artifacts
+      uses: actions/download-artifact@v8
+      with:
+        name: release-distributions
+        path: dist/
+
+    - name: Publish package distributions to PyPI
+      uses: pypa/gh-action-pypi-publish@v1.14.0

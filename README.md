@@ -369,9 +369,16 @@ git push origin v0.8.0
 ```
 
 The publish workflow builds the wheel and source distribution, checks them with
-`twine`, creates or updates the matching GitHub Release, and uploads `dist/*` as
-release assets. If `PYPI_TOKEN` is configured in GitHub Secrets, the same
-workflow also publishes the package to PyPI.
+`twine`, creates or updates the matching GitHub Release, uploads `dist/*` as
+release assets, and publishes to PyPI via Trusted Publishing/OIDC. No long-lived
+PyPI API token is used.
+
+Configure the PyPI trusted publisher before pushing a release tag:
+
+- Owner: `seifreed`
+- Repository: `MarkDownIngress`
+- Workflow: `publish.yml`
+- Environment: `pypi`
 
 ---
 
