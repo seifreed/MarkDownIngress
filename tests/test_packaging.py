@@ -118,6 +118,30 @@ def test_ci_security_job_audits_project_dependencies() -> None:
     assert workflow.index(project_install) < workflow.index(dependency_audit)
 
 
+def test_github_workflows_use_node24_ready_action_majors() -> None:
+    workflow_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(Path(".github/workflows").glob("*.yml"))
+    )
+
+    expected_action_majors = [
+        "actions/checkout@v6",
+        "actions/setup-python@v6",
+        "actions/upload-artifact@v7",
+        "codecov/codecov-action@v6",
+    ]
+    deprecated_action_majors = [
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+        "actions/upload-artifact@v4",
+        "codecov/codecov-action@v4",
+    ]
+
+    for action in expected_action_majors:
+        assert action in workflow_text
+    for action in deprecated_action_majors:
+        assert action not in workflow_text
+
+
 def test_project_metadata_contains_public_repository_and_author_identity() -> None:
     pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
     pyproject = tomllib.loads(pyproject_text)
