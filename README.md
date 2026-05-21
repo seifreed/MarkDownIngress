@@ -327,7 +327,7 @@ curl -X POST http://localhost:8000/api/v1/ingest \
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.13 or 3.14
 - Core: `httpx`, `selectolax`, `readability-lxml`, `markdownify`, `tiktoken`
 - Optional: `playwright` (render), `nova-hunting` (security), `fastapi` (api)
 - See [pyproject.toml](pyproject.toml) for the complete dependency list

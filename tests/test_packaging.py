@@ -118,6 +118,42 @@ def test_ci_security_job_audits_project_dependencies() -> None:
     assert workflow.index(project_install) < workflow.index(dependency_audit)
 
 
+def test_project_declares_only_python_313_and_314_support() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    publish_workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
+    baseline_workflow = Path(".github/workflows/url-baseline.yml").read_text(encoding="utf-8")
+    campaign_workflow = Path(".github/workflows/url-campaign.yml").read_text(encoding="utf-8")
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    project = pyproject["project"]
+    optional_dependencies = project["optional-dependencies"]
+
+    assert project["requires-python"] == ">=3.13,<3.15"
+    assert "Programming Language :: Python :: 3.13" in project["classifiers"]
+    assert "Programming Language :: Python :: 3.14" in project["classifiers"]
+    assert "Programming Language :: Python :: 3.11" not in project["classifiers"]
+    assert "Programming Language :: Python :: 3.12" not in project["classifiers"]
+    assert pyproject["tool"]["ruff"]["target-version"] == "py313"
+    assert pyproject["tool"]["black"]["target-version"] == ["py313", "py314"]
+    assert pyproject["tool"]["mypy"]["python_version"] == "3.13"
+    for extra_name in ("dev", "all"):
+        assert "ruff>=0.15.14" in optional_dependencies[extra_name]
+        assert "black>=26.5.1" in optional_dependencies[extra_name]
+        assert "mypy>=2.1.0" in optional_dependencies[extra_name]
+    assert 'python-version: ["3.13", "3.14"]' in ci_workflow
+    assert "matrix.python-version == '3.13'" in ci_workflow
+    assert "matrix.python-version == '3.11'" not in ci_workflow
+    assert "matrix.python-version == '3.12'" not in ci_workflow
+    assert "python-version: '3.13'" in publish_workflow
+    assert 'default: "3.13"' in baseline_workflow
+    assert 'default: "3.13"' in campaign_workflow
+    assert "python:3.13-slim" in dockerfile
+    assert "python3.13/site-packages" in dockerfile
+    assert "Python 3.13 or 3.14" in readme
+
+
 def test_github_workflows_use_node24_ready_action_majors() -> None:
     workflow_text = "\n".join(
         path.read_text(encoding="utf-8") for path in sorted(Path(".github/workflows").glob("*.yml"))
