@@ -24,7 +24,7 @@ from markdown_ingress.core.policy import Policy, PolicyEngine
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
 
-__version__ = "0.8.0"
+__version__ = "1.0.0"
 __all__ = [
     "BatchProcessor",
     "BatchResult",

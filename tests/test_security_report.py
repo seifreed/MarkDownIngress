@@ -57,7 +57,7 @@ class TestSecurityReport:
         assert report.url == local_server
         assert report.risk_level.lower() in ["safe", "low", "medium", "high", "critical"]
         assert 0.0 <= report.injection_score <= 1.0
-        assert report.version == "0.8.0"
+        assert report.version == "1.0.0"
         assert report.token_estimate > 0
         assert report.content_hash.startswith("sha256:")
         assert report.structural_hash.startswith("sha256:")
@@ -78,7 +78,7 @@ class TestSecurityReport:
         assert data["injection_score"] == 0.25
         assert data["risk_level"] == "LOW"
         assert data["url"] == "http://test.com"
-        assert data["version"] == "0.8.0"
+        assert data["version"] == "1.0.0"
 
     def test_security_report_to_json(self):
         """Export SecurityReport to JSON string"""
@@ -111,7 +111,7 @@ class TestSecurityReport:
             "hidden_elements_count": 0,
             "imperative_density": 0.0,
             "timestamp": "2024-01-01T00:00:00",
-            "version": "0.8.0",
+            "version": "1.0.0",
             "token_reduction_percent": 50.0,
             "original_size_bytes": 2000,
             "cleaned_size_bytes": 1000,
@@ -140,7 +140,7 @@ class TestSecurityReport:
             "url": "http://example.com",
             "title": "Example",
             "timestamp": "2024-01-01T00:00:00",
-            "version": "0.8.0",
+            "version": "1.0.0",
             "token_estimate": 200,
             "token_reduction_percent": 80.0,
             "original_size_bytes": 1000,

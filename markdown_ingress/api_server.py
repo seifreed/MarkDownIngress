@@ -96,7 +96,7 @@ from markdown_ingress.core.orchestrator import get_ingest_stats
 # Module-level logger for error handling
 _logger = logging.getLogger(__name__)
 
-API_VERSION = "0.8.0"
+API_VERSION = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # API key configuration (kept here so monkeypatch via api_server.* works)

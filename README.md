@@ -105,7 +105,7 @@ Example report output:
 
 ```text
 ============================================================
-MarkDownIngress v0.8.0 - Ingestion Report
+MarkDownIngress v1.0.0 - Ingestion Report
 ============================================================
 
 📄 Title: Example Domain
@@ -364,8 +364,8 @@ Releases are tag driven. Update the package version in `pyproject.toml` and
 tag:
 
 ```bash
-git tag v0.8.0
-git push origin v0.8.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The publish workflow builds the wheel and source distribution, checks them with

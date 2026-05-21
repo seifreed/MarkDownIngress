@@ -293,7 +293,7 @@ class SecurityReport:
     url: str = ""
     title: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
-    version: str = "0.8.0"
+    version: str = "1.0.0"
 
     # Token analysis
     token_estimate: int = 0

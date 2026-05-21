@@ -555,7 +555,7 @@ def test_root_endpoint():
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
-    assert data["version"] == "0.8.0"
+    assert data["version"] == "1.0.0"
     assert data["name"] == "markdown-ingress"
     assert data["docs"] == "/docs"
     # Must NOT leak endpoint inventory / internal metadata
@@ -581,7 +581,7 @@ def test_health_endpoint(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert data["version"] == "0.8.0"
+    assert data["version"] == "1.0.0"
     assert data["service"] == "MarkDownIngress API"
     # Must NOT expose job_queue internals on public endpoint
     assert "job_queue" not in data
@@ -1530,7 +1530,7 @@ def test_versioned_stats_endpoint_returns_observability_snapshot(mock_stats):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["version"] == "0.8.0"
+    assert data["version"] == "1.0.0"
     assert data["stats"]["requests_total"] == 3
     assert data["stats"]["mode_counts"]["auto"] == 1
     assert "job_queue" in data
@@ -1863,7 +1863,7 @@ def test_openapi_docs():
 
     # Check API info
     assert openapi_schema["info"]["title"] == "MarkDownIngress API"
-    assert openapi_schema["info"]["version"] == "0.8.0"
+    assert openapi_schema["info"]["version"] == "1.0.0"
 
     # Check endpoints exist
     assert "/ingest" in openapi_schema["paths"]
