@@ -118,6 +118,21 @@ def test_ci_security_job_audits_project_dependencies() -> None:
     assert workflow.index(project_install) < workflow.index(dependency_audit)
 
 
+def test_project_metadata_contains_public_repository_and_author_identity() -> None:
+    pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads(pyproject_text)
+
+    project = pyproject["project"]
+    expected_person = {"name": "Marc Rivero Lopez", "email": "mriverolopez@gmail.com"}
+
+    assert project["authors"] == [expected_person]
+    assert project["maintainers"] == [expected_person]
+    assert project["urls"]["Homepage"] == "https://github.com/seifreed/MarkDownIngress"
+    assert project["urls"]["Repository"] == "https://github.com/seifreed/MarkDownIngress"
+    assert project["urls"]["Author GitHub (@seifreed)"] == "https://github.com/seifreed"
+    assert "@seifreed" in pyproject_text
+
+
 def test_dev_extra_does_not_install_optional_nova_stack_by_default() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
@@ -155,6 +170,30 @@ def test_publish_workflow_verifies_before_upload() -> None:
     for step in required_steps:
         assert step in workflow
         assert workflow.index(step) < upload_index
+
+
+def test_publish_workflow_creates_github_release_assets_from_tag() -> None:
+    workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
+    release_index = workflow.index('gh release create "$tag" dist/*')
+
+    required_steps = [
+        "tags:",
+        "- 'v*'",
+        "permissions:",
+        "contents: write",
+        "concurrency:",
+        "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+        'gh release view "$tag" --repo "$GITHUB_REPOSITORY"',
+        'gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber',
+        'gh release create "$tag" dist/*',
+        "--verify-tag",
+        "--generate-notes",
+    ]
+    for step in required_steps:
+        assert step in workflow
+
+    assert workflow.index("python -m build") < release_index
+    assert workflow.index("twine check dist/*") < release_index
 
 
 def test_dockerfile_quotes_versioned_pip_requirements() -> None:

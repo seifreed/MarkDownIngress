@@ -16,7 +16,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
-    {name = "Marc Rivero", email = "mriverolopez@gmail.com"}
+    {name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com"}
+]
+maintainers = [
+    {name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com"}
 ]
 keywords = ["markdown", "web-scraping", "llm", "security", "injection-detection"]
 classifiers = [
@@ -45,6 +48,7 @@ Homepage = "https://github.com/seifreed/MarkDownIngress"
 Repository = "https://github.com/seifreed/MarkDownIngress"
 Issues = "https://github.com/seifreed/MarkDownIngress/issues"
 Documentation = "https://github.com/seifreed/MarkDownIngress/blob/main/README.md"
+"Author GitHub (@seifreed)" = "https://github.com/seifreed"
 
 [project.optional-dependencies]
 dev = [

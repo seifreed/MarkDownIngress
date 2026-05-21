@@ -1,13 +1,23 @@
-name: Publish to PyPI
+name: Publish Release
 
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
+    name: Build, release, and publish
     runs-on: ubuntu-latest
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     
     steps:
     - uses: actions/checkout@v4
@@ -45,9 +55,25 @@ jobs:
     
     - name: Check package
       run: twine check dist/*
+
+    - name: Create GitHub release assets
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        tag="${GITHUB_REF_NAME}"
+        if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+        else
+          gh release create "$tag" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$tag" \
+            --generate-notes
+        fi
     
     - name: Publish to PyPI
+      if: env.PYPI_TOKEN != ''
       env:
         TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        TWINE_PASSWORD: ${{ env.PYPI_TOKEN }}
       run: twine upload dist/*

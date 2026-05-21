@@ -357,6 +357,24 @@ before code is considered complete.
 
 ---
 
+## Release
+
+Releases are tag driven. Update the package version in `pyproject.toml` and
+`markdown_ingress/__init__.py`, commit the change, then create and push a `v*`
+tag:
+
+```bash
+git tag v0.8.0
+git push origin v0.8.0
+```
+
+The publish workflow builds the wheel and source distribution, checks them with
+`twine`, creates or updates the matching GitHub Release, and uploads `dist/*` as
+release assets. If `PYPI_TOKEN` is configured in GitHub Secrets, the same
+workflow also publishes the package to PyPI.
+
+---
+
 ## Support the Project
 
 If this project is useful in your workflows, you can support development:
