@@ -3453,24 +3453,33 @@ def test_prune_job_queue_history_keeps_temporarily_locked_legacy_queue(monkeypat
 
 def test_start_job_queue_watchdog_keeps_running_if_global_stop_reference_is_cleared(monkeypatch):
     ticks: list[int] = []
+    tick_seen = threading.Event()
 
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_THREAD", None)
     monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_STOP", None)
-    monkeypatch.setattr(api_server, "_job_queue_watchdog_tick", lambda: ticks.append(1))
+
+    def record_tick() -> None:
+        ticks.append(1)
+        tick_seen.set()
+
+    monkeypatch.setattr(api_server, "_job_queue_watchdog_tick", record_tick)
 
     api_server._start_job_queue_watchdog()
     stop_event = api_server._JOB_QUEUE_WATCHDOG_STOP
     thread = api_server._JOB_QUEUE_WATCHDOG_THREAD
 
-    assert stop_event is not None
-    assert thread is not None
+    try:
+        assert stop_event is not None
+        assert thread is not None
 
-    monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_STOP", None)
-    time.sleep(0.6)
-    assert ticks
-
-    stop_event.set()
-    thread.join(timeout=1.0)
+        monkeypatch.setattr(api_server, "_JOB_QUEUE_WATCHDOG_STOP", None)
+        assert tick_seen.wait(timeout=3.0)
+        assert ticks
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None:
+            thread.join(timeout=1.0)
 
 
 def test_backend_error_repair_loop_converges_without_recreating_replacement_queue(
