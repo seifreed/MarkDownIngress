@@ -16,25 +16,6 @@ from markdown_ingress.core.ssrf import (
     validate_http_url_no_ssrf,
 )
 
-_BLOCKED_SCHEMES = {
-    "file",
-    "ftp",
-    "data",
-    "gopher",
-    "dict",
-    "ldap",
-    "ldaps",
-    "jar",
-    "mailto",
-    "news",
-    "nntp",
-    "irc",
-    "mms",
-    "rtsp",
-    "svn",
-    "git",
-}
-
 
 def validate_int_config(field_name: str, value: object, *, minimum: int) -> int:
     return max(minimum, ensure_int(field_name, value))
