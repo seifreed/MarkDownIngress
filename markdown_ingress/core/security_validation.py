@@ -5,12 +5,7 @@ from __future__ import annotations
 import logging
 import math
 
-
-def ensure_bool(field_name: str, value: object) -> bool:
-    """Return a bool or reject ambiguous untyped security input."""
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
+from markdown_ingress.config_validation import ensure_bool
 
 
 def ensure_numeric_score_input(field_name: str, value: object) -> float:
