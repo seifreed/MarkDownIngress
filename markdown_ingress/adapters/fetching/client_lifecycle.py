@@ -74,12 +74,15 @@ class ClientLifecycleMixin:
                     )
         return cast(httpx.AsyncClient, self._async_client)
 
-    def close(self: Any) -> None:
+    def _close_sync_client(self: Any) -> None:
         self._closing = True
         with self._client_lock:
             if self._sync_client is not None:
                 self._sync_client.close()
                 self._sync_client = None
+
+    def close(self: Any) -> None:
+        self._close_sync_client()
         with self._async_client_lock_guard:
             client_to_close = self._async_client
             self._async_client = None
@@ -116,11 +119,7 @@ class ClientLifecycleMixin:
                 )
 
     async def aclose(self: Any) -> None:
-        self._closing = True
-        with self._client_lock:
-            if self._sync_client is not None:
-                self._sync_client.close()
-                self._sync_client = None
+        self._close_sync_client()
         async with self._get_async_client_lock():
             if self._async_client is not None:
                 await self._async_client.aclose()
