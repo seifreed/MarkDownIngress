@@ -133,10 +133,11 @@ class DomainPolicyModel(BaseModel):
         return _validate_output_profile_name(value)
 
 
-class IngestRequest(BaseModel):
+class _IngestParams(BaseModel):
+    """Shared ingestion parameters for single and batch HTTP requests."""
+
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    url: HttpUrl
     mode: Mode = Field(default="auto")
     strict: bool = Field(default=True)
     timeout: float = Field(default=30.0, ge=1, le=MAX_TIMEOUT_SECONDS)
@@ -196,6 +197,10 @@ class IngestRequest(BaseModel):
     @classmethod
     def validate_reports_dir(cls, value: str) -> str:
         return _validate_reports_dir_value(value)
+
+
+class IngestRequest(_IngestParams):
+    url: HttpUrl
 
     @model_validator(mode="after")
     def validate_url_ssrf(self):
@@ -231,71 +236,10 @@ class RetryIngestRequest(BaseModel):
         return self
 
 
-class BatchIngestRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
+class BatchIngestRequest(_IngestParams):
     urls: list[HttpUrl] = Field(..., max_length=MAX_BATCH_URLS)
-    mode: Mode = Field(default="auto")
-    strict: bool = Field(default=True)
-    timeout: float = Field(default=30.0, ge=1, le=MAX_TIMEOUT_SECONDS)
-    model: str = Field(default="gpt-4")
-    auto_render_threshold: int = Field(default=50, ge=1, le=5000)
-    stealth: bool = Field(default=False)
-    disable_http2: bool = Field(default=False)
-    extreme_mode: bool = Field(default=False)
-    screenshot: bool | None = None
-    extract_metadata: bool = Field(default=True)
-    extract_links: bool = Field(default=True)
-    advanced_security: bool = Field(default=False)
-    use_llm: bool = Field(default=False)
-    policy_name: str = Field(default="normal")
-    custom_patterns: list[str] = Field(default_factory=list)
-    output_format: OutputFormat = Field(default="text")
-    output_profile: str = Field(default="default")
-    output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
-    extract_blocks: bool = Field(default=False)
-    chunking_strategy: ChunkingStrategy = Field(default="none")
-    chunk_size: int = Field(default=1200, ge=100, le=MAX_CHUNK_SIZE)
-    chunk_overlap: int = Field(default=120, ge=0, le=5000)
-    detect_language: bool = Field(default=True)
-    normalize_multilingual: bool = Field(default=True)
-    include_security_explanation: bool = Field(default=True)
-    include_observability: bool = Field(default=True)
-    save_reports: bool = Field(default=False)
-    reports_dir: str = Field(default="reports")
-    fetcher_user_agent: str = Field(default="")
-    domain_request_interval: float = Field(default=0.25, ge=0.0, le=60.0)
-    circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
-    circuit_breaker_open_seconds: float = Field(default=30.0, ge=0.1, le=3600.0)
-    render_cost_budget: int | None = Field(default=None, ge=1, le=100)
-    domain_policies: list[DomainPolicyModel] = Field(default_factory=list)
     max_concurrent: int = Field(default=5, ge=1, le=64)
     webhook_url: HttpUrl | None = None
-
-    @field_validator("output_formats")
-    @classmethod
-    def validate_output_formats(cls, value: list[str]) -> list[str]:
-        return _validate_output_formats_value(value)
-
-    @field_validator("screenshot", mode="before")
-    @classmethod
-    def validate_screenshot(cls, value: Any) -> bool | None:
-        return _validate_api_screenshot_value(value)
-
-    @field_validator("policy_name")
-    @classmethod
-    def validate_policy_name(cls, value: str) -> str:
-        return _validate_policy_name_value(value) or "normal"
-
-    @field_validator("output_profile")
-    @classmethod
-    def validate_output_profile(cls, value: str) -> str:
-        return _validate_output_profile_name(value) or "default"
-
-    @field_validator("reports_dir")
-    @classmethod
-    def validate_reports_dir(cls, value: str) -> str:
-        return _validate_reports_dir_value(value)
 
     @model_validator(mode="after")
     def validate_urls_ssrf(self):
