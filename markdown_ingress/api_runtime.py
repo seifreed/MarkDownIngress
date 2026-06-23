@@ -7,7 +7,12 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import ChunkingStrategy, Mode, OutputFormat
+from markdown_ingress.config_validation import (
+    ChunkingStrategy,
+    Mode,
+    OutputFormat,
+    validate_positive_int,
+)
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -155,11 +160,7 @@ def normalize_runtime_config(config: IngestConfig | FileConfig | None) -> Ingest
 
 
 def _validate_batch_max_concurrent(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"max_concurrent must be an int, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError("max_concurrent must be >= 1")
-    return value
+    return validate_positive_int("max_concurrent", value)
 
 
 def resolve_batch_api_options(

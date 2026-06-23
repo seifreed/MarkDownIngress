@@ -58,6 +58,14 @@ def ensure_int(field_name: str, value: object) -> int:
     return value
 
 
+def validate_positive_int(field_name: str, value: object) -> int:
+    """Return an int that is >= 1, rejecting bools and out-of-range values."""
+    validated = ensure_int(field_name, value)
+    if validated < 1:
+        raise ValueError(f"{field_name} must be >= 1")
+    return validated
+
+
 def ensure_optional_int(field_name: str, value: object) -> int | None:
     """Return an optional integer value or reject ambiguous numeric config input."""
     if value is None:

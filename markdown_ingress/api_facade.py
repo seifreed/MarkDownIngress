@@ -24,7 +24,7 @@ from markdown_ingress.application.use_cases import (
     IngestUseCase,
 )
 from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.config_validation import Mode
+from markdown_ingress.config_validation import Mode, validate_positive_int
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import (
@@ -64,14 +64,6 @@ def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> 
 
 
 _RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
-
-
-def _validate_retry_max_retries(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"max_retries must be an int, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError("max_retries must be >= 1")
-    return value
 
 
 def _validate_retry_timeout(field_name: str, value: object) -> float:
@@ -238,7 +230,7 @@ def _is_retryable_error(exc: Exception) -> bool:
 
 def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
     """Implementation for retrying ingestion with escalating timeout and stealth."""
-    validated_max_retries = _validate_retry_max_retries(request.max_retries)
+    validated_max_retries = validate_positive_int("max_retries", request.max_retries)
     validated_initial_timeout = _validate_retry_timeout("initial_timeout", request.initial_timeout)
     validated_max_timeout = (
         None
