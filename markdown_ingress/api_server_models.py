@@ -14,14 +14,13 @@ from markdown_ingress.config_models import (
     VALID_POLICY_NAMES,
     _validate_output_profile_name,
 )
-from markdown_ingress.config_validation import Mode
+from markdown_ingress.config_validation import ChunkingStrategy, Mode
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
     validate_http_url_no_ssrf_with_dns_check,
 )
 
-ChunkingStrategy = Literal["none", "heading", "size"]
 JobStatus = Literal["queued", "running", "completed", "failed"]
 _logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, Literal, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import Mode
+from markdown_ingress.config_validation import ChunkingStrategy, Mode
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -314,7 +314,7 @@ def build_runtime_config(  # noqa: PLR0913
     output_profile: str | None = None,
     output_formats: list[str] | None = None,
     extract_blocks: bool | None = None,
-    chunking_strategy: Literal["none", "heading", "size"] | None = None,
+    chunking_strategy: ChunkingStrategy | None = None,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
     detect_language: bool | None = None,

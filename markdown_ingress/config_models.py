@@ -130,7 +130,7 @@ class IngestConfig:
     extract_blocks: bool = False
     """Extract structured content blocks in addition to markdown"""
 
-    chunking_strategy: Literal["none", "heading", "size"] = "none"
+    chunking_strategy: config_validation.ChunkingStrategy = "none"
     """Native chunking strategy used to produce stable chunks"""
 
     chunk_size: int = 1200

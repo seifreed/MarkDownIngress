@@ -10,7 +10,7 @@ from markdown_ingress.config_models import _normalize_domain_policies
 VALID_MODES = config_validation.VALID_MODES
 VALID_CACHE_TYPES = ("memory", "sqlite")
 VALID_OUTPUT_FORMATS = config_validation.VALID_OUTPUT_FORMATS
-VALID_CHUNKING_STRATEGIES = ("none", "heading", "size")
+VALID_CHUNKING_STRATEGIES = config_validation.VALID_CHUNKING_STRATEGIES
 VALID_POLICIES = ("permissive", "normal", "strict", "paranoid", "moderate")
 
 _ensure_bool = config_validation.ensure_bool

@@ -114,7 +114,7 @@ def _validate_ingest_security_constraints(config: Any) -> None:
 
 
 def _validate_ingest_output_constraints(config: Any) -> None:
-    valid_chunking = ("none", "heading", "size")
+    valid_chunking = config_validation.VALID_CHUNKING_STRATEGIES
     if config.chunking_strategy not in valid_chunking:
         raise ValueError(
             f"Invalid chunking_strategy '{config.chunking_strategy}'. "

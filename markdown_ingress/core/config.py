@@ -119,7 +119,7 @@ class Config:
     detect_language: bool = True
     normalize_multilingual: bool = True
     include_security_explanation: bool = True
-    chunking_strategy: Literal["none", "heading", "size"] = "none"
+    chunking_strategy: config_validation.ChunkingStrategy = "none"
     chunk_size: int = _DEFAULT_CHUNK_SIZE
     chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP
     save_reports: bool = False

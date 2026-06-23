@@ -11,6 +11,9 @@ from typing import Any, Literal, get_args
 Mode = Literal["fast", "render", "auto"]
 VALID_MODES: tuple[Mode, ...] = get_args(Mode)
 
+ChunkingStrategy = Literal["none", "heading", "size"]
+VALID_CHUNKING_STRATEGIES: tuple[ChunkingStrategy, ...] = get_args(ChunkingStrategy)
+
 VALID_WAIT_UNTIL = ("networkidle", "load", "domcontentloaded")
 VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
 VALID_OUTPUT_REPRESENTATIONS = ("markdown", "blocks", "chunks", "metadata", "security")
