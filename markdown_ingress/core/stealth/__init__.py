@@ -25,12 +25,6 @@ from .browser_config import (
     get_advanced_stealth_config,
 )
 
-# Fingerprinting
-from .fingerprint import (
-    CANVAS_FINGERPRINT_JS,
-    WEBGL_FINGERPRINT_JS,
-)
-
 # JavaScript injection
 from .js_injection import (
     STEALTH_JS_INJECTION,
@@ -84,14 +78,12 @@ def get_context_options(config: StealthConfig | None = None) -> dict:
 __all__ = [
     "ADVANCED_USER_AGENTS",
     "ADVANCED_VIEWPORT_SIZES",
-    "CANVAS_FINGERPRINT_JS",
     "REALISTIC_HEADERS",
     "STEALTH_BROWSER_ARGS",
     "STEALTH_JS_INJECTION",
     "STEALTH_JS_POST_LOAD",
     "TIMEZONES",
     "ULTRA_STEALTH_ARGS",
-    "WEBGL_FINGERPRINT_JS",
     "AdvancedStealthConfig",
     "StealthConfig",
     "StealthConfigGenerator",
