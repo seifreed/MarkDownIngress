@@ -211,12 +211,25 @@ def validate_string_list(field_name: str, value: object) -> list[str]:
 
 
 def validate_regex_patterns(patterns: list[str]) -> None:
-    """Validate user-provided regex patterns before runtime scanning."""
+    """Validate user-provided regex patterns before runtime scanning.
+
+    Rejects both invalid syntax and patterns prone to catastrophic backtracking
+    (ReDoS), so a malicious pattern is refused at the request/config boundary
+    instead of after a URL has already been fetched.
+    """
+    # Lazy import: config_validation is a low-level module imported very early,
+    # so the ReDoS detector is pulled in only when patterns are actually validated.
+    from markdown_ingress.core.security_text import _detect_redos_pattern
+
     for pattern in patterns:
         try:
             re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern '{pattern}': {exc}") from exc
+        if _detect_redos_pattern(pattern):
+            raise ValueError(
+                f"Regex pattern may cause catastrophic backtracking (ReDoS): '{pattern}'"
+            )
 
 
 def collect_init_values(

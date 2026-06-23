@@ -359,6 +359,10 @@ cache_enabled: true
                 "Invalid regex pattern",
             ),
             (
+                lambda: IngestConfig(custom_patterns=["(a+)+"]),
+                "catastrophic backtracking",
+            ),
+            (
                 lambda: DomainPolicy(domain="example.com", timeout=cast(Any, "abc")),
                 "DomainPolicy.timeout must be a finite number",
             ),
