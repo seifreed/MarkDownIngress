@@ -7,6 +7,7 @@ import json
 import socket
 import ssl
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
@@ -280,10 +281,14 @@ class HTTPWebhookNotifier:
         except Exception as exc:  # noqa: BLE001 - webhook transport errors are retryable
             return _WebhookAttemptOutcome(error=exc)
 
-    def _notify_without_dns_pinning(self, webhook_url: str, data: bytes) -> None:
+    def _run_delivery_loop(
+        self,
+        webhook_url: str,
+        make_attempt: Callable[[], _WebhookAttemptOutcome],
+    ) -> None:
         last_error: Exception | None = None
         for attempt in range(self.total_attempts):
-            outcome = self._standard_delivery_attempt(webhook_url, data)
+            outcome = make_attempt()
             if outcome.delivered:
                 return
             if outcome.raise_now is not None:
@@ -294,6 +299,12 @@ class HTTPWebhookNotifier:
             self._sleep_before_retry()
 
         _raise_delivery_failed_after_attempts(webhook_url, self.total_attempts, last_error)
+
+    def _notify_without_dns_pinning(self, webhook_url: str, data: bytes) -> None:
+        self._run_delivery_loop(
+            webhook_url,
+            lambda: self._standard_delivery_attempt(webhook_url, data),
+        )
 
     def _notify_with_dns_pinning(
         self,
@@ -316,19 +327,10 @@ class HTTPWebhookNotifier:
             RuntimeError: If delivery fails
         """
         target = _parse_pinned_webhook_target(webhook_url)
-        last_error: Exception | None = None
-        for attempt in range(self.total_attempts):
-            outcome = self._pinned_delivery_attempt(webhook_url, data, target, validated_ip)
-            if outcome.delivered:
-                return
-            if outcome.raise_now is not None:
-                raise outcome.raise_now
-            last_error = outcome.error
-            if attempt == self.total_attempts - 1:
-                break
-            self._sleep_before_retry()
-
-        _raise_delivery_failed_after_attempts(webhook_url, self.total_attempts, last_error)
+        self._run_delivery_loop(
+            webhook_url,
+            lambda: self._pinned_delivery_attempt(webhook_url, data, target, validated_ip),
+        )
 
     def _make_pinned_connection(
         self, target: _PinnedWebhookTarget, validated_ip: str

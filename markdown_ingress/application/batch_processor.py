@@ -41,6 +41,7 @@ from markdown_ingress.shared_results import BatchErrorItem
 
 if TYPE_CHECKING:
     from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
+    from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
 
@@ -185,17 +186,20 @@ class _BatchUrlProcessor:
         await self._report_completion(prepared.url)
         return True
 
+    async def _execute_item(self, prepared: _PreparedBatchRequest) -> SafeDocument:
+        """Run a single item via the configured strategy, recording the leader metric."""
+        if self._ctx.batch_tracks_metrics:
+            bump_ingest_stat("leader_executions")
+        if self._ctx.execution_strategy == "isolated":
+            return await self._use_case._execute_item_isolated(prepared)
+        return await self._use_case._execute_item_in_process(prepared)
+
     async def _execute_leader(
         self, prepared: _PreparedBatchRequest, record: _BatchInFlightRecord
     ) -> bool:
         """Handle leader path: execute ingestion, cache result, resolve future."""
         ctx = self._ctx
-        if ctx.batch_tracks_metrics:
-            bump_ingest_stat("leader_executions")
-        if ctx.execution_strategy == "isolated":
-            document = await self._use_case._execute_item_isolated(prepared)
-        else:
-            document = await self._use_case._execute_item_in_process(prepared)
+        document = await self._execute_item(prepared)
         should_write_cache = not screenshot_requires_fresh_capture(prepared.resolved_config)
         if (
             should_write_cache
@@ -236,12 +240,7 @@ class _BatchUrlProcessor:
     ) -> bool:
         """Execute an item without batch in-flight sharing."""
         ctx = self._ctx
-        if ctx.batch_tracks_metrics:
-            bump_ingest_stat("leader_executions")
-        if ctx.execution_strategy == "isolated":
-            document = await self._use_case._execute_item_isolated(prepared)
-        else:
-            document = await self._use_case._execute_item_in_process(prepared)
+        document = await self._execute_item(prepared)
         document.metadata[REQUESTED_MODE] = prepared.requested_mode
         document.metadata[INFLIGHT_DEDUPLICATED] = False
         document.metadata[INFLIGHT_SHARED_COUNT] = 0
