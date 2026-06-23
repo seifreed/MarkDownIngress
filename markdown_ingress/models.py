@@ -8,8 +8,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from markdown_ingress.config_validation import ensure_bool as _ensure_bool
 from markdown_ingress.models_validation import (
-    _ensure_bool,
     _ensure_dict,
     _ensure_dict_list,
     _ensure_finite_float_metric,

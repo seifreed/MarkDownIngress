@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from datetime import datetime
 
-
-def _ensure_int_metric(field_name: str, value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
-    return value
+from markdown_ingress.config_validation import ensure_finite_float as _ensure_finite_float_metric
+from markdown_ingress.config_validation import ensure_int as _ensure_int_metric
+from markdown_ingress.config_validation import ensure_str as _ensure_str
 
 
 def _ensure_non_negative_int_metric(field_name: str, value: object) -> int:
@@ -17,18 +14,6 @@ def _ensure_non_negative_int_metric(field_name: str, value: object) -> int:
     if metric < 0:
         raise ValueError(f"{field_name} must be non-negative, got {metric}")
     return metric
-
-
-def _ensure_bool(field_name: str, value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
-
-
-def _ensure_str(field_name: str, value: object) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string, got {type(value).__name__}")
-    return value
 
 
 def _ensure_iso_datetime_str(field_name: str, value: object) -> str:
@@ -91,15 +76,6 @@ def _ensure_optional_dict_list(field_name: str, value: object | None) -> list[di
     if value is None:
         return None
     return _ensure_dict_list(field_name, value)
-
-
-def _ensure_finite_float_metric(field_name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    metric = float(value)
-    if not math.isfinite(metric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
-    return metric
 
 
 def _ensure_score(field_name: str, value: object) -> float:
