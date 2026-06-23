@@ -3,7 +3,6 @@
 import importlib.util
 import logging
 
-from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_navigation import (
     CONTENT_SELECTORS as DEFAULT_CONTENT_SELECTORS,
 )
@@ -178,11 +177,7 @@ class Renderer(SharedRendererMixin, IRenderer):
         browser_args = []
         if self.stealth and STEALTH_AVAILABLE:
             browser_args.extend(STEALTH_BROWSER_ARGS)
-        if self.disable_http2:
-            browser_args.append("--disable-http2")
-        resolver_rules = chromium_host_resolver_rules(self._dns_pins)
-        if resolver_rules:
-            browser_args.append(f"--host-resolver-rules={resolver_rules}")
+        self._append_network_browser_args(browser_args)
         return browser_args
 
     def _prepare_launch_options(self, browser_args: list[str]) -> dict[str, object]:

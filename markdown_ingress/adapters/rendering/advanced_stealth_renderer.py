@@ -6,7 +6,6 @@ import time
 from typing import cast
 
 import markdown_ingress.config_validation as config_validation
-from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_navigation import WaitUntil
 from markdown_ingress.adapters.rendering.renderer_support import (
     SharedRendererMixin,
@@ -146,11 +145,7 @@ class AdvancedStealthRenderer(SharedRendererMixin):
         async with async_playwright() as p:
             browser_args = self.stealth_config.browser_args.copy()
 
-            if self.disable_http2:
-                browser_args.append("--disable-http2")
-            resolver_rules = chromium_host_resolver_rules(self._dns_pins)
-            if resolver_rules:
-                browser_args.append(f"--host-resolver-rules={resolver_rules}")
+            self._append_network_browser_args(browser_args)
 
             launch_options: dict[str, object] = {
                 "headless": self.headless,

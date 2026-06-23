@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import httpx
 
+from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
@@ -33,12 +34,21 @@ class SharedRendererMixin:
     block_ads: bool
     block_trackers: bool
     allow_local_urls: bool | None
+    disable_http2: bool
     _dns_pins: dict[str, str]
     _base_dns_pins: dict[str, str]
 
     if TYPE_CHECKING:
 
         async def render(self, url: str) -> FetchResult: ...
+
+    def _append_network_browser_args(self, browser_args: list[str]) -> None:
+        """Append HTTP/2 and DNS-pin resolver flags shared by both renderers."""
+        if self.disable_http2:
+            browser_args.append("--disable-http2")
+        resolver_rules = chromium_host_resolver_rules(self._dns_pins)
+        if resolver_rules:
+            browser_args.append(f"--host-resolver-rules={resolver_rules}")
 
     def _block_settings(self) -> dict[str, bool]:
         """Resource-blocking flags forwarded to renderers and RenderConfig."""
