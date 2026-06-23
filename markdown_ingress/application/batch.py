@@ -11,6 +11,7 @@ from markdown_ingress.api_runtime import (
     _validate_batch_max_concurrent as _validate_max_concurrent,
 )
 from markdown_ingress.api_runtime import run_ingest_many_blocking
+from markdown_ingress.application.async_tasks import gather_or_cancel
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
@@ -165,13 +166,7 @@ class BatchProcessor:
             asyncio.create_task(self._process_custom_batch_url(state, index, url))
             for index, url in enumerate(urls)
         ]
-        try:
-            return await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+        return await gather_or_cancel(tasks)
 
     async def _process_custom_batch_url(
         self, state: _CustomBatchState, index: int, url: str
