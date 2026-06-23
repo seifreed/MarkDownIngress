@@ -10,15 +10,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from markdown_ingress.config_validation import ensure_bool as _ensure_bool
-from markdown_ingress.config_validation import ensure_finite_float as _ensure_finite_float
+from markdown_ingress.config_validation import ensure_score as _ensure_score
 from markdown_ingress.core.security import InjectionPattern, _detect_redos_pattern
-
-
-def _ensure_score(field_name: str, value: object) -> float:
-    score = _ensure_finite_float(field_name, value)
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
-    return score
 
 
 def _validate_regex_pattern(pattern: str, description: str) -> None:

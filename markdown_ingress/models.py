@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from markdown_ingress.config_validation import ensure_bool as _ensure_bool
+from markdown_ingress.config_validation import ensure_score as _ensure_score
 from markdown_ingress.models_validation import (
     _ensure_dict,
     _ensure_dict_list,
@@ -20,7 +21,6 @@ from markdown_ingress.models_validation import (
     _ensure_optional_dict_list,
     _ensure_optional_str,
     _ensure_percentage,
-    _ensure_score,
     _ensure_str,
     _ensure_str_list,
 )

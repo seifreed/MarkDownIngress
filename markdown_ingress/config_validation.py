@@ -82,6 +82,14 @@ def ensure_optional_finite_float(field_name: str, value: object) -> float | None
     return ensure_finite_float(field_name, value)
 
 
+def ensure_score(field_name: str, value: object) -> float:
+    """Return a finite float constrained to the inclusive [0.0, 1.0] range."""
+    score = ensure_finite_float(field_name, value)
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
+    return score
+
+
 def ensure_screenshot_value(field_name: str, value: object) -> bool | str | None:
     """Return a screenshot option or reject unsupported untyped config input."""
     if value is None or isinstance(value, (bool, str)):

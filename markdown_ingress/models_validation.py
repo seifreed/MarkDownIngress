@@ -78,13 +78,6 @@ def _ensure_optional_dict_list(field_name: str, value: object | None) -> list[di
     return _ensure_dict_list(field_name, value)
 
 
-def _ensure_score(field_name: str, value: object) -> float:
-    score = _ensure_finite_float_metric(field_name, value)
-    if not 0.0 <= score <= 1.0:
-        raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
-    return score
-
-
 def _ensure_percentage(field_name: str, value: object) -> float:
     percentage = _ensure_finite_float_metric(field_name, value)
     if not 0.0 <= percentage <= 100.0:
