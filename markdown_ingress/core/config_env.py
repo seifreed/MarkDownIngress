@@ -9,6 +9,9 @@ import markdown_ingress.config_validation as config_validation
 EnvConverter = Callable[[str], object]
 EnvVarMapping = dict[str, tuple[str, EnvConverter]]
 
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on", "enabled"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off", "disabled"})
+
 
 def parse_csv_string_list(field_name: str, value: str) -> list[str]:
     parsed = [item.strip() for item in value.split(",") if item.strip()]
@@ -17,9 +20,9 @@ def parse_csv_string_list(field_name: str, value: str) -> list[str]:
 
 def str_to_bool(value: str) -> bool:
     lower = value.strip().lower()
-    if lower in ("true", "1", "yes", "on", "enabled"):
+    if lower in _TRUE_STRINGS:
         return True
-    if lower in ("false", "0", "no", "off", "disabled"):
+    if lower in _FALSE_STRINGS:
         return False
     raise ValueError(
         f"invalid boolean {value!r}; expected one of "
@@ -30,9 +33,9 @@ def str_to_bool(value: str) -> bool:
 def str_to_bool_or_string(value: str) -> bool | str:
     normalized = value.strip()
     lowered = normalized.lower()
-    if lowered in ("true", "1", "yes", "on", "enabled"):
+    if lowered in _TRUE_STRINGS:
         return True
-    if lowered in ("false", "0", "no", "off", "disabled"):
+    if lowered in _FALSE_STRINGS:
         return False
     return normalized
 

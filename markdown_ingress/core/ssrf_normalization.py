@@ -7,10 +7,10 @@ import logging
 import os
 from urllib.parse import urlsplit, urlunsplit
 
-logger = logging.getLogger(__name__)
+from markdown_ingress.core.config_env import _FALSE_STRINGS as _ALLOW_LOCAL_FALSE_VALUES
+from markdown_ingress.core.config_env import _TRUE_STRINGS as _ALLOW_LOCAL_TRUE_VALUES
 
-_ALLOW_LOCAL_TRUE_VALUES = frozenset({"true", "1", "yes", "on", "enabled"})
-_ALLOW_LOCAL_FALSE_VALUES = frozenset({"false", "0", "no", "off", "disabled"})
+logger = logging.getLogger(__name__)
 
 
 def normalize_hostname(hostname: str) -> str:
