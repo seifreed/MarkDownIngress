@@ -4,12 +4,11 @@ Tests for screenshot capture
 
 import os
 import tempfile
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from markdown_ingress import ingest
+from tests.local_http_server import serve_html
 
 # Skip all tests if Playwright is not available
 pytest.importorskip("playwright")
@@ -17,23 +16,10 @@ pytest.importorskip("playwright")
 
 @pytest.fixture(scope="module")
 def local_server():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            html = b"<html><body><h1>Screenshot Test</h1><p>Local content.</p></body></html>"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html)))
-            self.end_headers()
-            self.wfile.write(html)
-
-        def log_message(self, format, *args):
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    server.shutdown()
+    with serve_html(
+        b"<html><body><h1>Screenshot Test</h1><p>Local content.</p></body></html>"
+    ) as url:
+        yield url
 
 
 def test_screenshot_true_creates_temp_file(local_server):

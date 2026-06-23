@@ -6,11 +6,12 @@ import json
 import subprocess
 import sys
 import tempfile
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
+
+from tests.local_http_server import serve_html
 
 
 def _cli_cmd(*args: str) -> list[str]:
@@ -20,31 +21,9 @@ def _cli_cmd(*args: str) -> list[str]:
 
 @pytest.fixture(scope="module")
 def local_servers():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            html = b"<html><body><h1>CLI Test</h1><p>Local content.</p></body></html>"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html)))
-            self.end_headers()
-            self.wfile.write(html)
-
-        def log_message(self, format, *args):
-            return
-
-    servers = []
-    urls = []
-    for _ in range(3):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        servers.append(server)
-        urls.append(f"http://127.0.0.1:{server.server_address[1]}")
-
-    yield urls
-
-    for server in servers:
-        server.shutdown()
+    html = b"<html><body><h1>CLI Test</h1><p>Local content.</p></body></html>"
+    with ExitStack() as stack:
+        yield [stack.enter_context(serve_html(html)) for _ in range(3)]
 
 
 class TestCLIBatch:

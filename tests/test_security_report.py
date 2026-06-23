@@ -4,8 +4,6 @@ Tests for SecurityReport functionality
 
 import json
 import tempfile
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -20,30 +18,16 @@ from markdown_ingress.reporting import (
     persist_security_report,
     report_filename,
 )
+from tests.local_http_server import serve_html
 
 
 @pytest.fixture(scope="module")
 def local_server():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            html = (
-                b"<html><body><article><h1>Example Domain</h1>"
-                b"<p>Local report content.</p></article></body></html>"
-            )
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html)))
-            self.end_headers()
-            self.wfile.write(html)
-
-        def log_message(self, format, *args):
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    server.shutdown()
+    with serve_html(
+        b"<html><body><article><h1>Example Domain</h1>"
+        b"<p>Local report content.</p></article></body></html>"
+    ) as url:
+        yield url
 
 
 class TestSecurityReport:

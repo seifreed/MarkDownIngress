@@ -8,7 +8,7 @@ import queue as queue_module
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -29,6 +29,7 @@ from markdown_ingress.core.inflight import InFlightRegistry
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.models import FetchResult, SafeDocument
 from markdown_ingress.shared_results import BatchResult
+from tests.local_http_server import serve_html
 
 
 class _CopyBatchExceptionError(Exception):
@@ -37,31 +38,9 @@ class _CopyBatchExceptionError(Exception):
 
 @pytest.fixture(scope="module")
 def local_servers():
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            html = b"<html><body><h1>Batch Test</h1><p>Content.</p></body></html>"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(html)))
-            self.end_headers()
-            self.wfile.write(html)
-
-        def log_message(self, format, *args):
-            return
-
-    servers = []
-    urls = []
-    for _ in range(2):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        servers.append(server)
-        urls.append(f"http://127.0.0.1:{server.server_address[1]}")
-
-    yield urls
-
-    for server in servers:
-        server.shutdown()
+    html = b"<html><body><h1>Batch Test</h1><p>Content.</p></body></html>"
+    with ExitStack() as stack:
+        yield [stack.enter_context(serve_html(html)) for _ in range(2)]
 
 
 @pytest.mark.asyncio
