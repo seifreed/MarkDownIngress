@@ -259,10 +259,8 @@ def _collect_renderer_config_overrides(inputs: RendererConfigInputs) -> dict[str
     return overrides
 
 
-async def execute_render_session(
-    renderer, url: str, timeout_ms: int, *, smart_wait: bool = False
-) -> FetchResult:
-    """Run a single Playwright browser session using renderer-bound helpers."""
+def import_async_playwright():
+    """Return Playwright's async_playwright factory or raise a helpful install error."""
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:  # pragma: no cover
@@ -270,6 +268,14 @@ async def execute_render_session(
             "Playwright is not installed. Install with: "
             "pip install 'markdown-ingress[render]' or pip install playwright && playwright install"
         ) from exc
+    return async_playwright
+
+
+async def execute_render_session(
+    renderer, url: str, timeout_ms: int, *, smart_wait: bool = False
+) -> FetchResult:
+    """Run a single Playwright browser session using renderer-bound helpers."""
+    async_playwright = import_async_playwright()
 
     start_time = time.perf_counter()
     browser = None

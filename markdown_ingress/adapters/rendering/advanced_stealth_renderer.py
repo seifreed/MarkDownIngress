@@ -11,6 +11,7 @@ from markdown_ingress.adapters.rendering.renderer_navigation import WaitUntil
 from markdown_ingress.adapters.rendering.renderer_support import (
     SharedRendererMixin,
     _close_async_resource,
+    import_async_playwright,
     launch_chromium,
     raise_for_render_status,
     timeout_seconds_to_ms,
@@ -138,14 +139,7 @@ class AdvancedStealthRenderer(SharedRendererMixin):
 
     async def _render_with_browser(self, url: str) -> FetchResult:
         """Internal method to render URL with browser."""
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(  # pragma: no cover
-                "Playwright is not installed. Install with: "
-                "pip install 'markdown-ingress[render]' or "
-                "pip install playwright && playwright install"
-            ) from exc  # pragma: no cover
+        async_playwright = import_async_playwright()
 
         start_time = time.perf_counter()
 
