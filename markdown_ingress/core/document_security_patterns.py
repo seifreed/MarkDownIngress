@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.policy import PolicyEngine
-from markdown_ingress.core.security_engine import SecurityEngine, SecurityExplanationContext
+from markdown_ingress.core.security_engine import (
+    SecurityEngine,
+    SecurityExplanationContext,
+    _dedupe_preserving_order,
+)
 from markdown_ingress.models import ExtractionResult, InjectionAnalysis
 
 PatternSpec = str | tuple[str, float]
@@ -25,11 +29,6 @@ class CustomPatternAnalysisContext:
     security_engine: SecurityEngine
     policy_engine: PolicyEngine
     config: IngestConfig
-
-
-def _dedupe_preserving_order(values: list[str]) -> list[str]:
-    """Return unique values while preserving first-seen order."""
-    return list(dict.fromkeys(values))
 
 
 def _merge_pattern_matches(*groups: list[dict]) -> list[dict]:
