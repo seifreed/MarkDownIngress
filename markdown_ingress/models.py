@@ -149,6 +149,27 @@ class SafeDocument:
         )
         self.observability = _ensure_optional_dict("observability", self.observability)
 
+    def to_serializable_dict(self) -> dict:
+        """Ordered JSON-serializable field map shared by cache and CLI serializers."""
+        return {
+            "markdown": self.markdown,
+            "metadata": self.metadata,
+            "token_estimate": self.token_estimate,
+            "content_hash": self.content_hash,
+            "injection_score": self.injection_score,
+            "flags": self.flags,
+            "removed_elements": self.removed_elements,
+            "screenshot_path": self.screenshot_path,
+            "enriched_metadata": self.enriched_metadata,
+            "links": self.links,
+            "nova_score": self.nova_score,
+            "nova_details": self.nova_details,
+            "structured_blocks": self.structured_blocks,
+            "chunks": self.chunks,
+            "security_explanation": self.security_explanation,
+            "observability": self.observability,
+        }
+
 
 @dataclass
 class FetchResult:

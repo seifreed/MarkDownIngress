@@ -10,26 +10,7 @@ from markdown_ingress.models import SafeDocument
 
 def serialize_document(doc: SafeDocument) -> str:
     """Serialize SafeDocument to JSON."""
-    return json.dumps(
-        {
-            "markdown": doc.markdown,
-            "metadata": doc.metadata,
-            "token_estimate": doc.token_estimate,
-            "content_hash": doc.content_hash,
-            "injection_score": doc.injection_score,
-            "flags": doc.flags,
-            "removed_elements": doc.removed_elements,
-            "screenshot_path": doc.screenshot_path,
-            "enriched_metadata": doc.enriched_metadata,
-            "links": doc.links,
-            "nova_score": doc.nova_score,
-            "nova_details": doc.nova_details,
-            "structured_blocks": doc.structured_blocks,
-            "chunks": doc.chunks,
-            "security_explanation": doc.security_explanation,
-            "observability": doc.observability,
-        }
-    )
+    return json.dumps(doc.to_serializable_dict())
 
 
 def deserialize_document(json_str: str) -> SafeDocument:
