@@ -177,57 +177,41 @@ class MetadataExtractor:
                 return author
         return None
 
+    def _extract_meta_date(
+        self, parser: HTMLParser, selectors: tuple[str, ...], jsonld_field: str
+    ) -> str | None:
+        """Return the first non-empty meta content, falling back to schema.org JSON-LD."""
+        for selector in selectors:
+            node = parser.css_first(selector)
+            if node:
+                content = (node.attributes.get("content") or "").strip()
+                if content:
+                    return content
+        return self._extract_date_from_jsonld(parser, jsonld_field)
+
     def _extract_published_date(self, parser: HTMLParser) -> str | None:
         """Extract published date from meta tags or schema.org"""
-        # Try article:published_time (Open Graph)
-        og_published = parser.css_first('meta[property="article:published_time"]')
-        if og_published:
-            content = (og_published.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try meta datePublished
-        meta_published = parser.css_first('meta[name="datePublished"]')
-        if meta_published:
-            content = (meta_published.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try meta publishdate
-        meta_publishdate = parser.css_first('meta[name="publishdate"]')
-        if meta_publishdate:
-            content = (meta_publishdate.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try schema.org JSON-LD
-        return self._extract_date_from_jsonld(parser, "datePublished")
+        return self._extract_meta_date(
+            parser,
+            (
+                'meta[property="article:published_time"]',
+                'meta[name="datePublished"]',
+                'meta[name="publishdate"]',
+            ),
+            "datePublished",
+        )
 
     def _extract_modified_date(self, parser: HTMLParser) -> str | None:
         """Extract modified/updated date from meta tags or schema.org"""
-        # Try article:modified_time (Open Graph)
-        og_modified = parser.css_first('meta[property="article:modified_time"]')
-        if og_modified:
-            content = (og_modified.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try meta dateModified
-        meta_modified = parser.css_first('meta[name="dateModified"]')
-        if meta_modified:
-            content = (meta_modified.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try meta last-modified
-        meta_lastmod = parser.css_first('meta[name="last-modified"]')
-        if meta_lastmod:
-            content = (meta_lastmod.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try schema.org JSON-LD
-        return self._extract_date_from_jsonld(parser, "dateModified")
+        return self._extract_meta_date(
+            parser,
+            (
+                'meta[property="article:modified_time"]',
+                'meta[name="dateModified"]',
+                'meta[name="last-modified"]',
+            ),
+            "dateModified",
+        )
 
     def _extract_date_from_jsonld(self, parser: HTMLParser, date_field: str) -> str | None:
         """Extract a date field from schema.org JSON-LD scripts"""
