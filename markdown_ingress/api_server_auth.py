@@ -12,14 +12,6 @@ from markdown_ingress.api_server_env import _read_positive_int_env
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# API key configuration
-# ---------------------------------------------------------------------------
-
-_RAW_API_KEY = os.getenv("MDI_API_KEY")
-API_KEY_CONFIG_ERROR: bool = _RAW_API_KEY is not None and _RAW_API_KEY.strip() == ""
-OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
-
-# ---------------------------------------------------------------------------
 # Rate limiting configuration
 # ---------------------------------------------------------------------------
 
