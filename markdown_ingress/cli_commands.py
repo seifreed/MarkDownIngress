@@ -15,7 +15,12 @@ from rich.table import Table
 from markdown_ingress import __version__, compare_extractors, ingest, ingest_many_async
 from markdown_ingress.api_runtime import UNSET
 from markdown_ingress.application.batch import BatchProcessor
-from markdown_ingress.cli_parsing import determine_mode, load_runtime_config, prepare_ingest_params
+from markdown_ingress.cli_parsing import (
+    _extract_cli_feature_flags,
+    determine_mode,
+    load_runtime_config,
+    prepare_ingest_params,
+)
 from markdown_ingress.cli_support import (
     _build_batch_rows,
     _iter_batch_error_items,
@@ -147,18 +152,6 @@ async def process_batch_with_progress(processor, urls):
         return await processor.process_batch_async(urls)
 
 
-def _get_bool_flag(args, positive_flag: str, negative_flag: str) -> bool | None:
-    """Get boolean flag value with symmetric positive/negative handling.
-
-    Returns True if positive flag is set, False if negative flag is set, None otherwise.
-    """
-    if getattr(args, positive_flag, False):
-        return True
-    if getattr(args, negative_flag, False):
-        return False
-    return None
-
-
 def _resolve_output_format(args, config_output_format: str | None) -> str:
     """Resolve the effective output format with CLI flags taking precedence."""
     if getattr(args, "json", False):
@@ -228,12 +221,6 @@ async def ingest_many_with_progress(args, urls):
     if hasattr(args, "screenshot") and args.screenshot:
         screenshot = args.screenshot
 
-    # Boolean flags with symmetric handling
-    extract_metadata = _get_bool_flag(args, "metadata", "no_metadata")
-    extract_links = _get_bool_flag(args, "links", "no_links")
-    advanced_security = _get_bool_flag(args, "advanced_security", "no_advanced_security")
-    use_llm = _get_bool_flag(args, "use_llm", "no_llm")
-
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
@@ -253,10 +240,7 @@ async def ingest_many_with_progress(args, urls):
             model=model,
             timeout=timeout,
             screenshot=screenshot,
-            extract_metadata=extract_metadata,
-            extract_links=extract_links,
-            advanced_security=advanced_security,
-            use_llm=use_llm,
+            **_extract_cli_feature_flags(args),
             output_profile=getattr(args, "output_profile", None),
             extract_blocks=getattr(args, "extract_blocks", None),
             chunking_strategy=getattr(args, "chunking_strategy", None),
