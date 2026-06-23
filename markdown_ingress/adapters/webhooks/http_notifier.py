@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from markdown_ingress.adapters.fetching.http_support import hostname_to_ascii
+from markdown_ingress.adapters.fetching.http_support import format_host_header, hostname_to_ascii
 from markdown_ingress.config_validation import ensure_finite_float, ensure_int
 from markdown_ingress.core.ssrf import (
     is_blocked_ip_address,
@@ -85,18 +85,6 @@ def _validate_finite_float(field_name: str, value: object, *, minimum: float) ->
     if numeric < minimum:
         raise ValueError(f"{field_name} must be >= {minimum:g}")
     return numeric
-
-
-def _format_host_header(hostname: str, port: int, scheme: str) -> str:
-    """Format the HTTP Host header, preserving IPv6 brackets and non-default ports."""
-    ascii_hostname = hostname_to_ascii(hostname)
-    host = (
-        f"[{ascii_hostname}]"
-        if ":" in ascii_hostname and not ascii_hostname.startswith("[")
-        else ascii_hostname
-    )
-    default_port = 443 if scheme == "https" else 80
-    return f"{host}:{port}" if port != default_port else host
 
 
 def _validate_pinned_ip_for_ssrf(validated_ip: str, *, allow_local: bool = False) -> str:
@@ -361,7 +349,7 @@ class HTTPWebhookNotifier:
     def _send_pinned_request(
         self, conn: HTTPConnection, target: _PinnedWebhookTarget, data: bytes
     ) -> int:
-        host_header = _format_host_header(target.hostname, target.port, target.scheme)
+        host_header = format_host_header(target.hostname, target.port, target.scheme)
         headers = {
             "Content-Type": "application/json",
             "Host": host_header,

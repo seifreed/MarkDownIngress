@@ -13,13 +13,13 @@ from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
 
 
 def test_format_host_header_preserves_default_ports_and_ipv6():
-    assert http_notifier_module._format_host_header("example.com", 443, "https") == "example.com"
+    assert http_notifier_module.format_host_header("example.com", 443, "https") == "example.com"
     assert (
-        http_notifier_module._format_host_header("example.com", 8443, "https") == "example.com:8443"
+        http_notifier_module.format_host_header("example.com", 8443, "https") == "example.com:8443"
     )
-    assert http_notifier_module._format_host_header("2001:db8::1", 443, "https") == "[2001:db8::1]"
+    assert http_notifier_module.format_host_header("2001:db8::1", 443, "https") == "[2001:db8::1]"
     assert (
-        http_notifier_module._format_host_header("2001:db8::1", 8443, "https")
+        http_notifier_module.format_host_header("2001:db8::1", 8443, "https")
         == "[2001:db8::1]:8443"
     )
 
