@@ -32,6 +32,24 @@ class ExtractorComparisonResult:
         data["length"] = data["markdown_length"]
         return data
 
+    @classmethod
+    def unavailable(cls, extractor: str, note: str) -> ExtractorComparisonResult:
+        """Build a zeroed result for an extractor that could not run."""
+        return cls(
+            extractor=extractor,
+            available=False,
+            markdown="",
+            title=None,
+            markdown_length=0,
+            token_estimate=0,
+            heading_count=0,
+            link_count=0,
+            code_block_count=0,
+            table_count=0,
+            injection_score=0.0,
+            notes=[note],
+        )
+
 
 class ExtractorEvaluator:
     """Compare extractors using quality and safety-oriented heuristics."""
@@ -56,19 +74,8 @@ class ExtractorEvaluator:
             # readability returns HTML — convert to markdown for consistent metrics
             markdown = MarkdownConverter().convert(summary_html)
         except (ImportError, ValueError, TypeError, RuntimeError, OSError) as exc:
-            return ExtractorComparisonResult(
-                extractor="readability",
-                available=False,
-                markdown="",
-                title=None,
-                markdown_length=0,
-                token_estimate=0,
-                heading_count=0,
-                link_count=0,
-                code_block_count=0,
-                table_count=0,
-                injection_score=0.0,
-                notes=[f"readability failed: {type(exc).__name__}: {exc}"],
+            return ExtractorComparisonResult.unavailable(
+                "readability", f"readability failed: {type(exc).__name__}: {exc}"
             )
 
         return self._make_result(
@@ -79,36 +86,12 @@ class ExtractorEvaluator:
         try:
             import trafilatura  # type: ignore[import-not-found,import-untyped]
         except ImportError:
-            return ExtractorComparisonResult(
-                extractor="trafilatura",
-                available=False,
-                markdown="",
-                title=None,
-                markdown_length=0,
-                token_estimate=0,
-                heading_count=0,
-                link_count=0,
-                code_block_count=0,
-                table_count=0,
-                injection_score=0.0,
-                notes=["trafilatura not installed"],
-            )
+            return ExtractorComparisonResult.unavailable("trafilatura", "trafilatura not installed")
         try:
             output = trafilatura.extract(html, output_format="markdown") or ""
         except (ImportError, ValueError, TypeError, RuntimeError, OSError) as exc:
-            return ExtractorComparisonResult(
-                extractor="trafilatura",
-                available=False,
-                markdown="",
-                title=None,
-                markdown_length=0,
-                token_estimate=0,
-                heading_count=0,
-                link_count=0,
-                code_block_count=0,
-                table_count=0,
-                injection_score=0.0,
-                notes=[f"trafilatura failed: {type(exc).__name__}: {exc}"],
+            return ExtractorComparisonResult.unavailable(
+                "trafilatura", f"trafilatura failed: {type(exc).__name__}: {exc}"
             )
         return self._make_result("trafilatura", markdown=output, title=None, available=True)
 

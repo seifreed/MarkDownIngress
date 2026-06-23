@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import httpx
 
+from markdown_ingress.adapters.fetching.fetch_shared import SslBypassSharedMixin
 from markdown_ingress.adapters.fetching.http_support import (
     MAX_RETRIES,
     RETRYABLE_STATUS,
@@ -17,7 +18,6 @@ from markdown_ingress.adapters.fetching.http_support import (
     ssl_bypass_retry_delay,
     validate_content_type,
 )
-from markdown_ingress.adapters.fetching.response_content import FetchResultParts
 from markdown_ingress.adapters.fetching.ssl_bypass_state import (
     SslBypassAttemptContext,
     SslBypassFetchState,
@@ -29,7 +29,7 @@ from markdown_ingress.models import FetchResult
 logger = logging.getLogger(__name__)
 
 
-class AsyncSslBypassFetchMixin:
+class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
     """Certificate-verification bypass retry path for async fetch operations."""
 
     async def _fetch_with_ssl_bypass(
@@ -143,7 +143,7 @@ class AsyncSslBypassFetchMixin:
             content = await self._read_async_response_content(response)
             return cast(
                 FetchResult,
-                self._finish_async_ssl_bypass_result(
+                self._finish_ssl_bypass_result(
                     response,
                     attempt,
                     content,
@@ -155,7 +155,7 @@ class AsyncSslBypassFetchMixin:
         content = await self._read_async_response_content(response)
         return cast(
             FetchResult,
-            self._finish_async_ssl_bypass_result(
+            self._finish_ssl_bypass_result(
                 response,
                 attempt,
                 content,
@@ -177,33 +177,6 @@ class AsyncSslBypassFetchMixin:
             "Failed to read redirect response body",
         )
         state.update_redirect_target(redirect_target)
-
-    def _finish_async_ssl_bypass_result(
-        self: Any,
-        response: Any,
-        attempt: SslBypassAttemptContext,
-        content: bytes,
-    ) -> FetchResult:
-        elapsed_ms = (time.perf_counter() - attempt.start_time) * 1000
-        state = attempt.state
-        self._record_success(state.host)
-        self._remember_ssl_bypass_host(state.host)
-        return cast(
-            FetchResult,
-            self._make_fetch_result(
-                FetchResultParts(
-                    content=content,
-                    requested_url=state.requested_logical_url,
-                    final_url=state.logical_url,
-                    response=response,
-                    elapsed_ms=elapsed_ms,
-                    user_agent=attempt.user_agent,
-                    attempt=attempt.ssl_attempt,
-                    ssl_bypass=True,
-                    total_attempt=attempt.total_attempt,
-                )
-            ),
-        )
 
     async def _handle_async_ssl_bypass_status_error(
         self: Any,

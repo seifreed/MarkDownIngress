@@ -1,13 +1,13 @@
 """Validation and SSRF safeguards for the persistent job queue."""
 
 import ipaddress
-import math
 import os
 import socket
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from markdown_ingress.config_validation import ensure_finite_float, ensure_int
 from markdown_ingress.core.ssrf import (
     is_blocked_hostname,
     is_blocked_ip_address,
@@ -37,17 +37,11 @@ _BLOCKED_SCHEMES = {
 
 
 def validate_int_config(field_name: str, value: object, *, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
-    return max(minimum, value)
+    return max(minimum, ensure_int(field_name, value))
 
 
 def validate_positive_finite_float(field_name: str, value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    numeric = ensure_finite_float(field_name, value)
     if numeric <= 0:
         raise ValueError(f"{field_name} must be > 0")
     return numeric

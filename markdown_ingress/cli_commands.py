@@ -18,6 +18,7 @@ from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.cli_parsing import determine_mode, load_runtime_config, prepare_ingest_params
 from markdown_ingress.cli_support import (
     _build_batch_rows,
+    _iter_batch_error_items,
     batch_document_json_row,
     console,
     create_batch_results_table,
@@ -200,12 +201,7 @@ def _build_batch_json_output(
                 "url": error_item.url,
                 "error": error_item.error,
             }
-            for error_item in getattr(
-                batch_result, "error_items", getattr(batch_result, "errors", [])
-            )
-            if hasattr(error_item, "index")
-            and hasattr(error_item, "url")
-            and hasattr(error_item, "error")
+            for error_item in _iter_batch_error_items(batch_result)
         ],
         "errors_by_url": getattr(batch_result, "errors_by_url", {}),
     }

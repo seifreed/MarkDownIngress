@@ -7,14 +7,64 @@ import logging
 import math
 import time
 from dataclasses import dataclass, replace
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import httpx
 
 from markdown_ingress.config_models import RenderConfig
+from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
+
+
+class SharedRendererMixin:
+    """Methods shared verbatim by the Playwright and advanced-stealth renderers."""
+
+    block_resources: bool
+    block_images: bool
+    block_fonts: bool
+    block_media: bool
+    block_ads: bool
+    block_trackers: bool
+    allow_local_urls: bool | None
+    _dns_pins: dict[str, str]
+
+    if TYPE_CHECKING:
+
+        async def render(self, url: str) -> FetchResult: ...
+
+    async def _setup_resource_blocking(self, page: Any) -> ResourceBlocker:
+        block_images = self.block_images if self.block_resources else False
+        block_fonts = self.block_fonts if self.block_resources else False
+        block_media = self.block_media if self.block_resources else False
+        block_ads = self.block_ads if self.block_resources else False
+        block_trackers = self.block_trackers if self.block_resources else False
+        blocker = ResourceBlocker(
+            block_images=block_images,
+            block_fonts=block_fonts,
+            block_media=block_media,
+            block_ads=block_ads,
+            block_trackers=block_trackers,
+            allow_local_urls=self.allow_local_urls,
+            validate_ssrf=True,
+            dns_pins=self._dns_pins,
+            enforce_dns_pinning=True,
+        )
+        await blocker.setup_blocking(page)
+        return blocker
+
+    def render_sync(self, url: str) -> FetchResult:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.render(url))
+
+        raise RuntimeError(
+            "render_sync() cannot run inside an active event loop; await render() instead"
+        )
+
+
 _SCREENSHOT_UNSET: Final[Any] = object()
 _MIN_CHROMIUM_LAUNCH_TIMEOUT_MS: Final[int] = 1000
 _CHROMIUM_LAUNCH_RETRIES: Final[int] = 1

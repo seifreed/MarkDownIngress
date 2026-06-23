@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import math
 import socket
 import ssl
 import time
@@ -16,6 +15,7 @@ from urllib.parse import urlparse
 import httpx
 
 from markdown_ingress.adapters.fetching.http_support import hostname_to_ascii
+from markdown_ingress.config_validation import ensure_finite_float, ensure_int
 from markdown_ingress.core.ssrf import (
     is_blocked_ip_address,
     normalize_hostname,
@@ -74,19 +74,14 @@ class _PinnedHTTPSConnection(HTTPSConnection):
 
 
 def _validate_non_negative_int(field_name: str, value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an int, got {type(value).__name__}")
+    value = ensure_int(field_name, value)
     if value < 0:
         raise ValueError(f"{field_name} must be >= 0")
     return value
 
 
 def _validate_finite_float(field_name: str, value: object, *, minimum: float) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
+    numeric = ensure_finite_float(field_name, value)
     if numeric < minimum:
         raise ValueError(f"{field_name} must be >= {minimum:g}")
     return numeric

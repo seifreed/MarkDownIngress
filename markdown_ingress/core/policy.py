@@ -9,17 +9,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from markdown_ingress.config_validation import ensure_bool as _ensure_bool
+from markdown_ingress.config_validation import ensure_finite_float as _ensure_finite_float
 from markdown_ingress.core.security import InjectionPattern, _detect_redos_pattern
-
-
-def _ensure_finite_float(field_name: str, value: object) -> float:
-    """Return a finite float or reject ambiguous untyped policy input."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a finite number, got {type(value).__name__}")
-    numeric = float(value)
-    if not math.isfinite(numeric):
-        raise ValueError(f"{field_name} must be a finite number, got {value!r}")
-    return numeric
 
 
 def _ensure_score(field_name: str, value: object) -> float:
@@ -27,12 +19,6 @@ def _ensure_score(field_name: str, value: object) -> float:
     if not 0.0 <= score <= 1.0:
         raise ValueError(f"{field_name} must be between 0.0 and 1.0, got {score}")
     return score
-
-
-def _ensure_bool(field_name: str, value: object) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a bool, got {type(value).__name__}")
-    return value
 
 
 def _validate_regex_pattern(pattern: str, description: str) -> None:

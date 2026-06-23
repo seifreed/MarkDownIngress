@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -77,6 +78,17 @@ def _batch_error_lookup(batch_result: Any) -> _BatchErrorLookup:
         legacy_errors=legacy_errors,
         legacy_items_by_url=_legacy_error_items_by_url(legacy_errors),
     )
+
+
+def _iter_batch_error_items(batch_result: Any) -> Iterator[Any]:
+    """Yield batch error items that expose the index/url/error contract."""
+    for error_item in getattr(batch_result, "error_items", getattr(batch_result, "errors", [])):
+        if (
+            hasattr(error_item, "index")
+            and hasattr(error_item, "url")
+            and hasattr(error_item, "error")
+        ):
+            yield error_item
 
 
 def _batch_error_item_json(error_item: Any) -> dict[str, Any]:
@@ -176,6 +188,10 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             output_path.parent.mkdir(parents=True, exist_ok=True)
+        error_items_json = [
+            _batch_error_item_json(error_item)
+            for error_item in _iter_batch_error_items(batch_result)
+        ]
         output_data = {
             "summary": {
                 "total": len(rows),
@@ -198,25 +214,9 @@ def save_batch_results(args, urls: list[str], batch_result) -> None:
                 )
                 for row in rows
             ],
-            "errors": [
-                _batch_error_item_json(error_item)
-                for error_item in getattr(
-                    batch_result, "error_items", getattr(batch_result, "errors", [])
-                )
-                if hasattr(error_item, "index")
-                and hasattr(error_item, "url")
-                and hasattr(error_item, "error")
-            ],
+            "errors": error_items_json,
             "errors_by_url": getattr(batch_result, "errors_by_url", {}),
-            "error_items": [
-                _batch_error_item_json(error_item)
-                for error_item in getattr(
-                    batch_result, "error_items", getattr(batch_result, "errors", [])
-                )
-                if hasattr(error_item, "index")
-                and hasattr(error_item, "url")
-                and hasattr(error_item, "error")
-            ],
+            "error_items": error_items_json,
         }
         output_path.write_text(json.dumps(output_data, indent=2), encoding="utf-8")
     else:

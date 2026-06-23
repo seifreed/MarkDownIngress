@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback as _traceback
 from dataclasses import dataclass, field
 
 from markdown_ingress.models import SafeDocument
@@ -20,6 +21,17 @@ class BatchErrorItem:
     error: str
     error_type: str = ""  # BUG FIX: Exception class name for type-aware error handling
     traceback: str = ""  # BUG FIX: Stack trace for debugging
+
+    @classmethod
+    def from_exception(cls, index: int, url: str, exc: Exception) -> BatchErrorItem:
+        """Build an error item from a caught exception, capturing type and traceback."""
+        return cls(
+            index=index,
+            url=url,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            traceback=_traceback.format_exc(),
+        )
 
 
 @dataclass

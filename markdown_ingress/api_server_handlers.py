@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import httpx
 from fastapi import HTTPException
@@ -23,7 +23,7 @@ from markdown_ingress.api_server_models import (
     SecurityReportResponse,
 )
 from markdown_ingress.api_server_support import (
-    domain_policy_payload,
+    _common_ingest_kwargs,
     make_batch_job_task,
     sync_batch_response,
     to_document_response,
@@ -118,40 +118,7 @@ async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
         doc = await asyncio.to_thread(
             ingest_func,
             url=str(request.url),
-            mode=request.mode,
-            strict=request.strict,
-            timeout=float(request.timeout),
-            model=request.model,
-            auto_render_threshold=request.auto_render_threshold,
-            stealth=request.stealth,
-            disable_http2=request.disable_http2,
-            extreme_mode=request.extreme_mode,
-            screenshot=request.screenshot,
-            extract_metadata=request.extract_metadata,
-            extract_links=request.extract_links,
-            advanced_security=request.advanced_security,
-            use_llm=request.use_llm,
-            policy_name=request.policy_name,
-            custom_patterns=request.custom_patterns,
-            output_format=request.output_format,
-            output_profile=request.output_profile,
-            output_formats=request.output_formats,
-            extract_blocks=request.extract_blocks,
-            chunking_strategy=request.chunking_strategy,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-            detect_language=request.detect_language,
-            normalize_multilingual=request.normalize_multilingual,
-            include_security_explanation=request.include_security_explanation,
-            include_observability=request.include_observability,
-            save_reports=request.save_reports,
-            reports_dir=request.reports_dir,
-            fetcher_user_agent=request.fetcher_user_agent,
-            domain_request_interval=request.domain_request_interval,
-            circuit_breaker_threshold=request.circuit_breaker_threshold,
-            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
-            render_cost_budget=request.render_cost_budget,
-            domain_policies=domain_policy_payload(request.domain_policies) or None,
+            **_common_ingest_kwargs(request),
         )
         return to_document_response(doc)
     except Exception as exc:
@@ -250,40 +217,7 @@ async def handle_security_report(
         report = await asyncio.to_thread(
             generate_security_report_func,
             url=str(request.url),
-            mode=request.mode,
-            strict=request.strict,
-            model=request.model,
-            timeout=float(request.timeout),
-            auto_render_threshold=request.auto_render_threshold,
-            stealth=request.stealth,
-            disable_http2=request.disable_http2,
-            extreme_mode=request.extreme_mode,
-            screenshot=request.screenshot,
-            extract_metadata=request.extract_metadata,
-            extract_links=request.extract_links,
-            advanced_security=request.advanced_security,
-            use_llm=request.use_llm,
-            policy_name=request.policy_name,
-            custom_patterns=request.custom_patterns,
-            output_format=request.output_format,
-            output_profile=request.output_profile,
-            output_formats=request.output_formats,
-            extract_blocks=request.extract_blocks,
-            chunking_strategy=request.chunking_strategy,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-            detect_language=request.detect_language,
-            normalize_multilingual=request.normalize_multilingual,
-            include_security_explanation=request.include_security_explanation,
-            include_observability=request.include_observability,
-            save_reports=request.save_reports,
-            reports_dir=request.reports_dir,
-            fetcher_user_agent=request.fetcher_user_agent,
-            domain_request_interval=request.domain_request_interval,
-            circuit_breaker_threshold=request.circuit_breaker_threshold,
-            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
-            render_cost_budget=request.render_cost_budget,
-            domain_policies=domain_policy_payload(request.domain_policies) or None,
+            **_common_ingest_kwargs(request),
         )
         return to_security_report_response(report)
     except Exception as exc:  # noqa: BLE001 - API boundary converts failures to HTTP errors
@@ -302,45 +236,3 @@ async def handle_extractor_comparison(
     except Exception as exc:
         _logger.exception("Error processing extractor comparison request")
         raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL) from exc
-
-
-def build_stats_payload(
-    api_version: str, get_ingest_stats_func, job_queue, job_ttl_seconds: int, max_queued_jobs: int
-):
-    try:
-        pending = job_queue.pending_count(cleanup_expired=False)
-    except TypeError:
-        try:
-            pending = job_queue.pending_count()
-        except (RuntimeError, sqlite3.Error):
-            pending = None
-    except (RuntimeError, sqlite3.Error):
-        pending = None
-    return {
-        "version": api_version,
-        "stats": get_ingest_stats_func(),
-        "job_queue": {
-            "pending": pending,
-            "ttl_seconds": job_ttl_seconds,
-            "ttl_applies_to": "completed_jobs_with_persisted_ttl_or_legacy_compatibility_ttl",
-            "max_queued_jobs": max_queued_jobs,
-        },
-    }
-
-
-def build_root_payload(api_version: str) -> dict[str, Any]:
-    return {
-        "message": "MarkDownIngress API - See /docs for interactive documentation",
-        "version": api_version,
-        "endpoints": {
-            "docs": "/docs",
-            "health": "/api/v1/health",
-            "ingest": "/api/v1/ingest",
-            "retry_ingest": "/api/v1/ingest/retry",
-            "batch_ingest": "/api/v1/ingest/batch",
-            "batch_jobs": "/api/v1/jobs/batch",
-            "security_report": "/api/v1/security/report",
-            "extractor_evaluation": "/api/v1/evaluate/extractors",
-            "stats": "/api/v1/stats",
-        },
-    }

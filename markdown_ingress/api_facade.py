@@ -13,7 +13,12 @@ from typing import Literal
 from markdown_ingress.adapters.rendering.playwright_renderer import (
     PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
 )
-from markdown_ingress.api_runtime import UNSET, _validate_batch_max_concurrent, build_runtime_config
+from markdown_ingress.api_runtime import (
+    UNSET,
+    _validate_batch_max_concurrent,
+    build_runtime_config,
+    run_ingest_many_blocking,
+)
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.use_cases import (
     GenerateSecurityReportUseCase,
@@ -187,21 +192,14 @@ def ingest_many_sync_impl(
     **runtime_kwargs,
 ) -> BatchResult:
     """Synchronous wrapper for concurrent batch ingestion from normal Python code."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(
-            ingest_many_async_impl(
-                urls,
-                playwright_available=playwright_available,
-                max_concurrent=max_concurrent,
-                on_progress=on_progress,
-                **runtime_kwargs,
-            )
+    return run_ingest_many_blocking(
+        lambda: ingest_many_async_impl(
+            urls,
+            playwright_available=playwright_available,
+            max_concurrent=max_concurrent,
+            on_progress=on_progress,
+            **runtime_kwargs,
         )
-
-    raise RuntimeError(
-        "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
     )
 
 

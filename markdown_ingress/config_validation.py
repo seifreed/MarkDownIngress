@@ -121,14 +121,7 @@ def validate_optional_string_list(field_name: str, value: list[str] | None) -> l
     """Validate optional list[str] fields used by domain-specific rules."""
     if value is None:
         return None
-    if not isinstance(value, list):
-        raise ValueError(f"{field_name} must be a list of strings, got {type(value).__name__}")
-    normalized: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            raise ValueError(f"{field_name}[{index}] must be a string, got {type(item).__name__}")
-        normalized.append(item)
-    return normalized
+    return validate_string_list(field_name, value)
 
 
 def validate_string_list(field_name: str, value: object) -> list[str]:

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, Literal, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
@@ -18,6 +19,24 @@ from markdown_ingress.core.interfaces import ICacheBackend
 from markdown_ingress.models import SafeDocument
 
 UNSET = object()
+
+_INGEST_MANY_IN_LOOP_ERROR = (
+    "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
+)
+
+
+def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T]]) -> T:
+    """Run an ingest_many coroutine to completion from synchronous code.
+
+    Raises if called while an event loop is already running, since asyncio.run
+    cannot nest.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    raise RuntimeError(_INGEST_MANY_IN_LOOP_ERROR)
+
 
 _NONE_EXPLICIT_RUNTIME_KEYS = (
     "mode",

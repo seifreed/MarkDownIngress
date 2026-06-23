@@ -7,6 +7,7 @@ from typing import Any
 
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
+    IngestRequest,
     IngestResponse,
     SecurityReportResponse,
     _allow_local_webhooks_enabled,
@@ -105,6 +106,50 @@ def domain_policy_payload(policies) -> list[dict[str, Any]]:
     return payload
 
 
+def _common_ingest_kwargs(request: IngestRequest | BatchIngestRequest) -> dict[str, Any]:
+    """Shared ingest/security/batch pipeline kwargs derived from a request body.
+
+    Callers add the URL argument (``url=`` or ``urls=``) and any endpoint-specific
+    extras such as ``max_concurrent``.
+    """
+    return {
+        "mode": request.mode,
+        "strict": request.strict,
+        "timeout": float(request.timeout),
+        "model": request.model,
+        "auto_render_threshold": request.auto_render_threshold,
+        "stealth": request.stealth,
+        "disable_http2": request.disable_http2,
+        "extreme_mode": request.extreme_mode,
+        "screenshot": request.screenshot,
+        "extract_metadata": request.extract_metadata,
+        "extract_links": request.extract_links,
+        "advanced_security": request.advanced_security,
+        "use_llm": request.use_llm,
+        "policy_name": request.policy_name,
+        "custom_patterns": request.custom_patterns,
+        "output_format": request.output_format,
+        "output_profile": request.output_profile,
+        "output_formats": request.output_formats,
+        "extract_blocks": request.extract_blocks,
+        "chunking_strategy": request.chunking_strategy,
+        "chunk_size": request.chunk_size,
+        "chunk_overlap": request.chunk_overlap,
+        "detect_language": request.detect_language,
+        "normalize_multilingual": request.normalize_multilingual,
+        "include_security_explanation": request.include_security_explanation,
+        "include_observability": request.include_observability,
+        "save_reports": request.save_reports,
+        "reports_dir": request.reports_dir,
+        "fetcher_user_agent": request.fetcher_user_agent,
+        "domain_request_interval": request.domain_request_interval,
+        "circuit_breaker_threshold": request.circuit_breaker_threshold,
+        "circuit_breaker_open_seconds": request.circuit_breaker_open_seconds,
+        "render_cost_budget": request.render_cost_budget,
+        "domain_policies": domain_policy_payload(request.domain_policies) or None,
+    }
+
+
 def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[str, Any]:
     raw_error_items = getattr(result, "error_items", None)
     if raw_error_items is None:
@@ -174,41 +219,8 @@ async def sync_batch_response(
     result = await asyncio.to_thread(
         ingest_many_func,
         urls=[str(url) for url in request.urls],
-        mode=request.mode,
-        strict=request.strict,
-        timeout=float(request.timeout),
-        model=request.model,
-        auto_render_threshold=request.auto_render_threshold,
-        stealth=request.stealth,
-        disable_http2=request.disable_http2,
-        extreme_mode=request.extreme_mode,
-        screenshot=request.screenshot,
-        extract_metadata=request.extract_metadata,
-        extract_links=request.extract_links,
-        advanced_security=request.advanced_security,
-        use_llm=request.use_llm,
-        policy_name=request.policy_name,
-        custom_patterns=request.custom_patterns,
-        output_format=request.output_format,
-        output_profile=request.output_profile,
-        output_formats=request.output_formats,
-        extract_blocks=request.extract_blocks,
-        chunking_strategy=request.chunking_strategy,
-        chunk_size=request.chunk_size,
-        chunk_overlap=request.chunk_overlap,
-        detect_language=request.detect_language,
-        normalize_multilingual=request.normalize_multilingual,
-        include_security_explanation=request.include_security_explanation,
-        include_observability=request.include_observability,
-        save_reports=request.save_reports,
-        reports_dir=request.reports_dir,
-        fetcher_user_agent=request.fetcher_user_agent,
-        domain_request_interval=request.domain_request_interval,
-        circuit_breaker_threshold=request.circuit_breaker_threshold,
-        circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
-        render_cost_budget=request.render_cost_budget,
-        domain_policies=domain_policy_payload(request.domain_policies) or None,
         max_concurrent=request.max_concurrent,
+        **_common_ingest_kwargs(request),
     )
     return _serialize_batch_result(request, result)
 
@@ -219,41 +231,8 @@ def make_batch_job_task(request: BatchIngestRequest, ingest_many_func):
     def run() -> dict[str, Any]:
         result = ingest_many_func(
             urls=[str(url) for url in request.urls],
-            mode=request.mode,
-            strict=request.strict,
-            timeout=float(request.timeout),
-            model=request.model,
-            auto_render_threshold=request.auto_render_threshold,
-            stealth=request.stealth,
-            disable_http2=request.disable_http2,
-            extreme_mode=request.extreme_mode,
-            screenshot=request.screenshot,
-            extract_metadata=request.extract_metadata,
-            extract_links=request.extract_links,
-            advanced_security=request.advanced_security,
-            use_llm=request.use_llm,
-            policy_name=request.policy_name,
-            custom_patterns=request.custom_patterns,
-            output_format=request.output_format,
-            output_profile=request.output_profile,
-            output_formats=request.output_formats,
-            extract_blocks=request.extract_blocks,
-            chunking_strategy=request.chunking_strategy,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-            detect_language=request.detect_language,
-            normalize_multilingual=request.normalize_multilingual,
-            include_security_explanation=request.include_security_explanation,
-            include_observability=request.include_observability,
-            save_reports=request.save_reports,
-            reports_dir=request.reports_dir,
-            fetcher_user_agent=request.fetcher_user_agent,
-            domain_request_interval=request.domain_request_interval,
-            circuit_breaker_threshold=request.circuit_breaker_threshold,
-            circuit_breaker_open_seconds=request.circuit_breaker_open_seconds,
-            render_cost_budget=request.render_cost_budget,
-            domain_policies=domain_policy_payload(request.domain_policies) or None,
             max_concurrent=request.max_concurrent,
+            **_common_ingest_kwargs(request),
         )
         return _serialize_batch_result(request, result)
 

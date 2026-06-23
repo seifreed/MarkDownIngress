@@ -8,12 +8,12 @@ from typing import Literal, cast
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
 from markdown_ingress.adapters.rendering.renderer_support import (
+    SharedRendererMixin,
     _close_async_resource,
     launch_chromium,
     raise_for_render_status,
     timeout_seconds_to_ms,
 )
-from markdown_ingress.core.resource_blocker import ResourceBlocker
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
     resolve_allow_local_urls,
@@ -38,7 +38,7 @@ _ensure_optional_bool = config_validation.ensure_optional_bool
 _ensure_str = config_validation.ensure_str
 
 
-class AdvancedStealthRenderer:
+class AdvancedStealthRenderer(SharedRendererMixin):
     """
     Advanced Playwright renderer with maximum bot detection evasion.
 
@@ -113,7 +113,7 @@ class AdvancedStealthRenderer:
         logical_url = str(url).strip()
         validated_url = validate_http_url_no_ssrf_with_dns_check(
             logical_url,
-            allow_local=self.allow_local_urls,
+            allow_local=resolve_allow_local_urls(self.allow_local_urls),
         )
         self._dns_pins = {}
         pin = dns_pin_for_validated_http_url(logical_url, validated_url)
@@ -156,26 +156,6 @@ class AdvancedStealthRenderer:
                 result.metadata["original_error"] = "ERR_HTTP2_PROTOCOL_ERROR"
                 return result
             raise
-
-    async def _setup_resource_blocking(self, page):
-        block_images = self.block_images if self.block_resources else False
-        block_fonts = self.block_fonts if self.block_resources else False
-        block_media = self.block_media if self.block_resources else False
-        block_ads = self.block_ads if self.block_resources else False
-        block_trackers = self.block_trackers if self.block_resources else False
-        blocker = ResourceBlocker(
-            block_images=block_images,
-            block_fonts=block_fonts,
-            block_media=block_media,
-            block_ads=block_ads,
-            block_trackers=block_trackers,
-            allow_local_urls=self.allow_local_urls,
-            validate_ssrf=True,
-            dns_pins=self._dns_pins,
-            enforce_dns_pinning=True,
-        )
-        await blocker.setup_blocking(page)
-        return blocker
 
     async def _render_with_browser(self, url: str) -> FetchResult:
         """Internal method to render URL with browser."""
@@ -265,17 +245,6 @@ class AdvancedStealthRenderer:
 
             finally:
                 await _close_async_resource(browser, "browser")
-
-    def render_sync(self, url: str) -> FetchResult:
-        """Synchronous wrapper for render()."""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.render(url))
-
-        raise RuntimeError(
-            "render_sync() cannot run inside an active event loop; await render() instead"
-        )
 
 
 # Compatibility helper mirrors AdvancedStealthRenderer keyword options.

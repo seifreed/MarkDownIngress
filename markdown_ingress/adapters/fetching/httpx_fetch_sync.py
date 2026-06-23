@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any, cast
 
 import httpx
 
+from markdown_ingress.adapters.fetching.fetch_shared import HttpxFetchSharedMixin
 from markdown_ingress.adapters.fetching.http_fetch_state import (
     HttpFetchAttemptContext,
     HttpFetchState,
@@ -17,17 +17,13 @@ from markdown_ingress.adapters.fetching.http_support import (
     RETRYABLE_STATUS,
     ResponseSizeLimitError,
     retry_delay_seconds,
-    should_retry_with_ssl_bypass,
     validate_content_type,
 )
-from markdown_ingress.adapters.fetching.response_content import FetchResultParts
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.models import FetchResult
 
-logger = logging.getLogger(__name__)
 
-
-class SyncHttpxFetchMixin:
+class SyncHttpxFetchMixin(HttpxFetchSharedMixin):
     """Sync HTTPX fetch implementation."""
 
     def fetch_sync(self: Any, url: str) -> FetchResult:
@@ -93,7 +89,7 @@ class SyncHttpxFetchMixin:
         except (DomainCircuitOpenError, httpx.TooManyRedirects):
             raise
         except Exception as exc:  # noqa: BLE001 - fetch errors become failed attempts
-            self._handle_sync_generic_fetch_error(state, exc)
+            self._handle_generic_fetch_error(state, exc)
         return None
 
     def _handle_sync_fetch_response(
@@ -111,7 +107,7 @@ class SyncHttpxFetchMixin:
             content = self._read_sync_response_content(response)
             return cast(
                 FetchResult,
-                self._finish_sync_fetch_result(response, attempt, content),
+                self._finish_fetch_result(response, attempt, content),
             )
         if response.status_code in RETRYABLE_STATUS and state.attempt < MAX_RETRIES - 1:
             self._retry_sync_response_status(response, state, response_host)
@@ -121,7 +117,7 @@ class SyncHttpxFetchMixin:
         content = self._read_sync_response_content(response)
         return cast(
             FetchResult,
-            self._finish_sync_fetch_result(response, attempt, content),
+            self._finish_fetch_result(response, attempt, content),
         )
 
     def _follow_sync_redirect(self: Any, response: Any, state: HttpFetchState) -> None:
@@ -144,30 +140,6 @@ class SyncHttpxFetchMixin:
         time.sleep(retry_delay)
         state.attempt += 1
 
-    def _finish_sync_fetch_result(
-        self: Any,
-        response: Any,
-        attempt: HttpFetchAttemptContext,
-        content: bytes,
-    ) -> FetchResult:
-        elapsed_ms = (time.perf_counter() - attempt.start_time) * 1000
-        state = attempt.state
-        self._record_success(state.host)
-        return cast(
-            FetchResult,
-            self._make_fetch_result(
-                FetchResultParts(
-                    content=content,
-                    requested_url=state.requested_logical_url,
-                    final_url=state.logical_url,
-                    response=response,
-                    elapsed_ms=elapsed_ms,
-                    user_agent=attempt.user_agent,
-                    attempt=state.attempt,
-                )
-            ),
-        )
-
     def _handle_sync_status_error(
         self: Any, state: HttpFetchState, exc: httpx.HTTPStatusError
     ) -> None:
@@ -180,22 +152,4 @@ class SyncHttpxFetchMixin:
         if state.attempt >= MAX_RETRIES - 1:
             raise exc
         time.sleep(retry_delay)
-        state.attempt += 1
-
-    def _handle_sync_generic_fetch_error(self: Any, state: HttpFetchState, exc: Exception) -> None:
-        state.last_exc = exc
-        self._record_failure(state.host)
-        if should_retry_with_ssl_bypass(
-            allow_ssl_bypass=self.allow_ssl_bypass,
-            ssl_retried=state.ssl_retried,
-            exc=exc,
-        ):
-            logger.warning(
-                "SSL verification failed for %s, retrying with certificate verification "
-                "disabled. "
-                "This bypass is insecure and should only be used for testing.",
-                state.url,
-            )
-            state.mark_ssl_bypass_retry()
-            return
         state.attempt += 1

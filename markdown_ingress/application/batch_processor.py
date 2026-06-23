@@ -156,17 +156,7 @@ class _BatchUrlProcessor:
             await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             raise
         except Exception as exc:  # noqa: BLE001 - follower records leader failure as item
-            import traceback
-
-            await ctx.append_error(
-                BatchErrorItem(
-                    index=prepared.index,
-                    url=prepared.url,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                    traceback=traceback.format_exc(),
-                )
-            )
+            await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
             if ctx.batch_tracks_metrics:
                 record_mode_result(prepared.requested_mode, success=False)
             else:
@@ -281,8 +271,6 @@ class _BatchUrlProcessor:
         exc: Exception,
     ) -> bool:
         """Resolve in-flight future with error, record error item, and report progress."""
-        import traceback
-
         ctx = self._ctx
         if (
             isinstance(exc, PolicyBlockedError)
@@ -303,15 +291,7 @@ class _BatchUrlProcessor:
                 )
         if record is not None:
             await publish_batch_inflight_exception(ctx, prepared.request_key, record, exc)
-        await ctx.append_error(
-            BatchErrorItem(
-                index=prepared.index,
-                url=prepared.url,
-                error=str(exc),
-                error_type=type(exc).__name__,
-                traceback=traceback.format_exc(),
-            )
-        )
+        await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=False)
         await self._report_completion(prepared.url)

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from markdown_ingress.cli_batch_output import (
     _build_batch_rows,
+    _iter_batch_error_items,
     create_batch_results_table,
     display_batch_summary,
     load_urls_from_file,
@@ -21,6 +22,7 @@ from markdown_ingress.cli_json_output import (
 
 __all__ = [
     "_build_batch_rows",
+    "_iter_batch_error_items",
     "batch_document_json_row",
     "console",
     "create_batch_results_table",

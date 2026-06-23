@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from markdown_ingress.api_runtime import (
+    _validate_batch_max_concurrent as _validate_max_concurrent,
+)
+from markdown_ingress.api_runtime import run_ingest_many_blocking
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
@@ -23,14 +26,6 @@ try:
     RENDERER_AVAILABLE = PLAYWRIGHT_INSTALLED
 except ImportError:
     RENDERER_AVAILABLE = False
-
-
-def _validate_max_concurrent(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"max_concurrent must be an int, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError("max_concurrent must be >= 1")
-    return value
 
 
 @dataclass
@@ -58,15 +53,7 @@ async def _record_custom_batch_error(
     state: _CustomBatchState, index: int, url: str, exc: Exception
 ) -> None:
     async with state.errors_lock:
-        state.errors.append(
-            BatchErrorItem(
-                index=index,
-                url=url,
-                error=str(exc),
-                error_type=type(exc).__name__,
-                traceback=traceback.format_exc(),
-            )
-        )
+        state.errors.append(BatchErrorItem.from_exception(index, url, exc))
 
 
 class BatchProcessor:
@@ -222,11 +209,4 @@ class BatchProcessor:
 
     def process_batch(self, urls: list[str]) -> BatchResult:
         """Synchronous wrapper for batch processing."""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.process_batch_async(urls))
-
-        raise RuntimeError(
-            "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
-        )
+        return run_ingest_many_blocking(lambda: self.process_batch_async(urls))
