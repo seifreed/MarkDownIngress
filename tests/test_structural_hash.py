@@ -229,3 +229,16 @@ Content here.
         hash3 = hasher.hash_structural(doc)
 
         assert hash1 == hash2 == hash3
+
+    def test_unclosed_link_paren_is_not_redos(self):
+        """Adversarial markdown with an unclosed link paren must hash in
+        linear time, not quadratic. Before the possessive-quantifier fix this
+        input took minutes; it now completes well under a second."""
+        import time
+
+        hasher = Hasher()
+        payload = "[x](" + "a" * 200_000
+
+        start = time.perf_counter()
+        hasher.hash_structural(payload)
+        assert time.perf_counter() - start < 1.0

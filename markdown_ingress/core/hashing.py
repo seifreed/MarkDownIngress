@@ -8,7 +8,10 @@ import re
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _LIST_RE = re.compile(r"^(\s*)[-*+]\s")
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})", re.MULTILINE)
-_LINK_RE = re.compile(r"(?<!\!)\[([^\]]+)\]\(([^()]*(?:\([^()]*\))*[^()]*)\)")
+# Possessive quantifiers (*+) prevent quadratic backtracking on adversarial
+# unclosed-paren input; the `)` terminator is excluded from `[^()]`, so they
+# never over-consume and the match results are identical to greedy quantifiers.
+_LINK_RE = re.compile(r"(?<!\!)\[([^\]]+)\]\(([^()]*+(?:\([^()]*\))*+[^()]*+)\)")
 
 
 def _heading_structure(lines: list[str]) -> list[str]:
