@@ -3,10 +3,11 @@
 import asyncio
 import logging
 import time
-from typing import Literal, cast
+from typing import cast
 
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.adapters.rendering.browser_dns import chromium_host_resolver_rules
+from markdown_ingress.adapters.rendering.renderer_navigation import WaitUntil
 from markdown_ingress.adapters.rendering.renderer_support import (
     SharedRendererMixin,
     _close_async_resource,
@@ -27,8 +28,6 @@ from markdown_ingress.core.stealth import (
     inject_stealth_pre_nav,
 )
 from markdown_ingress.models import FetchResult
-
-WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 logger = logging.getLogger(__name__)
 VALID_WAIT_UNTIL = config_validation.VALID_WAIT_UNTIL

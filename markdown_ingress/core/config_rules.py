@@ -11,7 +11,7 @@ VALID_MODES = config_validation.VALID_MODES
 VALID_CACHE_TYPES = ("memory", "sqlite")
 VALID_OUTPUT_FORMATS = config_validation.VALID_OUTPUT_FORMATS
 VALID_CHUNKING_STRATEGIES = config_validation.VALID_CHUNKING_STRATEGIES
-VALID_POLICIES = ("permissive", "normal", "strict", "paranoid", "moderate")
+VALID_POLICIES = config_validation.VALID_POLICY_NAMES
 
 _ensure_bool = config_validation.ensure_bool
 _ensure_finite_float = config_validation.ensure_finite_float
