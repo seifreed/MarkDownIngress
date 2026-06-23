@@ -28,11 +28,6 @@ from markdown_ingress.adapters.rendering.renderer_support import (
 )
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.interfaces import IRenderer
-from markdown_ingress.core.ssrf import (
-    dns_pin_for_validated_http_url,
-    resolve_allow_local_urls,
-    validate_http_url_no_ssrf_with_dns_check,
-)
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
@@ -131,18 +126,6 @@ class Renderer(SharedRendererMixin, IRenderer):
         self.allow_local_urls = config.allow_local_urls
         self._base_dns_pins = dict(config.dns_pins)
         self._dns_pins = dict(self._base_dns_pins)
-
-    def _validate_render_url(self, url: str) -> str:
-        logical_url = str(url).strip()
-        validated_url = validate_http_url_no_ssrf_with_dns_check(
-            logical_url,
-            allow_local=resolve_allow_local_urls(self.allow_local_urls),
-        )
-        self._dns_pins = dict(self._base_dns_pins)
-        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
-        if pin is not None:
-            self._dns_pins[pin[0]] = pin[1]
-        return logical_url
 
     async def render(self, url: str) -> FetchResult:
         validated_url = self._validate_render_url(url)

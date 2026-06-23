@@ -13,6 +13,11 @@ import httpx
 
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.resource_blocker import ResourceBlocker
+from markdown_ingress.core.ssrf import (
+    dns_pin_for_validated_http_url,
+    resolve_allow_local_urls,
+    validate_http_url_no_ssrf_with_dns_check,
+)
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
@@ -29,10 +34,23 @@ class SharedRendererMixin:
     block_trackers: bool
     allow_local_urls: bool | None
     _dns_pins: dict[str, str]
+    _base_dns_pins: dict[str, str]
 
     if TYPE_CHECKING:
 
         async def render(self, url: str) -> FetchResult: ...
+
+    def _validate_render_url(self, url: str) -> str:
+        logical_url = str(url).strip()
+        validated_url = validate_http_url_no_ssrf_with_dns_check(
+            logical_url,
+            allow_local=resolve_allow_local_urls(self.allow_local_urls),
+        )
+        self._dns_pins = dict(self._base_dns_pins)
+        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
+        if pin is not None:
+            self._dns_pins[pin[0]] = pin[1]
+        return logical_url
 
     async def _setup_resource_blocking(self, page: Any) -> ResourceBlocker:
         block_images = self.block_images if self.block_resources else False

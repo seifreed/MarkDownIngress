@@ -15,11 +15,7 @@ from markdown_ingress.adapters.rendering.renderer_support import (
     raise_for_render_status,
     timeout_seconds_to_ms,
 )
-from markdown_ingress.core.ssrf import (
-    dns_pin_for_validated_http_url,
-    resolve_allow_local_urls,
-    validate_http_url_no_ssrf_with_dns_check,
-)
+from markdown_ingress.core.ssrf import resolve_allow_local_urls
 from markdown_ingress.core.stealth import (
     AdvancedStealthConfig,
     get_advanced_context_options,
@@ -101,24 +97,13 @@ class AdvancedStealthRenderer(SharedRendererMixin):
         self.block_media = _ensure_bool("block_media", block_media)
         self.block_ads = _ensure_bool("block_ads", block_ads)
         self.block_trackers = _ensure_bool("block_trackers", block_trackers)
+        self._base_dns_pins: dict[str, str] = {}
         self._dns_pins: dict[str, str] = {}
 
         if stealth_config is None:
             self.stealth_config = get_advanced_stealth_config(randomize=randomize_fingerprint)
         else:
             self.stealth_config = stealth_config
-
-    def _validate_render_url(self, url: str) -> str:
-        logical_url = str(url).strip()
-        validated_url = validate_http_url_no_ssrf_with_dns_check(
-            logical_url,
-            allow_local=resolve_allow_local_urls(self.allow_local_urls),
-        )
-        self._dns_pins = {}
-        pin = dns_pin_for_validated_http_url(logical_url, validated_url)
-        if pin is not None:
-            self._dns_pins[pin[0]] = pin[1]
-        return logical_url
 
     async def render(self, url: str) -> FetchResult:
         """
