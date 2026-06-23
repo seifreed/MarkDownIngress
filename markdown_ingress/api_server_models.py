@@ -27,6 +27,11 @@ _logger = logging.getLogger(__name__)
 MAX_BATCH_URLS = _read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100)
 MAX_TIMEOUT_SECONDS = _read_positive_int_env("MDI_API_MAX_TIMEOUT", 300)
 MAX_CHUNK_SIZE = _read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000)
+# Each custom_pattern triggers a regex compile plus a ReDoS scan, and each
+# domain policy is fully validated, so an uncapped list lets a small request
+# body amplify into large CPU work. Cap both at the HTTP boundary.
+MAX_CUSTOM_PATTERNS = _read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000)
+MAX_DOMAIN_POLICIES = _read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000)
 
 
 def _allow_local_webhooks_enabled() -> bool:
@@ -157,7 +162,7 @@ class _IngestParams(BaseModel):
     advanced_security: bool = Field(default=False)
     use_llm: bool = Field(default=False)
     policy_name: str = Field(default="normal")
-    custom_patterns: list[str] = Field(default_factory=list)
+    custom_patterns: list[str] = Field(default_factory=list, max_length=MAX_CUSTOM_PATTERNS)
     output_format: OutputFormat = Field(default="text")
     output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
     detect_language: bool = Field(default=True)
@@ -171,7 +176,9 @@ class _IngestParams(BaseModel):
     circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
     circuit_breaker_open_seconds: float = Field(default=30.0, ge=0.1, le=3600.0)
     render_cost_budget: int | None = Field(default=None, ge=1, le=100)
-    domain_policies: list[DomainPolicyModel] = Field(default_factory=list)
+    domain_policies: list[DomainPolicyModel] = Field(
+        default_factory=list, max_length=MAX_DOMAIN_POLICIES
+    )
 
     @field_validator("output_formats")
     @classmethod

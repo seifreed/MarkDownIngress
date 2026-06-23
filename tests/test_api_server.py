@@ -870,6 +870,41 @@ def test_api_server_models_honor_env_limits(monkeypatch):
         importlib.reload(api_server_models)
 
 
+def test_api_server_models_cap_amplifying_lists(monkeypatch):
+    monkeypatch.setenv("MDI_API_MAX_CUSTOM_PATTERNS", "2")
+    monkeypatch.setenv("MDI_API_MAX_DOMAIN_POLICIES", "2")
+
+    from pydantic import ValidationError
+
+    import markdown_ingress.api_server_models as api_server_models
+
+    reloaded = importlib.reload(api_server_models)
+    try:
+        with pytest.raises(ValidationError):
+            reloaded.IngestRequest(
+                url="https://example.com",
+                mode="fast",
+                custom_patterns=["a", "b", "c"],
+            )
+
+        with pytest.raises(ValidationError):
+            reloaded.IngestRequest(
+                url="https://example.com",
+                mode="fast",
+                domain_policies=[{"domain": f"d{i}.com"} for i in range(3)],
+            )
+
+        # At the cap is accepted.
+        reloaded.IngestRequest(
+            url="https://example.com",
+            mode="fast",
+            custom_patterns=["a", "b"],
+        )
+    finally:
+        monkeypatch.undo()
+        importlib.reload(api_server_models)
+
+
 @patch("markdown_ingress.api_server.ingest")
 def test_ingest_endpoint_with_stealth(mock_ingest):
     """Test ingestion with stealth mode enabled"""
