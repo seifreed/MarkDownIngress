@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field, fields, replace
 from enum import StrEnum
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import markdown_ingress.config_output_profiles as output_profiles
 import markdown_ingress.config_validation as config_validation
@@ -124,7 +124,7 @@ class IngestConfig:
     output_profile: str = "default"
     """Preset output profile for public output shaping."""
 
-    output_format: Literal["text", "json", "markdown"] = "text"
+    output_format: config_validation.OutputFormat = "text"
     """Preferred public output format for config-driven interfaces such as the CLI"""
 
     extract_blocks: bool = False

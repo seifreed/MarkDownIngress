@@ -14,7 +14,7 @@ from markdown_ingress.config_models import (
     VALID_POLICY_NAMES,
     _validate_output_profile_name,
 )
-from markdown_ingress.config_validation import ChunkingStrategy, Mode
+from markdown_ingress.config_validation import ChunkingStrategy, Mode, OutputFormat
 from markdown_ingress.core.ssrf import (
     resolve_allow_local_urls,
     validate_http_url_no_ssrf,
@@ -157,7 +157,7 @@ class IngestRequest(BaseModel):
     use_llm: bool = Field(default=False)
     policy_name: str = Field(default="normal")
     custom_patterns: list[str] = Field(default_factory=list)
-    output_format: Literal["text", "json", "markdown"] = Field(default="text")
+    output_format: OutputFormat = Field(default="text")
     output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
     detect_language: bool = Field(default=True)
     normalize_multilingual: bool = Field(default=True)
@@ -250,7 +250,7 @@ class BatchIngestRequest(BaseModel):
     use_llm: bool = Field(default=False)
     policy_name: str = Field(default="normal")
     custom_patterns: list[str] = Field(default_factory=list)
-    output_format: Literal["text", "json", "markdown"] = Field(default="text")
+    output_format: OutputFormat = Field(default="text")
     output_profile: str = Field(default="default")
     output_formats: list[str] = Field(default_factory=lambda: ["markdown"])
     extract_blocks: bool = Field(default=False)

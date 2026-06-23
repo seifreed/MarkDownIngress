@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import ChunkingStrategy, Mode
+from markdown_ingress.config_validation import ChunkingStrategy, Mode, OutputFormat
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -310,7 +310,7 @@ def build_runtime_config(  # noqa: PLR0913
     policy_name: str | None = None,
     custom_patterns: list[str] | None = None,
     plugin_dirs: list[str] | None = None,
-    output_format: Literal["text", "json", "markdown"] | None = None,
+    output_format: OutputFormat | None = None,
     output_profile: str | None = None,
     output_formats: list[str] | None = None,
     extract_blocks: bool | None = None,

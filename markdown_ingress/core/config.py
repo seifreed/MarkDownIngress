@@ -108,7 +108,7 @@ class Config:
     domain_policies: list[DomainPolicy] = field(default_factory=list)
 
     # Output
-    output_format: Literal["text", "json", "markdown"] = "text"
+    output_format: config_validation.OutputFormat = "text"
     output_profile: str = "default"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     extract_blocks: bool = False

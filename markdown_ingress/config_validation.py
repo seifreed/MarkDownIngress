@@ -14,8 +14,10 @@ VALID_MODES: tuple[Mode, ...] = get_args(Mode)
 ChunkingStrategy = Literal["none", "heading", "size"]
 VALID_CHUNKING_STRATEGIES: tuple[ChunkingStrategy, ...] = get_args(ChunkingStrategy)
 
+OutputFormat = Literal["text", "json", "markdown"]
+VALID_OUTPUT_FORMATS: tuple[OutputFormat, ...] = get_args(OutputFormat)
+
 VALID_WAIT_UNTIL = ("networkidle", "load", "domcontentloaded")
-VALID_OUTPUT_FORMATS = ("text", "json", "markdown")
 VALID_OUTPUT_REPRESENTATIONS = ("markdown", "blocks", "chunks", "metadata", "security")
 VALID_POLICY_NAMES = ("permissive", "normal", "strict", "paranoid", "moderate")
 VALID_OUTPUT_PROFILES = ("default", "llm_safe", "rag_chunkable", "for_search", "for_archive")
