@@ -105,6 +105,56 @@ def ensure_screenshot_value(field_name: str, value: object) -> bool | str | None
     raise ValueError(f"{field_name} must be a bool, string, or None, got {type(value).__name__}")
 
 
+def coerce_shared_config_fields(config: Any) -> None:
+    """Coerce in place the fields common to runtime IngestConfig and legacy Config.
+
+    Type-specific fields (policy/policy_name, cache backend settings) and numeric
+    range checks stay with each config's own validator.
+    """
+    config.strict = ensure_bool("strict", config.strict)
+    config.model = ensure_str("model", config.model)
+    config.timeout = ensure_finite_float("timeout", config.timeout)
+    config.auto_render_threshold = ensure_int("auto_render_threshold", config.auto_render_threshold)
+    config.stealth = ensure_bool("stealth", config.stealth)
+    config.disable_http2 = ensure_bool("disable_http2", config.disable_http2)
+    config.extreme_mode = ensure_bool("extreme_mode", config.extreme_mode)
+    config.screenshot = ensure_screenshot_value("screenshot", config.screenshot)
+    config.extract_metadata = ensure_bool("extract_metadata", config.extract_metadata)
+    config.extract_links = ensure_bool("extract_links", config.extract_links)
+    config.advanced_security = ensure_bool("advanced_security", config.advanced_security)
+    config.use_llm = ensure_bool("use_llm", config.use_llm)
+    config.allow_local_urls = ensure_optional_bool("allow_local_urls", config.allow_local_urls)
+    config.output_profile = ensure_str("output_profile", config.output_profile)
+    config.extract_blocks = ensure_bool("extract_blocks", config.extract_blocks)
+    config.chunk_size = ensure_int("chunk_size", config.chunk_size)
+    config.chunk_overlap = ensure_int("chunk_overlap", config.chunk_overlap)
+    config.detect_language = ensure_bool("detect_language", config.detect_language)
+    config.normalize_multilingual = ensure_bool(
+        "normalize_multilingual", config.normalize_multilingual
+    )
+    config.include_security_explanation = ensure_bool(
+        "include_security_explanation", config.include_security_explanation
+    )
+    config.include_observability = ensure_bool(
+        "include_observability", config.include_observability
+    )
+    config.save_reports = ensure_bool("save_reports", config.save_reports)
+    config.reports_dir = ensure_str("reports_dir", config.reports_dir)
+    config.fetcher_user_agent = ensure_str("fetcher_user_agent", config.fetcher_user_agent)
+    config.domain_request_interval = ensure_finite_float(
+        "domain_request_interval", config.domain_request_interval
+    )
+    config.circuit_breaker_threshold = ensure_int(
+        "circuit_breaker_threshold", config.circuit_breaker_threshold
+    )
+    config.circuit_breaker_open_seconds = ensure_finite_float(
+        "circuit_breaker_open_seconds", config.circuit_breaker_open_seconds
+    )
+    config.render_cost_budget = ensure_optional_int("render_cost_budget", config.render_cost_budget)
+    config.batch_max_concurrent = ensure_int("batch_max_concurrent", config.batch_max_concurrent)
+    config.batch_timeout = ensure_finite_float("batch_timeout", config.batch_timeout)
+
+
 def validate_output_representations(value: list[str]) -> list[str]:
     """Validate requested document output representations."""
     if not isinstance(value, list):
