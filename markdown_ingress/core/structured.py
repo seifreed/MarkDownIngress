@@ -16,6 +16,8 @@ from markdown_ingress.core.structured_chunks import (
 )
 from markdown_ingress.models import DocumentChunk, StructuredBlock
 
+CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
+
 
 def render_code_fence(code: str, language: str | None = None) -> str:
     """Render a fenced markdown code block.
@@ -94,7 +96,6 @@ class HTMLStructureExtractor:
         }
     )
     CONTAINER_TAGS = frozenset({"pre", "table", "ul", "ol", "blockquote", "li", "td", "th"})
-    CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
 
     def __init__(self, hasher: Hasher | None = None):
         self.hasher = hasher or Hasher()
@@ -239,7 +240,7 @@ class HTMLStructureExtractor:
                 raw_classes.extend(list(classes or []))
 
         for value in raw_classes:
-            for prefix in self.CODE_LANGUAGE_CLASS_PREFIXES:
+            for prefix in CODE_LANGUAGE_CLASS_PREFIXES:
                 if value.startswith(prefix):
                     return value.removeprefix(prefix)
         return None

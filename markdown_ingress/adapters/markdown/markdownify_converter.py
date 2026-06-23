@@ -10,7 +10,11 @@ from markdownify import markdownify as md
 
 from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 from markdown_ingress.core.interfaces import IMarkdownConverter
-from markdown_ingress.core.structured import render_code_fence, render_markdown_table
+from markdown_ingress.core.structured import (
+    CODE_LANGUAGE_CLASS_PREFIXES,
+    render_code_fence,
+    render_markdown_table,
+)
 from markdown_ingress.core.url_safety import dangerous_url_scheme
 
 
@@ -74,7 +78,7 @@ class MarkdownConverter(IMarkdownConverter):
 
     def _detect_code_language(self, pre: Any) -> str | None:
         raw_classes = self._collect_code_classes(pre)
-        for prefix in ("language-", "lang-", "highlight-"):
+        for prefix in CODE_LANGUAGE_CLASS_PREFIXES:
             for class_name in raw_classes:
                 if class_name.startswith(prefix):
                     return class_name[len(prefix) :]
