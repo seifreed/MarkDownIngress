@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any, cast
 
 import httpx
 
-from markdown_ingress.adapters.fetching.fetch_shared import HttpxFetchSharedMixin
+from markdown_ingress.adapters.fetching.fetch_shared import (
+    FetchAttemptSharedMixin,
+    HttpxFetchSharedMixin,
+)
 from markdown_ingress.adapters.fetching.http_fetch_state import (
     HttpFetchAttemptContext,
     HttpFetchState,
@@ -24,7 +26,7 @@ from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedCont
 from markdown_ingress.models import FetchResult
 
 
-class AsyncHttpxFetchMixin(HttpxFetchSharedMixin):
+class AsyncHttpxFetchMixin(HttpxFetchSharedMixin, FetchAttemptSharedMixin):
     """Async HTTPX fetch implementation."""
 
     async def fetch(self: Any, url: str) -> FetchResult:
@@ -53,20 +55,10 @@ class AsyncHttpxFetchMixin(HttpxFetchSharedMixin):
             raise state.last_exc
         raise RuntimeError(f"Fetch failed for {state.url} after {MAX_RETRIES} attempts")
 
-    async def _prepare_async_fetch_attempt(self: Any, state: HttpFetchState) -> tuple[str, float]:
-        ua = self._next_user_agent(previous=state.previous_ua)
-        state.previous_ua = ua
-        self._ensure_circuit_closed(state.host)
-        sleep_for = self._reserve_domain_slot(state.host)
-        if sleep_for > 0:
-            await asyncio.sleep(sleep_for)
-            self._ensure_circuit_closed(state.host)
-        return ua, time.perf_counter()
-
     async def _run_async_fetch_attempt(
         self: Any, client: Any, state: HttpFetchState
     ) -> FetchResult | None:
-        ua, start_time = await self._prepare_async_fetch_attempt(state)
+        ua, start_time = await self._prepare_async_attempt(state)
         attempt = HttpFetchAttemptContext(state=state, start_time=start_time, user_agent=ua)
         try:
             headers = self._build_headers(ua, host_header=state.host_header)
@@ -118,19 +110,6 @@ class AsyncHttpxFetchMixin(HttpxFetchSharedMixin):
             FetchResult,
             self._finish_fetch_result(response, attempt, content),
         )
-
-    async def _follow_async_redirect(self: Any, response: Any, state: HttpFetchState) -> None:
-        redirect_target = self._prepare_redirect_url(
-            response,
-            state.logical_url,
-            state.redirect_count,
-        )
-        if redirect_target is None:
-            raise RuntimeError("Redirect response missing Location header")
-        await self._drain_async_response_for_reuse(
-            response, "Failed to read redirect response body"
-        )
-        state.update_redirect_target(redirect_target)
 
     async def _retry_async_response_status(
         self: Any, response: Any, state: HttpFetchState, response_host: str

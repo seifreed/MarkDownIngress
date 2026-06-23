@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Any, cast
 
 import httpx
 
-from markdown_ingress.adapters.fetching.fetch_shared import SslBypassSharedMixin
+from markdown_ingress.adapters.fetching.fetch_shared import (
+    FetchAttemptSharedMixin,
+    SslBypassSharedMixin,
+)
 from markdown_ingress.adapters.fetching.http_support import (
     MAX_RETRIES,
     RETRYABLE_STATUS,
@@ -29,7 +31,7 @@ from markdown_ingress.models import FetchResult
 logger = logging.getLogger(__name__)
 
 
-class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
+class AsyncSslBypassFetchMixin(SslBypassSharedMixin, FetchAttemptSharedMixin):
     """Certificate-verification bypass retry path for async fetch operations."""
 
     async def _fetch_with_ssl_bypass(
@@ -84,18 +86,6 @@ class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
             trust_env=False,
         )
 
-    async def _prepare_async_ssl_bypass_request(
-        self: Any, state: SslBypassFetchState
-    ) -> tuple[str, float]:
-        ua = self._next_user_agent(previous=state.previous_ua)
-        state.previous_ua = ua
-        self._ensure_circuit_closed(state.host)
-        sleep_for = self._reserve_domain_slot(state.host)
-        if sleep_for > 0:
-            await asyncio.sleep(sleep_for)
-            self._ensure_circuit_closed(state.host)
-        return ua, time.perf_counter()
-
     async def _run_async_ssl_bypass_attempt(
         self: Any,
         client: Any,
@@ -105,7 +95,7 @@ class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
         total_attempt: int,
     ) -> FetchResult:
         while True:
-            ua, start_time = await self._prepare_async_ssl_bypass_request(state)
+            ua, start_time = await self._prepare_async_attempt(state)
             attempt = SslBypassAttemptContext(
                 state=state,
                 start_time=start_time,
@@ -135,7 +125,7 @@ class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
     ) -> FetchResult | None:
         state = attempt.state
         if self._should_follow_redirect(response):
-            await self._follow_async_ssl_bypass_redirect(response, state)
+            await self._follow_async_redirect(response, state)
             return None
         self._enforce_declared_response_size(response)
 
@@ -161,22 +151,6 @@ class AsyncSslBypassFetchMixin(SslBypassSharedMixin):
                 content,
             ),
         )
-
-    async def _follow_async_ssl_bypass_redirect(
-        self: Any, response: Any, state: SslBypassFetchState
-    ) -> None:
-        redirect_target = self._prepare_redirect_url(
-            response,
-            state.logical_url,
-            state.redirect_count,
-        )
-        if redirect_target is None:
-            raise RuntimeError("Redirect response missing Location header")
-        await self._drain_async_response_for_reuse(
-            response,
-            "Failed to read redirect response body",
-        )
-        state.update_redirect_target(redirect_target)
 
     async def _handle_async_ssl_bypass_status_error(
         self: Any,

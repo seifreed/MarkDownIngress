@@ -8,7 +8,10 @@ from typing import Any, cast
 
 import httpx
 
-from markdown_ingress.adapters.fetching.fetch_shared import SslBypassSharedMixin
+from markdown_ingress.adapters.fetching.fetch_shared import (
+    FetchAttemptSharedMixin,
+    SslBypassSharedMixin,
+)
 from markdown_ingress.adapters.fetching.http_support import (
     MAX_RETRIES,
     RETRYABLE_STATUS,
@@ -28,7 +31,7 @@ from markdown_ingress.models import FetchResult
 logger = logging.getLogger(__name__)
 
 
-class SyncSslBypassFetchMixin(SslBypassSharedMixin):
+class SyncSslBypassFetchMixin(SslBypassSharedMixin, FetchAttemptSharedMixin):
     """Certificate-verification bypass retry path for sync fetch operations."""
 
     def _fetch_sync_with_ssl_bypass(
@@ -83,18 +86,6 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin):
             trust_env=False,
         )
 
-    def _prepare_sync_ssl_bypass_request(
-        self: Any, state: SslBypassFetchState
-    ) -> tuple[str, float]:
-        ua = self._next_user_agent(previous=state.previous_ua)
-        state.previous_ua = ua
-        self._ensure_circuit_closed(state.host)
-        sleep_for = self._reserve_domain_slot(state.host)
-        if sleep_for > 0:
-            time.sleep(sleep_for)
-            self._ensure_circuit_closed(state.host)
-        return ua, time.perf_counter()
-
     def _run_sync_ssl_bypass_attempt(
         self: Any,
         client: Any,
@@ -104,7 +95,7 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin):
         total_attempt: int,
     ) -> FetchResult:
         while True:
-            ua, start_time = self._prepare_sync_ssl_bypass_request(state)
+            ua, start_time = self._prepare_sync_attempt(state)
             attempt = SslBypassAttemptContext(
                 state=state,
                 start_time=start_time,
@@ -134,7 +125,7 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin):
     ) -> FetchResult | None:
         state = attempt.state
         if self._should_follow_redirect(response):
-            self._follow_sync_ssl_bypass_redirect(response, state)
+            self._follow_sync_redirect(response, state)
             return None
         self._enforce_declared_response_size(response)
 
@@ -160,22 +151,6 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin):
                 content,
             ),
         )
-
-    def _follow_sync_ssl_bypass_redirect(
-        self: Any, response: Any, state: SslBypassFetchState
-    ) -> None:
-        redirect_target = self._prepare_redirect_url(
-            response,
-            state.logical_url,
-            state.redirect_count,
-        )
-        if redirect_target is None:
-            raise RuntimeError("Redirect response missing Location header")
-        self._drain_sync_response_for_reuse(
-            response,
-            "Failed to read redirect response body",
-        )
-        state.update_redirect_target(redirect_target)
 
     def _handle_sync_ssl_bypass_status_error(
         self: Any,

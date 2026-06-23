@@ -1,7 +1,8 @@
-"""Non-async helpers shared verbatim by the sync and async fetch mixins."""
+"""Helpers shared verbatim by the HTTPX and SSL-bypass fetch mixins."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, cast
@@ -16,6 +17,50 @@ from markdown_ingress.adapters.fetching.ssl_bypass_state import SslBypassAttempt
 from markdown_ingress.models import FetchResult
 
 logger = logging.getLogger(__name__)
+
+
+class FetchAttemptSharedMixin:
+    """Attempt preparation and redirect following shared by HTTPX and SSL-bypass paths."""
+
+    def _prepare_sync_attempt(self: Any, state: Any) -> tuple[str, float]:
+        ua = self._next_user_agent(previous=state.previous_ua)
+        state.previous_ua = ua
+        self._ensure_circuit_closed(state.host)
+        sleep_for = self._reserve_domain_slot(state.host)
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+            self._ensure_circuit_closed(state.host)
+        return ua, time.perf_counter()
+
+    async def _prepare_async_attempt(self: Any, state: Any) -> tuple[str, float]:
+        ua = self._next_user_agent(previous=state.previous_ua)
+        state.previous_ua = ua
+        self._ensure_circuit_closed(state.host)
+        sleep_for = self._reserve_domain_slot(state.host)
+        if sleep_for > 0:
+            await asyncio.sleep(sleep_for)
+            self._ensure_circuit_closed(state.host)
+        return ua, time.perf_counter()
+
+    def _follow_sync_redirect(self: Any, response: Any, state: Any) -> None:
+        redirect_target = self._prepare_redirect_url(
+            response, state.logical_url, state.redirect_count
+        )
+        if redirect_target is None:
+            raise RuntimeError("Redirect response missing Location header")
+        self._drain_sync_response_for_reuse(response, "Failed to read redirect response body")
+        state.update_redirect_target(redirect_target)
+
+    async def _follow_async_redirect(self: Any, response: Any, state: Any) -> None:
+        redirect_target = self._prepare_redirect_url(
+            response, state.logical_url, state.redirect_count
+        )
+        if redirect_target is None:
+            raise RuntimeError("Redirect response missing Location header")
+        await self._drain_async_response_for_reuse(
+            response, "Failed to read redirect response body"
+        )
+        state.update_redirect_target(redirect_target)
 
 
 class HttpxFetchSharedMixin:
