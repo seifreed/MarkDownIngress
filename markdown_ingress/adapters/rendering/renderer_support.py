@@ -40,6 +40,17 @@ class SharedRendererMixin:
 
         async def render(self, url: str) -> FetchResult: ...
 
+    def _block_settings(self) -> dict[str, bool]:
+        """Resource-blocking flags forwarded to renderers and RenderConfig."""
+        return {
+            "block_resources": self.block_resources,
+            "block_images": self.block_images,
+            "block_fonts": self.block_fonts,
+            "block_media": self.block_media,
+            "block_ads": self.block_ads,
+            "block_trackers": self.block_trackers,
+        }
+
     def _validate_render_url(self, url: str) -> str:
         logical_url = str(url).strip()
         validated_url = validate_http_url_no_ssrf_with_dns_check(

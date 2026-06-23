@@ -127,12 +127,7 @@ class AdvancedStealthRenderer(SharedRendererMixin):
                     disable_http2=True,
                     stealth_config=self.stealth_config,
                     allow_local_urls=self.allow_local_urls,
-                    block_resources=self.block_resources,
-                    block_images=self.block_images,
-                    block_fonts=self.block_fonts,
-                    block_media=self.block_media,
-                    block_ads=self.block_ads,
-                    block_trackers=self.block_trackers,
+                    **self._block_settings(),
                 )
                 retry_renderer._dns_pins = dict(self._dns_pins)
                 result = await retry_renderer._render_with_browser(validated_url)
