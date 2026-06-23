@@ -6,7 +6,10 @@ import copy
 import math
 import re
 from dataclasses import MISSING, fields
-from typing import Any
+from typing import Any, Literal, get_args
+
+Mode = Literal["fast", "render", "auto"]
+VALID_MODES: tuple[Mode, ...] = get_args(Mode)
 
 VALID_WAIT_UNTIL = ("networkidle", "load", "domcontentloaded")
 VALID_OUTPUT_FORMATS = ("text", "json", "markdown")

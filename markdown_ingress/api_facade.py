@@ -8,7 +8,6 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 from markdown_ingress.adapters.rendering.playwright_renderer import (
     PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
@@ -25,6 +24,7 @@ from markdown_ingress.application.use_cases import (
     IngestUseCase,
 )
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import (
@@ -43,7 +43,7 @@ _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
 @dataclass(frozen=True)
 class RetryIngestRequest:
     url: str
-    mode: Literal["fast", "render", "auto"] = "auto"
+    mode: Mode = "auto"
     strict: bool = True
     allow_local_urls: object = UNSET
     model: str = "gpt-4"

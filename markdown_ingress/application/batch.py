@@ -6,7 +6,6 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
 
 from markdown_ingress.api_runtime import (
     _validate_batch_max_concurrent as _validate_max_concurrent,
@@ -15,6 +14,7 @@ from markdown_ingress.api_runtime import run_ingest_many_blocking
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.config_validation import Mode
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
@@ -62,7 +62,7 @@ class BatchProcessor:
     # Compatibility constructor accepts batch defaults before building IngestConfig.
     def __init__(  # noqa: PLR0913
         self,
-        mode: Literal["fast", "render", "auto"] = "auto",
+        mode: Mode = "auto",
         strict: bool = True,
         model: str = "gpt-4",
         timeout: float = 30.0,

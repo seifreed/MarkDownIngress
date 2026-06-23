@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, Literal, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
+from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -290,7 +291,7 @@ def _apply_explicit_runtime_overrides(
 # Public override bridge; it accepts legacy ingest kwargs then builds IngestConfig.
 def build_runtime_config(  # noqa: PLR0913
     config: IngestConfig | FileConfig | None = None,
-    mode: Literal["fast", "render", "auto"] | None = None,
+    mode: Mode | None = None,
     strict: bool | None = None,
     allow_local_urls=UNSET,
     model: str | None = None,

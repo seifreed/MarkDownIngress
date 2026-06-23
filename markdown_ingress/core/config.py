@@ -70,7 +70,7 @@ class Config:
     """MarkDownIngress configuration"""
 
     # Fetching
-    mode: Literal["fast", "render", "auto"] = "auto"
+    mode: config_validation.Mode = "auto"
     timeout: float = _DEFAULT_TIMEOUT_SECONDS
     auto_render_threshold: int = _DEFAULT_AUTO_RENDER_THRESHOLD
 

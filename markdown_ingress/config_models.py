@@ -60,7 +60,7 @@ class IngestConfig:
     """
 
     # Core parameters
-    mode: Literal["fast", "render", "auto"] = "auto"
+    mode: config_validation.Mode = "auto"
     """Fetching mode: 'fast' (HTTP only), 'render' (Playwright), 'auto' (detect)"""
 
     strict: bool = True

@@ -25,7 +25,7 @@ _validate_regex_patterns = config_validation.validate_regex_patterns
 
 def validate_ingest_config(config: Any) -> Any:
     """Validate and normalize a runtime IngestConfig-like object in place."""
-    valid_modes = ("fast", "render", "auto")
+    valid_modes = config_validation.VALID_MODES
     if not isinstance(config.mode, str):
         raise ValueError(f"mode must be a string, got {type(config.mode).__name__}")
     if config.mode not in valid_modes:

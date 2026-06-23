@@ -7,9 +7,9 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
 
 from markdown_ingress import ingest
+from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.interfaces import IFetcher
 
 _logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class Benchmark:
     def run_single(
         self,
         url: str,
-        mode: Literal["fast", "render", "auto"] = "fast",
+        mode: Mode = "fast",
         iterations: int = 3,
         compare_extractors_enabled: bool = False,
     ) -> BenchmarkResult:
@@ -176,7 +176,7 @@ class Benchmark:
     def run_batch(
         self,
         urls: list[str],
-        mode: Literal["fast", "render", "auto"] = "fast",
+        mode: Mode = "fast",
         iterations: int = 3,
         compare_extractors_enabled: bool = False,
     ) -> list[BenchmarkResult]:

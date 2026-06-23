@@ -5,12 +5,12 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 from urllib.parse import urlsplit
 
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.core.ssrf import normalize_domain_pattern
 
+Mode = config_validation.Mode
 VALID_POLICY_NAMES = config_validation.VALID_POLICY_NAMES
 
 _ensure_bool = config_validation.ensure_bool
@@ -29,7 +29,7 @@ class DomainPolicy:
 
     domain: str
     include_subdomains: bool = True
-    mode: Literal["fast", "render", "auto"] | None = None
+    mode: Mode | None = None
     timeout: float | None = None
     auto_render_threshold: int | None = None
     strict: bool | None = None
@@ -114,7 +114,7 @@ def _validate_policy_mode(mode: object | None) -> None:
         return
     if not isinstance(mode, str):
         raise ValueError(f"DomainPolicy.mode must be a string, got {type(mode).__name__}")
-    if mode not in ("fast", "render", "auto"):
+    if mode not in config_validation.VALID_MODES:
         raise ValueError(
             f"Invalid DomainPolicy.mode '{mode}'. " "Must be one of: fast, render, auto"
         )

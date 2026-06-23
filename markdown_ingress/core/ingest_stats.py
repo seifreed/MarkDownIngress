@@ -7,8 +7,10 @@ import threading
 import time
 from typing import Any
 
+from markdown_ingress.config_validation import VALID_MODES
+
 _INGEST_STATS_LOCK = threading.Lock()
-_MODE_NAMES = ("fast", "render", "auto")
+_MODE_NAMES = VALID_MODES
 
 
 def _blank_ingest_stats() -> dict[str, Any]:
