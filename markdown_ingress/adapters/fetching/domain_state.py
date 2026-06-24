@@ -106,10 +106,6 @@ class DomainStateMixin:
             return decayed
         return current
 
-    def _apply_failure_decay(self, host: str) -> int:
-        with self._failure_lock:
-            return self._apply_failure_decay_locked(host)
-
     def _reserve_domain_slot(self, host: str) -> float:
         if not host:
             logger.warning("Empty host detected - rate limiting bypassed for malformed URL")
