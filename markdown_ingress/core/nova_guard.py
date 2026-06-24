@@ -228,7 +228,7 @@ class NovaGuard:
             content = f.read()
         rules, parse_failures = parse_bundled_rule_content(content, parser)
         for failure in parse_failures:
-            logger.warning("Failed to parse bundled rule: %s", failure.error)
+            logger.warning("Failed to parse bundled rule %r: %s", failure.preview, failure.error)
         if parse_failures:
             logger.warning(
                 "Nova rules loaded: %d successful, %d failed to parse",
