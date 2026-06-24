@@ -26,8 +26,6 @@ from markdown_ingress.core.stealth.browser_profiles import (
 
 _rng = random.SystemRandom()
 
-StealthSignature = tuple[str, tuple[int, int], str, float]
-
 
 # ============================================================================
 # CONFIGURATION DATACLASS
@@ -62,62 +60,11 @@ class AdvancedStealthConfig:
 # ============================================================================
 
 
-def _signature_for_config(config: "AdvancedStealthConfig") -> StealthSignature:
-    """Return a stable signature representing the fingerprint-relevant config."""
-    return (
-        config.user_agent,
-        (config.viewport_width, config.viewport_height),
-        config.timezone,
-        config.device_scale_factor,
-    )
-
-
-class StealthConfigGenerator:
-    """Generate stealth configs while tracking previous signature per request.
-
-    Instances intentionally carry state, allowing callers to avoid immediate
-    repetition without sharing state globally.
-    """
-
-    def __init__(
-        self,
-        randomize: bool = True,
-        user_agent: str | None = None,
-        viewport: tuple[int, int] | None = None,
-        timezone: str | None = None,
-    ):
-        self.randomize = randomize
-        self.user_agent = user_agent
-        self.viewport = viewport
-        self.timezone = timezone
-        self._previous_signature: StealthSignature | None = None
-
-    def next_config(self) -> AdvancedStealthConfig:
-        """Return next config and remember its signature for request-scoped dedupe."""
-        config = get_advanced_stealth_config(
-            randomize=self.randomize,
-            user_agent=self.user_agent,
-            viewport=self.viewport,
-            timezone=self.timezone,
-            previous_signature=self._previous_signature,
-        )
-        self._previous_signature = _signature_for_config(config)
-        return config
-
-
-__all__ = [
-    "StealthConfigGenerator",
-    "StealthSignature",
-    "_signature_for_config",
-]
-
-
 def get_advanced_stealth_config(
     randomize: bool = True,
     user_agent: str | None = None,
     viewport: tuple[int, int] | None = None,
     timezone: str | None = None,
-    previous_signature: StealthSignature | None = None,
 ) -> AdvancedStealthConfig:
     """
     Get an advanced stealth configuration with maximum anti-detection.
@@ -127,7 +74,6 @@ def get_advanced_stealth_config(
         user_agent: Custom user agent (overrides randomization)
         viewport: Custom viewport as (width, height) tuple
         timezone: Custom timezone (e.g., "America/New_York")
-        previous_signature: Optional signature to avoid immediate repetition
 
     Returns:
         AdvancedStealthConfig: Comprehensive stealth configuration
@@ -143,54 +89,6 @@ def get_advanced_stealth_config(
         selected_viewport = viewport or _rng.choice(ADVANCED_VIEWPORT_SIZES)
         selected_timezone = timezone or _rng.choice(TIMEZONES)
         device_scale_factor = round(_rng.uniform(1.0, 2.0), 2)
-
-        signature = (
-            selected_ua,
-            selected_viewport,
-            selected_timezone,
-            device_scale_factor,
-        )
-
-        # Keep regenerating until we get a unique signature (max 10 attempts)
-        attempts = 0
-        while signature == previous_signature and attempts < 10:
-            # Prefer changing UA first, then viewport, then timezone, then scale
-            if (
-                user_agent is None
-                and selected_ua in ADVANCED_USER_AGENTS
-                and len(ADVANCED_USER_AGENTS) > 1
-            ):
-                ua_index = (ADVANCED_USER_AGENTS.index(selected_ua) + 1) % len(ADVANCED_USER_AGENTS)
-                selected_ua = ADVANCED_USER_AGENTS[ua_index]
-            elif (
-                viewport is None
-                and selected_viewport in ADVANCED_VIEWPORT_SIZES
-                and len(ADVANCED_VIEWPORT_SIZES) > 1
-            ):
-                viewport_index = (ADVANCED_VIEWPORT_SIZES.index(selected_viewport) + 1) % len(
-                    ADVANCED_VIEWPORT_SIZES
-                )
-                selected_viewport = ADVANCED_VIEWPORT_SIZES[viewport_index]
-            elif timezone is None and selected_timezone in TIMEZONES and len(TIMEZONES) > 1:
-                timezone_index = (TIMEZONES.index(selected_timezone) + 1) % len(TIMEZONES)
-                selected_timezone = TIMEZONES[timezone_index]
-            else:
-                # Use a pool of realistic scale factors for diversity
-                realistic_scales = [1.0, 1.25, 1.5, 1.75, 2.0]
-                available_scales = [s for s in realistic_scales if s != device_scale_factor]
-                if available_scales:
-                    scale_choice = _rng.choice(available_scales)
-                else:
-                    scale_choice = 1.5
-                device_scale_factor = scale_choice
-
-            signature = (
-                selected_ua,
-                selected_viewport,
-                selected_timezone,
-                device_scale_factor,
-            )
-            attempts += 1
     else:
         selected_ua = user_agent or ADVANCED_USER_AGENTS[0]
         selected_viewport = viewport or ADVANCED_VIEWPORT_SIZES[0]

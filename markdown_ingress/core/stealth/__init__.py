@@ -20,7 +20,6 @@ from .browser_config import (
     TIMEZONES,
     ULTRA_STEALTH_ARGS,
     AdvancedStealthConfig,
-    StealthConfigGenerator,
     get_advanced_context_options,
     get_advanced_stealth_config,
 )
@@ -86,7 +85,6 @@ __all__ = [
     "ULTRA_STEALTH_ARGS",
     "AdvancedStealthConfig",
     "StealthConfig",
-    "StealthConfigGenerator",
     "get_advanced_context_options",
     "get_advanced_stealth_config",
     "get_context_options",
