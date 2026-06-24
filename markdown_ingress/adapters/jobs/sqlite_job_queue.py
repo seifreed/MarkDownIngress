@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import queue
 import sqlite3
 import threading
@@ -79,8 +78,6 @@ class PersistentJobQueue(
         self.ttl_seconds = _validate_int_config("ttl_seconds", ttl_seconds, minimum=60)
         self.max_queued_jobs = _validate_int_config("max_queued_jobs", max_queued_jobs, minimum=1)
         self.instance_id = str(uuid.uuid4())
-        self.owner_pid = os.getpid()
-        self.owner_start_time = self._get_process_start_time()
         self.lease_timeout_seconds = 30.0
         self.heartbeat_interval_seconds = 5.0
         self.lease_acquire_max_retries = 5
@@ -156,20 +153,9 @@ class PersistentJobQueue(
                 CREATE TABLE IF NOT EXISTS queue_leases (
                     lease_name TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
-                    heartbeat_at TEXT NOT NULL,
-                    owner_pid INTEGER NOT NULL DEFAULT 0,
-                    owner_start_time REAL
+                    heartbeat_at TEXT NOT NULL
                 )
                 """)
-            lease_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(queue_leases)").fetchall()
-            }
-            if "owner_pid" not in lease_columns:
-                conn.execute(
-                    "ALTER TABLE queue_leases ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0"
-                )
-            if "owner_start_time" not in lease_columns:
-                conn.execute("ALTER TABLE queue_leases ADD COLUMN owner_start_time REAL")
             job_columns = {
                 row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
             }
@@ -359,7 +345,7 @@ def check_external_owner_still_owns(
         with closing(sqlite3.connect(db_uri, timeout=0.0, uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT owner_id, heartbeat_at, owner_pid FROM queue_leases WHERE lease_name = ?",
+                "SELECT owner_id, heartbeat_at FROM queue_leases WHERE lease_name = ?",
                 ("default",),
             ).fetchone()
     except sqlite3.Error as exc:

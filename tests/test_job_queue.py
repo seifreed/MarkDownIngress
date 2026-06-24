@@ -242,9 +242,8 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale(tmp_path: 
 
     with closing(first_queue._connect()) as conn:
         conn.execute(
-            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, "
-            "owner_start_time = ? WHERE lease_name = ?",
-            ("2000-01-01T00:00:00+00:00", 0, None, "default"),
+            "UPDATE queue_leases SET heartbeat_at = ? WHERE lease_name = ?",
+            ("2000-01-01T00:00:00+00:00", "default"),
         )
         conn.commit()
 
@@ -259,9 +258,8 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale_and_naive(
 
     with closing(first_queue._connect()) as conn:
         conn.execute(
-            "UPDATE queue_leases SET heartbeat_at = ?, owner_pid = ?, "
-            "owner_start_time = ? WHERE lease_name = ?",
-            ("2000-01-01 00:00:00", 0, None, "default"),
+            "UPDATE queue_leases SET heartbeat_at = ? WHERE lease_name = ?",
+            ("2000-01-01 00:00:00", "default"),
         )
         conn.commit()
 
@@ -270,41 +268,14 @@ def test_persistent_job_queue_allows_takeover_when_heartbeat_is_stale_and_naive(
     takeover_queue.close()
 
 
-def test_persistent_job_queue_rejects_second_owner_without_pid_metadata(
+def test_persistent_job_queue_rejects_second_owner_when_heartbeat_is_fresh(
     tmp_path: Path,
 ):
     db_path = tmp_path / "jobs.sqlite3"
     first_queue = PersistentJobQueue(str(db_path), worker_count=1, ttl_seconds=3600)
 
-    with closing(first_queue._connect()) as conn:
-        conn.execute(
-            "UPDATE queue_leases SET owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
-            (0, None, "default"),
-        )
-        conn.commit()
-
-    takeover_queue = None
-    with pytest.raises(RuntimeError, match="already owned by another active instance"):
-        takeover_queue = PersistentJobQueue(str(db_path), worker_count=1, ttl_seconds=3600)
-
-    if takeover_queue is not None:
-        takeover_queue.close()
-    first_queue.close()
-
-
-def test_persistent_job_queue_rejects_second_owner_when_pid_is_dead_but_heartbeat_is_fresh(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "jobs.sqlite3"
-    first_queue = PersistentJobQueue(str(db_path), worker_count=1, ttl_seconds=3600)
-
-    with closing(first_queue._connect()) as conn:
-        conn.execute(
-            "UPDATE queue_leases SET owner_pid = ?, owner_start_time = ? WHERE lease_name = ?",
-            (999999, None, "default"),
-        )
-        conn.commit()
-
+    # first_queue holds the lease with a fresh heartbeat, so a second instance
+    # must be rejected — takeover is gated solely on heartbeat staleness.
     takeover_queue = None
     with pytest.raises(RuntimeError, match="already owned by another active instance"):
         takeover_queue = PersistentJobQueue(str(db_path), worker_count=1, ttl_seconds=3600)
@@ -339,8 +310,8 @@ def test_persistent_job_queue_submit_detects_atomic_lease_loss_before_insert(tmp
     def steal_lease_in_cleanup():
         with closing(queue._connect()) as conn:
             conn.execute(
-                "UPDATE queue_leases SET owner_id = ?, owner_pid = ? WHERE lease_name = ?",
-                ("other-owner", 999999, "default"),
+                "UPDATE queue_leases SET owner_id = ? WHERE lease_name = ?",
+                ("other-owner", "default"),
             )
             conn.commit()
 
@@ -359,8 +330,8 @@ def test_persistent_job_queue_submit_cleans_up_job_if_lease_lost_after_insert(tm
     def steal_lease_during_worker_start():
         with closing(queue._connect()) as conn:
             conn.execute(
-                "UPDATE queue_leases SET owner_id = ?, owner_pid = ? WHERE lease_name = ?",
-                ("other-owner", 999999, "default"),
+                "UPDATE queue_leases SET owner_id = ? WHERE lease_name = ?",
+                ("other-owner", "default"),
             )
             conn.commit()
 
@@ -428,8 +399,8 @@ def test_persistent_job_queue_detects_lease_loss(tmp_path: Path):
 
     with closing(queue._connect()) as conn:
         conn.execute(
-            "UPDATE queue_leases SET owner_id = ?, owner_pid = ? WHERE lease_name = ?",
-            ("other-owner", 999999, "default"),
+            "UPDATE queue_leases SET owner_id = ? WHERE lease_name = ?",
+            ("other-owner", "default"),
         )
         conn.commit()
 
@@ -461,8 +432,8 @@ def test_persistent_job_queue_fails_job_if_lease_lost_before_persist(tmp_path: P
     def lose_lease_and_return_result():
         with closing(queue._connect()) as conn:
             conn.execute(
-                "UPDATE queue_leases SET owner_id = ?, owner_pid = ? WHERE lease_name = ?",
-                ("other-owner", 999999, "default"),
+                "UPDATE queue_leases SET owner_id = ? WHERE lease_name = ?",
+                ("other-owner", "default"),
             )
             conn.commit()
         return {"ok": True}
@@ -562,8 +533,8 @@ def test_persistent_job_queue_preserves_empty_result_if_lease_lost_before_persis
     def lose_lease_and_return_empty_result():
         with closing(queue._connect()) as conn:
             conn.execute(
-                "UPDATE queue_leases SET owner_id = ?, owner_pid = ? WHERE lease_name = ?",
-                ("other-owner", 999999, "default"),
+                "UPDATE queue_leases SET owner_id = ? WHERE lease_name = ?",
+                ("other-owner", "default"),
             )
             conn.commit()
         return {}

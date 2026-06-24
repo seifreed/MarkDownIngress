@@ -12,7 +12,6 @@ correctly in tests.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -261,18 +260,6 @@ class _ExternalOwnerJobQueue:
 
 def _is_active_owner_error(exc: RuntimeError) -> bool:
     return str(exc) == "Job queue DB is already owned by another active instance"
-
-
-def _is_owner_process_alive(owner_pid: int) -> bool:
-    if owner_pid <= 0:
-        return False
-    try:
-        os.kill(owner_pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def _is_stale_heartbeat(heartbeat_at: str) -> bool:

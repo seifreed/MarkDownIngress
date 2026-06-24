@@ -3386,48 +3386,19 @@ def test_external_owner_backend_read_failure_transitions_queue_to_backend_error(
     assert isinstance(exc_info.value.__cause__, sqlite3.Error)
 
 
-def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_without_pid_metadata(tmp_path):
+def test_external_owner_backend_still_owned_keeps_fresh_heartbeat(tmp_path):
     db_path = tmp_path / "jobs.sqlite3"
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute("""
             CREATE TABLE queue_leases (
                 lease_name TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
-                heartbeat_at TEXT NOT NULL,
-                owner_pid INTEGER NOT NULL DEFAULT 0,
-                owner_start_time REAL
+                heartbeat_at TEXT NOT NULL
             )
             """)
         conn.execute(
-            "INSERT INTO queue_leases "
-            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("default", "other-owner", datetime.now(UTC).isoformat(), 0, None),
-        )
-        conn.commit()
-
-    queue = api_server._ExternalOwnerJobQueue(db_path)
-
-    assert api_server._external_owner_backend_still_owned(queue) is True
-
-
-def test_external_owner_backend_still_owned_keeps_fresh_heartbeat_with_dead_pid(tmp_path):
-    db_path = tmp_path / "jobs.sqlite3"
-    with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute("""
-            CREATE TABLE queue_leases (
-                lease_name TEXT PRIMARY KEY,
-                owner_id TEXT NOT NULL,
-                heartbeat_at TEXT NOT NULL,
-                owner_pid INTEGER NOT NULL DEFAULT 0,
-                owner_start_time REAL
-            )
-            """)
-        conn.execute(
-            "INSERT INTO queue_leases "
-            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("default", "other-owner", datetime.now(UTC).isoformat(), 999999, None),
+            "INSERT INTO queue_leases " "(lease_name, owner_id, heartbeat_at) VALUES (?, ?, ?)",
+            ("default", "other-owner", datetime.now(UTC).isoformat()),
         )
         conn.commit()
 

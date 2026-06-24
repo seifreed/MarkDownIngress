@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import threading
 import time
@@ -20,35 +19,6 @@ class JobQueueLifecycleMixin:
     """Lease ownership, heartbeat, lifecycle state, and shutdown behavior."""
 
     _heartbeat_thread: threading.Thread | None
-
-    def _get_process_start_time(self: Any) -> float | None:
-        """Get the current process start time for PID recycling detection."""
-        try:
-            start_ticks = JobQueueLifecycleMixin._parse_proc_stat_start_ticks(os.getpid())
-            if start_ticks is not None:
-                clk_tck = int(os.sysconf("SC_CLK_TCK"))
-                if clk_tck > 0:
-                    return float(start_ticks / clk_tck)
-        except (OSError, ValueError, IndexError) as e:
-            _logger.debug("Could not read process start time from /proc: %s", e)
-        return None
-
-    @staticmethod
-    def _parse_proc_stat_start_ticks(pid: int) -> int | None:
-        """Parse /proc/{pid}/stat safely, handling spaces in the process name."""
-        proc_path = f"/proc/{pid}/stat"
-        if not os.path.exists(proc_path):
-            return None
-        with open(proc_path, encoding="utf-8") as f:
-            stat_line = f.read()
-        closing_parenthesis = stat_line.rfind(")")
-        if closing_parenthesis == -1:
-            return None
-        suffix = stat_line[closing_parenthesis + 1 :].strip()
-        parts = suffix.split()
-        if len(parts) > 19:
-            return int(parts[19])
-        return None
 
     @property
     def state(self: Any) -> str:
@@ -75,32 +45,6 @@ class JobQueueLifecycleMixin:
         heartbeat_dt = JobQueueLifecycleMixin._parse_iso(self, heartbeat_at)
         age_seconds = (datetime.now(UTC) - heartbeat_dt).total_seconds()
         return age_seconds > float(self.lease_timeout_seconds)
-
-    def _is_owner_process_alive(
-        self: Any, owner_pid: int, owner_start_time: float | None = None
-    ) -> bool:
-        """Check if a process with the given PID is still the expected owner."""
-        if owner_pid <= 0:
-            return False
-        try:
-            os.kill(owner_pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            pass
-
-        if owner_start_time is not None:
-            try:
-                start_ticks = JobQueueLifecycleMixin._parse_proc_stat_start_ticks(owner_pid)
-                if start_ticks is not None:
-                    clk_tck = int(os.sysconf("SC_CLK_TCK"))
-                    if clk_tck > 0:
-                        start_seconds = start_ticks / clk_tck
-                        if abs(start_seconds - owner_start_time) > 1.0:
-                            return False
-            except (OSError, ValueError, IndexError) as e:
-                _logger.debug("Could not verify owner process start time: %s", e)
-        return True
 
     def _assert_queue_usable(
         self: Any, *, require_lease: bool = False, allow_closing: bool = False
@@ -135,23 +79,15 @@ class JobQueueLifecycleMixin:
                 with closing(self._connect()) as conn:
                     conn.execute("BEGIN IMMEDIATE")
                     row = conn.execute(
-                        "SELECT owner_id, heartbeat_at, owner_pid, owner_start_time "
-                        "FROM queue_leases WHERE lease_name = ?",
+                        "SELECT owner_id, heartbeat_at FROM queue_leases WHERE lease_name = ?",
                         ("default",),
                     ).fetchone()
                     now_iso = utcnow()
                     if row is None:
                         conn.execute(
                             "INSERT INTO queue_leases "
-                            "(lease_name, owner_id, heartbeat_at, owner_pid, owner_start_time) "
-                            "VALUES (?, ?, ?, ?, ?)",
-                            (
-                                "default",
-                                self.instance_id,
-                                now_iso,
-                                self.owner_pid,
-                                self.owner_start_time,
-                            ),
+                            "(lease_name, owner_id, heartbeat_at) VALUES (?, ?, ?)",
+                            ("default", self.instance_id, now_iso),
                         )
                     else:
                         owner_id = row["owner_id"]
@@ -165,15 +101,8 @@ class JobQueueLifecycleMixin:
                         self._recovered_orphaned_jobs = owner_id == self.instance_id
                         conn.execute(
                             "UPDATE queue_leases "
-                            "SET owner_id = ?, heartbeat_at = ?, owner_pid = ?, "
-                            "owner_start_time = ? WHERE lease_name = ?",
-                            (
-                                self.instance_id,
-                                now_iso,
-                                self.owner_pid,
-                                self.owner_start_time,
-                                "default",
-                            ),
+                            "SET owner_id = ?, heartbeat_at = ? WHERE lease_name = ?",
+                            (self.instance_id, now_iso, "default"),
                         )
                     conn.commit()
             except sqlite3.OperationalError as e:
@@ -196,10 +125,10 @@ class JobQueueLifecycleMixin:
             cursor = conn.execute(
                 """
                 UPDATE queue_leases
-                SET heartbeat_at = ?, owner_pid = ?, owner_start_time = ?
+                SET heartbeat_at = ?
                 WHERE lease_name = ? AND owner_id = ?
                 """,
-                (utcnow(), self.owner_pid, self.owner_start_time, "default", self.instance_id),
+                (utcnow(), "default", self.instance_id),
             )
             conn.commit()
             updated = cursor.rowcount
