@@ -59,6 +59,12 @@ def _prepare_exception_copy(
         target.args = tuple(make_picklable(arg) for arg in raw_args)
     except (AttributeError, TypeError):
         pass
+    # Queue-safe by construction: __cause__/__context__/__traceback__ are
+    # excluded from Python's default exception serialization (only type, args
+    # and __dict__ are carried). Attaching the raw source preserves the real
+    # debug chain on the in-process (inflight thread) path, and is silently
+    # dropped — not serialized — when the copy crosses the subprocess
+    # multiprocessing.Queue, so it can never reintroduce unserializable state.
     target.__cause__ = source
     target.__suppress_context__ = getattr(source, "__suppress_context__", False)
     if hasattr(source, "__notes__"):

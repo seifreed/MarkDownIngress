@@ -1435,7 +1435,10 @@ def test_copy_batch_exception_sanitizes_args_and_attrs_for_pickle():
     assert type(copied) is _CopyBatchExceptionError
     assert isinstance(copied.args[0], str)
     assert isinstance(copied.payload, str)
-    pickle.dumps(copied)
+    # __cause__ holds the unserializable original, but it is excluded from
+    # exception serialization, so the round trip succeeds and drops the cause.
+    restored = pickle.loads(pickle.dumps(copied))
+    assert restored.__cause__ is None
 
 
 def test_inflight_followers_decremented_after_await():
