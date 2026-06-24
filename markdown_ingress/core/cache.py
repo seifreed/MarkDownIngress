@@ -15,7 +15,7 @@ Concrete implementations (MemoryCache, SQLiteCache) live in
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from typing import Any, cast
+from typing import Any
 
 from markdown_ingress.core.ssrf import normalize_url_for_identity
 from markdown_ingress.models import SafeDocument
@@ -74,21 +74,3 @@ class Cache(ABC):  # implements ICacheBackend protocol
             key_payload["extra"] = extra
         key_data = json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(key_data.encode()).hexdigest()
-
-
-def cache_backend_identity(cache_backend: object | None) -> dict[str, Any] | None:
-    """Return a stable JSON-serializable fingerprint for a cache backend."""
-    if cache_backend is None:
-        return None
-
-    while hasattr(cache_backend, "__wrapped__"):
-        cache_backend = cast(Any, cache_backend).__wrapped__
-
-    identity: dict[str, Any] = {
-        "type": f"{cache_backend.__class__.__module__}.{cache_backend.__class__.__qualname__}",
-    }
-    for attr in ("default_ttl", "max_entries", "db_path", "cleanup_threshold"):
-        if hasattr(cache_backend, attr):
-            identity[attr] = getattr(cache_backend, attr)
-
-    return identity

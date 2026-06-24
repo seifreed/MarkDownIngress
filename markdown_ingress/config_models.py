@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, fields, replace
-from enum import StrEnum
 from typing import Any, cast
 
 import markdown_ingress.config_output_profiles as output_profiles
@@ -40,14 +39,6 @@ _validate_output_profile_name = config_validation.validate_output_profile_name
 _validate_string_list = config_validation.validate_string_list
 _validate_regex_patterns = config_validation.validate_regex_patterns
 _collect_init_values = config_validation.collect_init_values
-
-
-class IngestMode(StrEnum):
-    """Valid ingestion modes."""
-
-    FAST = "fast"
-    RENDER = "render"
-    AUTO = "auto"
 
 
 @dataclass(init=False)

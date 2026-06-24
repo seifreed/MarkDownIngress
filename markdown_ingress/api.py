@@ -152,11 +152,6 @@ def ingest_many(
     )
 
 
-def _ingest_with_config(url: str, config: IngestConfig) -> SafeDocument:
-    """Internal function to perform ingestion with a config object."""
-    return ingest_resolved(url, config, playwright_available=PLAYWRIGHT_AVAILABLE)
-
-
 # Public compatibility API; internals collapse these into RetryIngestRequest.
 def retry_ingest(  # noqa: PLR0913
     url: str,

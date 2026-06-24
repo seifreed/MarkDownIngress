@@ -16,11 +16,7 @@ from markdown_ingress.core.config_env import (
     str_to_bool_or_string,
 )
 from markdown_ingress.core.config_env_overrides import (
-    FieldRestoreContext,
     apply_env_overrides,
-    restore_field,
-    validate_categorical_fields,
-    validate_numeric_fields,
 )
 
 
@@ -97,42 +93,12 @@ class ConfigLoader:
                 except yaml.YAMLError as exc:
                     raise ValueError(f"Unable to parse config file: {filepath}") from exc
 
-    def _restore_field(
-        self,
-        context: FieldRestoreContext,
-        attr_name: str,
-        message: str,
-        *args: object,
-    ) -> None:
-        """Revert a field to its pre-env-override value and update explicit tracking."""
-        restore_field(context, attr_name, message, *args)
-
     def _build_env_var_mapping(self) -> EnvVarMapping:
         """Return the mapping of env var name → (config attr, converter)."""
         return build_env_var_mapping(
             bool_converter=self._str_to_bool,
             bool_or_string_converter=self._str_to_bool_or_string,
         )
-
-    def _validate_categorical_fields(
-        self,
-        config: Config,
-        previous_values: dict,
-        previous_explicit: dict,
-        explicit: set,
-    ) -> None:
-        """Validate and restore categorical/enum fields that may have been set to invalid values."""
-        validate_categorical_fields(config, previous_values, previous_explicit, explicit)
-
-    def _validate_numeric_fields(
-        self,
-        config: Config,
-        previous_values: dict,
-        previous_explicit: dict,
-        explicit: set,
-    ) -> None:
-        """Validate and restore numeric fields that fall outside their allowed bounds."""
-        validate_numeric_fields(config, previous_values, previous_explicit, explicit)
 
     def _apply_env_overrides(self, config: Config) -> Config:
         """Apply environment variable overrides."""
