@@ -6,7 +6,6 @@ import random
 import socket
 import ssl
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -229,14 +228,6 @@ class FetchRequestPolicyMixin:
     @staticmethod
     def _host_key(url: str) -> str:
         return normalize_hostname(urlsplit(url).hostname or "")
-
-    @classmethod
-    def _effective_host(cls, final_url: str | None, fallback_host: str) -> str:
-        if not final_url:
-            return fallback_host
-        host_key = cast(Callable[[str], str], cls._host_key)
-        resolved = host_key(final_url)
-        return resolved or fallback_host
 
     def _handle_retryable_status(
         self: Any, response_host: str, status_code: int, retry_delay: float

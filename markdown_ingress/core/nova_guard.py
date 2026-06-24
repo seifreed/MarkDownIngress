@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from markdown_ingress.core.nova_rules import (
-    extract_rule_blocks,
     parse_bundled_rule_content,
     parse_rule_content,
     read_rules_file_atomically,
@@ -237,11 +236,6 @@ class NovaGuard:
                 len(parse_failures),
             )
         return rules
-
-    @staticmethod
-    def _extract_rule_blocks(content: str) -> list[str]:
-        """Extract top-level ``rule <name> { ... }`` blocks in O(n) time."""
-        return extract_rule_blocks(content)
 
     def scan(self, text: str) -> dict:
         """
