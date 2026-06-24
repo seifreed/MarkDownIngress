@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import copy
 import logging
+import sys
 import threading
 import time
 import weakref
@@ -102,7 +103,18 @@ class InFlightRegistry:
             if thread is None:
                 return
             self._cleanup_stop.set()
-        thread.join(timeout=_INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS)
+        try:
+            thread.join(timeout=_INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS)
+        except RuntimeError:
+            # PythonFinalizationError (a RuntimeError subclass, Python 3.13+) is
+            # raised when join() runs during interpreter shutdown — e.g. when a
+            # non-default registry is finalized via __del__ while the interpreter
+            # is tearing down. The cleanup thread is a daemon and is terminated
+            # automatically, so there is nothing to wait for. Re-raise anything
+            # that is not a shutdown-time failure.
+            if not sys.is_finalizing():
+                raise
+            return
         with self._cleanup_control_lock:
             if self._cleanup_thread is thread and not thread.is_alive():
                 self._cleanup_thread = None
