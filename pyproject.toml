@@ -124,6 +124,9 @@ exclude_lines = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# vulture_whitelist.py is a vulture allowlist, not importable source: it lists
+# bare symbol names that are unresolved by design, so ruff's F821 is spurious.
+extend-exclude = ["vulture_whitelist.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
