@@ -141,3 +141,7 @@ dmypy.json
 
 # Local project config files (not tracked)
 .pre-commit-config.yaml
+
+# Local MCP client config with machine-specific absolute paths
+# (copy .mcp.json.example -> .mcp.json and fill in your paths)
+.mcp.json

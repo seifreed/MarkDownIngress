@@ -346,7 +346,12 @@ fetch_url(url, render=False, strict=True)
 ### Register it in Claude Code
 
 Add the server to `.mcp.json` (per project) or `~/.claude.json` (global), using
-absolute paths to the venv interpreter and the script:
+absolute paths to the venv interpreter and the script. Copy the bundled
+template and fill in your paths:
+
+```bash
+cp .mcp.json.example .mcp.json   # then edit the two /abs/path/to/... entries
+```
 
 ```json
 {
