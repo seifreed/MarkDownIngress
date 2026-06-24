@@ -13,44 +13,120 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+from markdown_ingress import __version__
 from markdown_ingress.api_runtime import UNSET, build_runtime_config
 from markdown_ingress.application.batch import BatchProcessor
-from markdown_ingress.cli import (
-    IngestArgs,
-    _add_common_ingest_args,
-    _build_json_output,
-    _create_batch_parser,
-    _create_batch_processor,
-    _create_batch_results_table,
-    _create_ingest_parser,
-    _create_legacy_parser,
-    _create_standard_parser,
-    _determine_mode,
-    _display_basic_info,
-    _display_batch_summary,
-    _display_content,
-    _display_header,
-    _display_metadata,
-    _display_rich_output,
-    _display_security_info,
-    _display_token_info,
-    _is_legacy_mode,
-    _load_urls_from_file,
-    _prepare_ingest_params,
-    _process_batch_with_progress,
-    _save_batch_json,
-    _save_batch_markdown,
-    _save_batch_results,
-    _save_json_output,
-    _save_markdown_output,
+from markdown_ingress.cli import main
+from markdown_ingress.cli_commands import (
+    _build_batch_json_output,
     cmd_batch,
     cmd_ingest,
-    main,
+    ingest_many_with_progress,
 )
-from markdown_ingress.cli_commands import _build_batch_json_output, ingest_many_with_progress
-from markdown_ingress.cli_support import load_domain_policies
+from markdown_ingress.cli_commands import (
+    build_json_output as _build_json_output,
+)
+from markdown_ingress.cli_commands import (
+    create_batch_processor as _create_batch_processor,
+)
+from markdown_ingress.cli_commands import (
+    process_batch_with_progress as _process_batch_with_progress,
+)
+from markdown_ingress.cli_parsing import (
+    IngestArgs,
+)
+from markdown_ingress.cli_parsing import (
+    add_common_ingest_args as _add_common_ingest_args,
+)
+from markdown_ingress.cli_parsing import (
+    create_batch_parser as _create_batch_parser,
+)
+from markdown_ingress.cli_parsing import (
+    create_ingest_parser as _create_ingest_parser,
+)
+from markdown_ingress.cli_parsing import (
+    create_legacy_parser as _create_legacy_parser,
+)
+from markdown_ingress.cli_parsing import (
+    create_standard_parser as _create_standard_parser,
+)
+from markdown_ingress.cli_parsing import (
+    determine_mode as _determine_mode,
+)
+from markdown_ingress.cli_parsing import (
+    is_legacy_mode as _is_legacy_mode,
+)
+from markdown_ingress.cli_parsing import (
+    prepare_ingest_params as _prepare_ingest_params,
+)
+from markdown_ingress.cli_support import (
+    create_batch_results_table as _create_batch_results_table,
+)
+from markdown_ingress.cli_support import (
+    display_basic_info as _display_basic_info,
+)
+from markdown_ingress.cli_support import (
+    display_batch_summary as _display_batch_summary,
+)
+from markdown_ingress.cli_support import (
+    display_content as _display_content,
+)
+from markdown_ingress.cli_support import (
+    display_header,
+    display_rich_output,
+    load_domain_policies,
+)
+from markdown_ingress.cli_support import (
+    display_metadata as _display_metadata,
+)
+from markdown_ingress.cli_support import (
+    display_security_info as _display_security_info,
+)
+from markdown_ingress.cli_support import (
+    display_token_info as _display_token_info,
+)
+from markdown_ingress.cli_support import (
+    load_urls_from_file as _load_urls_from_file,
+)
+from markdown_ingress.cli_support import (
+    save_batch_results as _save_batch_results,
+)
+from markdown_ingress.cli_support import (
+    save_json_output as _save_json_output,
+)
+from markdown_ingress.cli_support import (
+    save_markdown_output as _save_markdown_output,
+)
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
+
+
+# ── Thin adapters over the canonical CLI helpers (test conveniences) ────────────
+def _display_header(_args=None):
+    return display_header(__version__)
+
+
+def _display_rich_output(doc, args):
+    return display_rich_output(doc, args, __version__)
+
+
+def _save_batch_json(output_path, urls, batch_result, no_content: bool = False):
+    args = type(
+        "Args",
+        (),
+        {"output": str(output_path), "json": True, "no_content": no_content},
+    )()
+    _save_batch_results(args, urls, batch_result)
+
+
+def _save_batch_markdown(output_path, batch_result, urls=None, no_content: bool = False):
+    args = type(
+        "Args",
+        (),
+        {"output": str(output_path), "json": False, "no_content": no_content},
+    )()
+    _save_batch_results(args, urls or [], batch_result)
+
 
 # ── Local HTTP test server ─────────────────────────────────────────────────────
 
