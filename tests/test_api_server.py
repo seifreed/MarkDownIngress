@@ -1646,18 +1646,6 @@ def test_versioned_extractor_evaluation_endpoint_is_rate_limited(monkeypatch):
     assert response.headers["Retry-After"] == "7"
 
 
-class _ImmediateThread:
-    def __init__(self, target=None, daemon=None, args=(), kwargs=None):
-        self._target = target
-        self._args = args
-        self._kwargs = kwargs or {}
-        self.daemon = daemon
-
-    def start(self):
-        if self._target is not None:
-            self._target(*self._args, **self._kwargs)
-
-
 @patch("markdown_ingress.api_server.ingest_many")
 def test_batch_job_polling_completes_and_returns_result(mock_ingest_many, monkeypatch, tmp_path):
     class FakeBatchResult:
