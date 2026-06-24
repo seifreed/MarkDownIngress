@@ -193,7 +193,13 @@ class InFlightRegistry:
                     # Fall through to new leader path
                 elif existing.done:
                     if existing.document is not None:
-                        existing.followers += 1
+                        # Bump followers under entry.condition — the lock that
+                        # guards followers in await_result (decrement) and
+                        # release (read). _lock is already held, so this keeps the
+                        # established _lock -> condition ordering and prevents a
+                        # lost update against a concurrent decrement.
+                        with existing.condition:
+                            existing.followers += 1
                         self._requests.move_to_end(request_key)
                         result = existing
                         skip_new_leader = True
@@ -202,8 +208,11 @@ class InFlightRegistry:
                         self._requests.pop(request_key)
                         # Fall through to new leader path
                 else:
-                    # Follower: increment under _lock (condition not needed for the write)
-                    existing.followers += 1
+                    # Follower: bump under entry.condition (see note above) so the
+                    # increment is mutually exclusive with the await_result
+                    # decrement; _lock is held, preserving _lock -> condition.
+                    with existing.condition:
+                        existing.followers += 1
                     self._requests.move_to_end(request_key)
                     result = existing
                     skip_new_leader = True

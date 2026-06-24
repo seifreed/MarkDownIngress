@@ -741,6 +741,67 @@ def test_inflight_release_keeps_entry_visible_until_followers_are_notified(monke
     assert release_thread.is_alive() is False
 
 
+def test_inflight_followers_counter_consistent_under_concurrency():
+    """Stress the followers counter across many leader+follower rounds.
+
+    followers is incremented in acquire() (under _lock) and decremented in
+    await_result() (under entry.condition); the increment now also takes
+    entry.condition so the two are mutually exclusive. This exercises the
+    concurrent path and guards against a regression that loses a follower
+    notification, hangs a waiter, or deadlocks. Every follower must receive the
+    leader's document and the entry must drain from the registry each round.
+    """
+    registry = InFlightRegistry()
+    document = SafeDocument(
+        markdown="payload",
+        metadata={},
+        token_estimate=1,
+        content_hash="sha256:test",
+        injection_score=0.0,
+    )
+    follower_count = 8
+
+    for round_idx in range(40):
+        key = f"req-{round_idx}"
+        assert registry.acquire(key) is None  # leader registers the entry
+
+        results: list[SafeDocument] = []
+        errors: list[Exception] = []
+        results_lock = threading.Lock()
+        # follower_count followers + 1 releaser all rendezvous so every follower
+        # has incremented the counter before release completes the entry.
+        barrier = threading.Barrier(follower_count + 1)
+
+        def follower() -> None:
+            entry = registry.acquire(key)
+            assert entry is not None
+            barrier.wait()
+            try:
+                document_result = registry.await_result(entry, key)
+                with results_lock:
+                    results.append(document_result)
+            except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+                with results_lock:
+                    errors.append(exc)
+
+        def releaser() -> None:
+            barrier.wait()
+            registry.release(key, document=document)
+
+        threads = [threading.Thread(target=follower) for _ in range(follower_count)]
+        threads.append(threading.Thread(target=releaser))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10.0)
+
+        assert not any(thread.is_alive() for thread in threads), "a thread hung"
+        assert not errors, errors
+        assert len(results) == follower_count
+        assert all(result.markdown == "payload" for result in results)
+        assert key not in registry._requests
+
+
 def test_inflight_registry_periodic_cleanup_can_restart_after_stop():
     registry = InFlightRegistry()
     try:
