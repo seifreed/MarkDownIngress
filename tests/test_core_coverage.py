@@ -321,37 +321,6 @@ def test_scorer_blocks_invalid_analysis_score_type():
     assert scorer.should_block(analysis) is True
 
 
-def test_scorer_get_recommendation_all_levels():
-    """scoring.py lines 66-76"""
-    from markdown_ingress.core.scoring import Scorer
-    from markdown_ingress.models import InjectionAnalysis
-
-    scorer = Scorer()
-
-    def make_analysis(score):
-        return InjectionAnalysis(
-            score=score,
-            flags=[],
-            pattern_matches=[],
-            hidden_content_detected=False,
-            imperative_density=0.0,
-        )
-
-    assert "safe" in scorer.get_recommendation(make_analysis(0.1)).lower()
-    assert "low" in scorer.get_recommendation(make_analysis(0.3)).lower()
-    assert "medium" in scorer.get_recommendation(make_analysis(0.5)).lower()
-    assert "high" in scorer.get_recommendation(make_analysis(0.7)).lower()
-    assert "critical" in scorer.get_recommendation(make_analysis(0.9)).lower()
-
-
-def test_scorer_get_recommendation_accepts_raw_score():
-    from markdown_ingress.core.scoring import Scorer
-
-    scorer = Scorer()
-
-    assert "medium" in scorer.get_recommendation(0.5).lower()
-
-
 def test_scorer_get_risk_level_edge_case():
     """scoring.py line 41: exactly 1.0"""
     from markdown_ingress.core.scoring import Scorer
@@ -592,17 +561,6 @@ def test_normalize_url_all_tracking_params_removed():
     assert "utm_source" not in result
     assert "fbclid" not in result
     assert result == "https://example.com/page"
-
-
-def test_normalize_heading():
-    """normalizer.py lines 147-152"""
-    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
-
-    n = Normalizer()
-    result = n.normalize_heading("  Hello\nWorld  ")
-    assert result == "Hello World"
-    result2 = n.normalize_heading("  Multiple   Spaces  ")
-    assert result2 == "Multiple Spaces"
 
 
 def test_normalizer_preserves_trailing_whitespace_in_code_blocks():

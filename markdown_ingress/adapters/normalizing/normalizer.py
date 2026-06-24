@@ -312,9 +312,3 @@ class Normalizer:  # implements INormalizer protocol
         return urlunparse(
             (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
         )
-
-    def normalize_heading(self, heading: str) -> str:
-        """Normalize heading text: trim, single line, no excess whitespace."""
-        heading = heading.replace("\n", " ")
-        heading = re.sub(r"\s+", " ", heading)
-        return heading.strip()
