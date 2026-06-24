@@ -18,7 +18,7 @@ just not in a way vulture's static pass can see. Verified one-by-one
 
 Usage — scan for NEW dead code (this file suppresses the known FPs):
 
-    vulture markdown_ingress vulture_whitelist.py
+    vulture markdown_ingress mcp_server.py vulture_whitelist.py
 
 A genuinely-dead symbol will appear in the output because it will NOT be
 listed here. When you intentionally remove or rename a whitelisted symbol,
@@ -80,3 +80,4 @@ _.list_plugins  # unused method (markdown_ingress/core/plugin.py:208)
 _.get_action  # unused method (markdown_ingress/core/policy.py:265)
 _.reset_stats  # unused method (markdown_ingress/core/resource_blocker.py:360)
 _.success_rate  # unused property (markdown_ingress/shared_results.py:82)
+fetch_url  # unused function (mcp_server.py:31) — registered via @mcp.tool() decorator
