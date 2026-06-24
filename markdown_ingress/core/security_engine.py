@@ -59,7 +59,6 @@ class SecurityEngine:
     # Default fallback score when Nova scan fails or returns None.
     # Conservative value: higher score = more suspicious.
     DEFAULT_EXCEPTION_FALLBACK_SCORE = 0.75
-    DEFAULT_NONE_SCORE = DEFAULT_EXCEPTION_FALLBACK_SCORE
 
     def __init__(
         self,
