@@ -86,24 +86,6 @@ def validate_job_db_path(db_path: str | Path) -> Path:
     )
 
 
-def is_private_ip(ip_str: str) -> bool:
-    """Check if an IP address is in a blocked private/reserved range."""
-    try:
-        for _, _, _, _, sockaddr in socket.getaddrinfo(ip_str, None):
-            ip_obj = ipaddress.ip_address(sockaddr[0])
-            if is_private_ip_address(ip_obj):
-                return True
-    except (socket.gaierror, OSError, ValueError):
-        return True
-    else:
-        return False
-
-
-def is_private_ip_address(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Check if an IP address object is in a blocked private/reserved range."""
-    return is_blocked_ip_address(normalize_ip_for_ssrf(ip_obj))
-
-
 def _validate_resolved_ip(
     hostname: str,
     normalized_hostname: str,
