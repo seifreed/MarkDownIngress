@@ -259,7 +259,8 @@ class Benchmark:
             report_lines.append(f"   Mode: {result.mode}")
             report_lines.append(
                 f"   Timing: {result.avg_time_ms:.1f}ms avg "
-                f"(min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms)"
+                f"(min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms, "
+                f"std dev: {result.std_dev_ms:.1f}ms)"
             )
             token_pct = (
                 f"-{result.reduction_percent:.1f}%" if result.reduction_percent > 0 else "0.0%"
