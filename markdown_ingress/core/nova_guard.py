@@ -4,6 +4,8 @@ Nova-tracer integration for advanced prompt injection detection.
 This integration is optional and degrades safely when NOVA rules are not configured.
 """
 
+import contextlib
+import io
 import logging
 from importlib import import_module
 from pathlib import Path
@@ -124,8 +126,13 @@ class NovaGuard:
             self.rules = self._load_bundled_rules()
         self.matchers: list = []
         if self.rules:
-            for rule in self.rules:
-                self.matchers.append(NovaMatcher(rule=rule, create_llm_evaluator=self.enable_llm))
+            # NovaMatcher prints diagnostics to stdout on construction, which would
+            # corrupt machine-readable (--json) output. Suppress it.
+            with contextlib.redirect_stdout(io.StringIO()):
+                for rule in self.rules:
+                    self.matchers.append(
+                        NovaMatcher(rule=rule, create_llm_evaluator=self.enable_llm)
+                    )
         else:
             logger.warning(
                 "Nova-tracer enabled but no rules were loaded. "

@@ -23,6 +23,11 @@ class TestNovaIntegration:
         assert guard.enable_semantics is True
         assert guard.enable_llm is False
 
+    def test_nova_guard_initialization_is_silent_on_stdout(self, capsys):
+        """NovaMatcher prints to stdout on build; it must not leak and corrupt --json."""
+        NovaGuard(enable_llm=False)
+        assert capsys.readouterr().out == ""
+
     @pytest.mark.parametrize(
         ("kwargs", "message"),
         [
