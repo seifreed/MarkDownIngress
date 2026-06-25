@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+import warnings
 from typing import Any, cast
 
 import httpx
@@ -155,15 +157,20 @@ class ClientLifecycleMixin:
                 "Could not inspect async client during finalization: %s", exc, exc_info=True
             )
 
-        if sync_client_exists or async_client_exists:
-            import warnings
-
-            warnings.warn(
-                "Fetcher was not properly closed; HTTP client resources may leak. "
-                "Use 'async with fetcher:' or call 'await fetcher.aclose()' explicitly.",
-                ResourceWarning,
-                stacklevel=2,
-            )
+        # Emitting a warning during interpreter shutdown is unreliable (the
+        # import machinery may be torn down, raising "import of warnings halted")
+        # and pointless — the process is exiting. Skip it then, like the other
+        # finalizer blocks below tolerate shutdown-time failures.
+        if (sync_client_exists or async_client_exists) and not sys.is_finalizing():
+            try:
+                warnings.warn(
+                    "Fetcher was not properly closed; HTTP client resources may leak. "
+                    "Use 'async with fetcher:' or call 'await fetcher.aclose()' explicitly.",
+                    ResourceWarning,
+                    stacklevel=2,
+                )
+            except Exception as exc:  # noqa: BLE001 - finalizers must tolerate shutdown
+                logger.debug("Could not emit ResourceWarning during finalization: %s", exc)
         try:
             with self._client_lock:
                 if self._sync_client is not None:
