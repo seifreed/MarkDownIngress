@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -122,14 +123,24 @@ class MarkdownConverter(IMarkdownConverter):
         return rows, first_row_has_th
 
     def _restore_placeholders(self, markdown: str, placeholders: dict[str, str]) -> str:
-        """Restore protected technical blocks into markdown output."""
+        """Restore protected technical blocks into markdown output.
+
+        A protected block (code fence, table) must start on its own line. When
+        the source nested it inline — e.g. a <pre> inside an <li>, which
+        markdownify leaves glued to the item text — break the placeholder onto
+        a new line so the restored block is valid markdown instead of
+        "- Item```...". Placeholders already at line start are untouched.
+        """
         for token, replacement in placeholders.items():
+            if token not in markdown:
+                continue
+            # Break a glued placeholder onto its own line first (the token has
+            # no backslashes, so it is a safe literal in the replacement).
+            markdown = re.sub(r"([^\n])" + re.escape(token), r"\1\n\n" + token, markdown)
             markdown = markdown.replace(token, replacement)
         return markdown
 
     def _clean_markdown(self, markdown: str) -> str:
-        import re
-
         markdown = re.sub(r"\n{3,}", "\n\n", markdown)
         markdown = re.sub(r"^(#{1,6})([^#\s])", r"\1 \2", markdown, flags=re.MULTILINE)
         markdown = re.sub(r"[ \t]+$", "", markdown, flags=re.MULTILINE)

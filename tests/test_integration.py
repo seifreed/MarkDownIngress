@@ -168,3 +168,38 @@ def test_markdown_converter_adds_space_to_spaceless_headings():
 
     assert converter._clean_markdown("##NoSpace") == "## NoSpace\n"
     assert converter._clean_markdown("######Deep") == "###### Deep\n"
+
+
+def test_markdown_converter_code_block_in_list_starts_on_own_line():
+    """A <pre> nested in an <li> must not glue its fence to the item text.
+
+    Regression: the code placeholder was restored inline, producing the
+    invalid "- Item```\\ncode\\n```" instead of a fence on its own line.
+    """
+    converter = MarkdownConverter()
+
+    markdown = converter.convert("<ul><li>Item<pre><code>code here</code></pre></li></ul>")
+
+    assert "- Item```" not in markdown
+    assert "- Item\n\n```\ncode here\n```" in markdown
+
+
+def test_markdown_converter_table_in_list_starts_on_own_line():
+    """A <table> nested in an <li> must start on its own line, not glued."""
+    converter = MarkdownConverter()
+
+    markdown = converter.convert(
+        "<ul><li>Row<table><tr><th>A</th></tr><tr><td>1</td></tr></table></li></ul>"
+    )
+
+    assert "- Row|" not in markdown
+    assert "- Row\n\n| A |" in markdown
+
+
+def test_markdown_converter_standalone_code_block_unchanged():
+    """Block-level code already on its own line keeps its original layout."""
+    converter = MarkdownConverter()
+
+    markdown = converter.convert('<pre><code class="language-python">x = 1</code></pre>')
+
+    assert markdown.startswith("```python\nx = 1\n```")
