@@ -23,6 +23,10 @@ from markdown_ingress.core.security_data import (
 
 _logger = logging.getLogger(__name__)
 
+# Precomputed str.translate table for the homoglyph map so normalization runs
+# as a single C-level pass instead of a per-character Python generator.
+_HOMOGLYPH_TRANSLATION = {ord(key): value for key, value in _HOMOGLYPH_MAP.items()}
+
 
 def _normalize_to_ascii(text: str) -> str:
     """Normalize Unicode text to ASCII for pattern matching, handling homoglyphs.
@@ -35,13 +39,13 @@ def _normalize_to_ascii(text: str) -> str:
         - Cyrillic U+0430 maps to 'a'
         - Greek U+03BF maps to 'o'
     """
-    mapped = "".join(_HOMOGLYPH_MAP.get(c, c) for c in text)
+    mapped = text.translate(_HOMOGLYPH_TRANSLATION)
     compatible = unicodedata.normalize("NFKC", mapped)
 
     # Then normalize to NFD and filter combining marks (for accented chars)
     normalized = unicodedata.normalize("NFD", compatible)
     # Keep only ASCII characters (removes remaining non-ASCII and combining marks)
-    return "".join(c for c in normalized if ord(c) < 128)
+    return normalized.encode("ascii", "ignore").decode("ascii")
 
 
 def _normalize_security_text(text: str) -> str:
