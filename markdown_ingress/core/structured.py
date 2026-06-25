@@ -4,7 +4,7 @@ Structured extraction helpers for block-level and chunk-level outputs.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 
 from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
@@ -14,9 +14,13 @@ from markdown_ingress.core.structured_chunks import ChunkBuilder as ChunkBuilder
 from markdown_ingress.core.structured_chunks import (
     register_token_estimator_factory as register_token_estimator_factory,
 )
+from markdown_ingress.core.url_safety import dangerous_url_scheme
 from markdown_ingress.models import DocumentChunk, StructuredBlock
 
 CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
+
+# Inline HTML tags mapped to their surrounding Markdown emphasis markers.
+_INLINE_EMPHASIS = {"strong": "**", "b": "**", "em": "*", "i": "*"}
 
 
 def render_code_fence(code: str, language: str | None = None) -> str:
@@ -139,10 +143,12 @@ class HTMLStructureExtractor:
     def _to_markdown_block(self, element: Tag) -> str:
         if element.name and element.name.startswith("h"):
             level = int(element.name[1])
-            return f"{'#' * level} {self._to_text(element).strip()}"
+            return f"{'#' * level} {self._inline_markdown(element.children)}".rstrip()
         if element.name == "blockquote":
             blockquote_lines = [
-                line.strip() for line in self._to_text(element).splitlines() if line.strip()
+                line.strip()
+                for line in self._inline_markdown(element.children).splitlines()
+                if line.strip()
             ]
             return "\n".join(f"> {line}" for line in blockquote_lines)
         if element.name == "pre":
@@ -162,7 +168,73 @@ class HTMLStructureExtractor:
             return render_markdown_table(rows, has_header=first_row_has_th)
         if element.name in {"ul", "ol"}:
             return self._render_list(element)
-        return self._to_text(element).strip()
+        return self._inline_markdown(element.children)
+
+    def _inline_markdown(
+        self, nodes: Iterable[PageElement], nested_lists: list[Tag] | None = None
+    ) -> str:
+        """Render inline child nodes to Markdown, preserving links and emphasis.
+
+        Keeps ``<a>`` as ``[text](href)`` (dropping dangerous-scheme hrefs like
+        the main converter), ``<strong>``/``<em>`` as ``**``/``*`` and ``<code>``
+        as backticks, so block/chunk markdown carries the same inline formatting
+        as the primary document markdown instead of flattening to plain text.
+
+        When ``nested_lists`` is provided, nested ``<ul>``/``<ol>`` are collected
+        into it (and skipped inline) so list-item content can render them
+        separately; otherwise they are ignored.
+        """
+        # Iterative walk (not recursion) so pathologically deep inline wrappers
+        # — e.g. thousands of nested <span> — cannot blow the Python stack.
+        # Closing markers are pushed onto the stack to run after a tag's children.
+        out: list[str] = []
+        stack: list[PageElement | str] = list(reversed(list(nodes)))
+        while stack:
+            item = stack.pop()
+            if isinstance(item, str):
+                out.append(item)
+                continue
+            if isinstance(item, NavigableString):
+                out.append(str(item))
+                continue
+            if not isinstance(item, Tag):
+                continue
+            self._expand_inline_tag(item, out, stack, nested_lists)
+        return " ".join("".join(out).split())
+
+    def _expand_inline_tag(
+        self,
+        node: Tag,
+        out: list[str],
+        stack: list[PageElement | str],
+        nested_lists: list[Tag] | None,
+    ) -> None:
+        if node.name in {"ul", "ol"}:
+            if nested_lists is not None:
+                nested_lists.append(node)
+            return
+        if node.name == "code":
+            out.append(f"`{node.get_text()}`")
+            return
+        if node.name == "br":
+            out.append(" ")
+            return
+        if node.name == "a":
+            href = node.get("href")
+            if isinstance(href, str) and href.strip() and dangerous_url_scheme(href) is None:
+                out.append("[")
+                stack.append(f"]({href.strip()})")
+            stack.extend(reversed(list(node.children)))
+            return
+        if node.name in _INLINE_EMPHASIS and node.get_text(strip=True):
+            marker = _INLINE_EMPHASIS[node.name]
+            out.append(marker)
+            stack.append(marker)
+            stack.extend(reversed(list(node.children)))
+            return
+        if node.name in _INLINE_EMPHASIS:
+            return  # empty emphasis renders nothing
+        stack.extend(reversed(list(node.children)))
 
     def _to_text(self, element: Tag) -> str:
         if element.name == "pre":
@@ -210,26 +282,10 @@ class HTMLStructureExtractor:
                     )
                 )
 
-    @staticmethod
-    def _list_item_content(item: Tag) -> tuple[str, list[Tag]]:
-        parts: list[str] = []
+    def _list_item_content(self, item: Tag) -> tuple[str, list[Tag]]:
         nested_lists: list[Tag] = []
-
-        stack: list[PageElement] = list(reversed(list(item.children)))
-        while stack:
-            node = stack.pop()
-            if isinstance(node, NavigableString):
-                value = " ".join(str(node).split())
-                if value:
-                    parts.append(value)
-                continue
-            if not isinstance(node, Tag):
-                continue
-            if node.name in {"ul", "ol"}:
-                nested_lists.append(node)
-                continue
-            stack.extend(reversed(list(node.children)))
-        return " ".join(parts), nested_lists
+        direct = self._inline_markdown(item.children, nested_lists)
+        return direct, nested_lists
 
     def _detect_code_language(self, element: Tag) -> str | None:
         raw_classes: list[str] = []

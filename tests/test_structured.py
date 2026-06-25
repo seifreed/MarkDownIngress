@@ -187,6 +187,44 @@ def test_html_structure_extractor_deep_wrapped_list_text_does_not_crash():
     assert blocks[0].text == "- Item"
 
 
+def test_block_markdown_preserves_inline_links_and_emphasis():
+    """Block/chunk markdown keeps inline links, bold and italic (not plain text)."""
+    html = (
+        "<html><body><article>"
+        "<h2><em>Intro</em> Section</h2>"
+        '<p>Visit <a href="https://example.com/doc">the docs</a> for '
+        "<strong>important</strong> notes.</p>"
+        '<ul><li>See <a href="https://api.example.com">the API</a></li></ul>'
+        "</article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+    by_type = {b.block_type: b.markdown for b in blocks}
+
+    assert by_type["heading"].strip() == "## *Intro* Section"
+    assert by_type["paragraph"].strip() == (
+        "Visit [the docs](https://example.com/doc) for **important** notes."
+    )
+    assert by_type["list"].strip() == "- See [the API](https://api.example.com)"
+    # .text stays plain (no markdown syntax)
+    para = next(b for b in blocks if b.block_type == "paragraph")
+    assert para.text == "Visit the docs for important notes."
+
+
+def test_block_markdown_drops_dangerous_link_scheme_keeping_text():
+    """A javascript: href is stripped like the main converter, text preserved."""
+    html = (
+        "<html><body><article>"
+        '<p>Click <a href="javascript:alert(1)">here</a></p>'
+        "</article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert blocks[0].markdown.strip() == "Click here"
+    assert "javascript:" not in blocks[0].markdown
+
+
 def test_html_structure_extractor_preserves_nested_ordered_list_hierarchy():
     html = """
     <html><body><article>
