@@ -12,6 +12,7 @@ class _WhitespaceState:
     fenced_code_fence: str | None = None
     in_indented_code: bool = False
     previous_blank_outside: bool = False
+    in_list: bool = False
 
 
 class Normalizer:  # implements INormalizer protocol
@@ -218,9 +219,22 @@ class Normalizer:  # implements INormalizer protocol
             state.previous_blank_outside = False
             return
         if self._MARKDOWN_PREFIX_RE.match(line):
+            state.in_list = True
+            self._append_markdown_prefix_line(line, state, normalized)
+            return
+        if state.in_list and self._is_list_continuation(line):
+            # Indented continuation of a list item (e.g. a second paragraph in a
+            # loose list). Preserve its leading indentation like a prefix line
+            # so it stays part of the item instead of being flattened to the
+            # top level. 4+ space lines are already kept via the indented-code
+            # branch above; this rescues the 2-3 space cases.
             self._append_markdown_prefix_line(line, state, normalized)
             return
         self._append_regular_line(line, state, normalized)
+
+    @staticmethod
+    def _is_list_continuation(line: str) -> bool:
+        return bool(line) and line[0] in (" ", "\t") and bool(line.strip())
 
     def _append_indented_code_line(
         self,
@@ -265,6 +279,9 @@ class Normalizer:  # implements INormalizer protocol
             return
         normalized.append(cleaned)
         state.previous_blank_outside = False
+        # A non-indented paragraph (continuations are handled before this) ends
+        # any active list context.
+        state.in_list = False
 
     @staticmethod
     def _clean_regular_line(line: str) -> str:

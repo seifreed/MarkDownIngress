@@ -640,6 +640,37 @@ def test_normalizer_preserves_deep_nested_ordered_list_indentation():
     assert "      1. SubSub" in result
 
 
+def test_normalizer_preserves_list_item_continuation_paragraph():
+    """A second paragraph in a loose list item keeps its 2-3 space indentation.
+
+    Regression: such a continuation has no list marker and fewer than 4 leading
+    spaces, so it was treated as a regular line and left-stripped, detaching it
+    from the item and promoting it to the top level.
+    """
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
+
+    n = Normalizer()
+    text = "- Para in item\n\n  Second para"
+    result = n.normalize_whitespace(text)
+
+    assert "  Second para" in result
+    assert "\nSecond para" not in result
+
+
+def test_normalizer_top_level_paragraph_after_list_is_not_indented():
+    """A non-indented paragraph after a list stays at the top level (list ends)."""
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
+
+    n = Normalizer()
+    # After the list ends with a flush-left paragraph, later indented text is a
+    # regular line again and is stripped.
+    text = "- item\nplain paragraph\n  later indented line"
+    result = n.normalize_whitespace(text)
+
+    assert "plain paragraph" in result
+    assert "  later indented line" not in result
+
+
 # ---------------------------------------------------------------------------
 # fetcher.py
 # ---------------------------------------------------------------------------
