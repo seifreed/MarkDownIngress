@@ -85,10 +85,15 @@ def _detect_content_language_info(
     normalize_multilingual: bool,
 ) -> dict[str, Any] | None:
     try:
-        from langdetect import detect  # type: ignore[import-untyped]
+        from langdetect import DetectorFactory, detect  # type: ignore[import-untyped]
         from langdetect.lang_detect_exception import (  # type: ignore[import-untyped]
             LangDetectException,
         )
+
+        # langdetect seeds its detector randomly per process, so the same text
+        # can resolve to different languages across runs. Pin the seed for
+        # deterministic output.
+        DetectorFactory.seed = 0
 
         body = parser.css_first("body")
         if body:

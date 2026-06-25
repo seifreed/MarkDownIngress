@@ -100,6 +100,26 @@ def test_extract_language_from_content_language_list_uses_primary_language():
     assert metadata["language"] == "en"
 
 
+def test_content_language_detection_is_deterministic():
+    """langdetect must be seeded so detection is reproducible across runs."""
+    from langdetect import DetectorFactory
+
+    DetectorFactory.seed = 12345  # simulate a fresh process with a random seed
+    html = """
+    <html>
+    <head><title>Test</title></head>
+    <body>
+        This is a paragraph of plain English content that is long enough to
+        trigger the langdetect fallback because no language is declared on the
+        document anywhere at all in the markup here today.
+    </body>
+    </html>
+    """
+    extractor = MetadataExtractor()
+    extractor.extract(html, "https://example.com")
+    assert DetectorFactory.seed == 0
+
+
 def test_extract_description():
     """Test extracting description"""
     html = """
