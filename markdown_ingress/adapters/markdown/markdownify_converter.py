@@ -134,9 +134,14 @@ class MarkdownConverter(IMarkdownConverter):
         for token, replacement in placeholders.items():
             if token not in markdown:
                 continue
-            # Break a glued placeholder onto its own line first (the token has
-            # no backslashes, so it is a safe literal in the replacement).
-            markdown = re.sub(r"([^\n])" + re.escape(token), r"\1\n\n" + token, markdown)
+            # The token has no backslashes, so it is a safe literal replacement.
+            # A placeholder alone on an indented line (a block nested in a list
+            # item) drops to column 0 instead of leaving an orphan whitespace
+            # line; one glued to preceding same-line text breaks onto its own
+            # line. Both keep the restored fence/table valid block markdown.
+            escaped = re.escape(token)
+            markdown = re.sub(r"(?m)^[ \t]+" + escaped, token, markdown)
+            markdown = re.sub(r"([^\n \t])[ \t]*" + escaped, r"\1\n\n" + token, markdown)
             markdown = markdown.replace(token, replacement)
         return markdown
 

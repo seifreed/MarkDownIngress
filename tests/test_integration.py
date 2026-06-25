@@ -203,3 +203,17 @@ def test_markdown_converter_standalone_code_block_unchanged():
     markdown = converter.convert('<pre><code class="language-python">x = 1</code></pre>')
 
     assert markdown.startswith("```python\nx = 1\n```")
+
+
+def test_markdown_converter_indented_block_leaves_no_orphan_whitespace_line():
+    """A code block nested in a deep list drops to column 0 without an orphan
+    whitespace-only line where its indentation used to be."""
+    converter = MarkdownConverter()
+
+    markdown = converter.convert(
+        "<ul><li>A<ul><li><p>B</p><pre><code>x=1</code></pre></li></ul></li></ul>"
+    )
+
+    assert "```\nx=1\n```" in markdown
+    whitespace_only = [line for line in markdown.split("\n") if line and not line.strip()]
+    assert whitespace_only == []
