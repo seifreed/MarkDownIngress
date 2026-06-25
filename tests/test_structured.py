@@ -204,8 +204,10 @@ def test_html_structure_extractor_preserves_nested_ordered_list_hierarchy():
     blocks = HTMLStructureExtractor().extract(html)
 
     assert len(blocks) == 1
-    assert blocks[0].markdown == "1. First\n  1. Nested one\n  2. Nested two\n"
-    assert blocks[0].text == "1. First\n  1. Nested one\n  2. Nested two"
+    # Nested ordered items indent 3 spaces to align under "1. " (CommonMark),
+    # matching the main markdown converter.
+    assert blocks[0].markdown == "1. First\n   1. Nested one\n   2. Nested two\n"
+    assert blocks[0].text == "1. First\n   1. Nested one\n   2. Nested two"
 
 
 def test_chunk_builder_covers_none_heading_and_size_strategies():

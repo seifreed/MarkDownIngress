@@ -177,19 +177,18 @@ class HTMLStructureExtractor:
         return "\n".join(lines)
 
     def _append_list_lines(self, element: Tag, lines: list[str], *, depth: int) -> None:
-        stack: list[tuple[Tag, int, list[Tag], int]] = [
-            (element, depth, list(element.find_all("li", recursive=False)), 0)
+        stack: list[tuple[Tag, str, list[Tag], int]] = [
+            (element, "  " * depth, list(element.find_all("li", recursive=False)), 0)
         ]
         while stack:
-            list_element, current_depth, items, item_index = stack.pop()
+            list_element, indent, items, item_index = stack.pop()
             if item_index >= len(items):
                 continue
 
             item = items[item_index]
-            stack.append((list_element, current_depth, items, item_index + 1))
+            stack.append((list_element, indent, items, item_index + 1))
 
             ordered = list_element.name == "ol"
-            indent = "  " * current_depth
             index = item_index + 1
             prefix = f"{index}." if ordered else "-"
             direct_text, nested_lists = self._list_item_content(item)
@@ -197,11 +196,15 @@ class HTMLStructureExtractor:
             if direct_text:
                 line = f"{line} {direct_text}"
             lines.append(line)
+            # Indent nested items to align under the parent marker's content
+            # column ("- " -> 2, "1. " -> 3, "10. " -> 4) so nested ordered lists
+            # stay valid CommonMark children, matching the main converter.
+            child_indent = indent + " " * (len(prefix) + 1)
             for nested_list in reversed(nested_lists):
                 stack.append(
                     (
                         nested_list,
-                        current_depth + 1,
+                        child_indent,
                         list(nested_list.find_all("li", recursive=False)),
                         0,
                     )
