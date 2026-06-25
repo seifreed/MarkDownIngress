@@ -39,6 +39,11 @@ def normalize_url_value_for_scheme_detection(value: object) -> str:
     """Return a normalized URL value suitable for dangerous-scheme checks."""
     decoded = _decode_url_value_for_detection(value)
     normalized = unicodedata.normalize("NFKC", decoded).strip().lower()
+    # Fast path: a plain ASCII printable string has no Cc/Cf/Mn or non-ASCII
+    # whitespace, so the only ignorable char it can contain is the ASCII space.
+    # This avoids the per-character unicodedata.category() scan for typical URLs.
+    if normalized.isascii() and normalized.isprintable():
+        return normalized.replace(" ", "")
     return "".join(char for char in normalized if not _is_ignorable_url_scheme_char(char))
 
 

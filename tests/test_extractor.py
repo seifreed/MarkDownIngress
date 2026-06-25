@@ -115,6 +115,24 @@ def test_sanitize_obfuscated_dangerous_url_schemes():
     assert "data:text/html" not in result.html.lower()
 
 
+def test_dangerous_url_scheme_detects_across_fast_and_slow_paths():
+    from markdown_ingress.core.url_safety import (
+        dangerous_url_scheme,
+        normalize_url_value_for_scheme_detection,
+    )
+
+    # Fast path (plain ASCII): spaces are stripped before scheme matching.
+    assert dangerous_url_scheme("java script:alert(1)") == "javascript"
+    assert dangerous_url_scheme("  JAVASCRIPT:alert(1)  ") == "javascript"
+    assert dangerous_url_scheme("https://example.com/path") is None
+    assert normalize_url_value_for_scheme_detection("j a v a script:1") == "javascript:1"
+
+    # Slow path (non-ASCII obfuscation chars) must still be caught.
+    assert dangerous_url_scheme("jav​ascript:alert(1)") == "javascript"  # zero-width space
+    assert dangerous_url_scheme("java­script:alert(1)") == "javascript"  # soft hyphen
+    assert dangerous_url_scheme("data:image/png;base64,AAAA") is None  # safe data url
+
+
 def test_visible_absolute_positioned_content_is_preserved():
     extractor = Extractor()
     html = """
