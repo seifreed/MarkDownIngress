@@ -610,6 +610,36 @@ def test_normalizer_preserves_indented_code_block_indentation():
     assert "    code line 2" in result
 
 
+def test_normalizer_preserves_deep_nested_list_indentation():
+    """Nested list items 3+ levels deep (4+ spaces) must keep their indentation.
+
+    Regression: the markdown-prefix matcher capped leading spaces at 3, so a
+    third-level item ("    - L3") was treated as a regular line and left-
+    stripped, flattening it to the top level ("- L3").
+    """
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
+
+    n = Normalizer()
+    text = "- L1\n  - L2\n    - L3\n      - L4\n"
+    result = n.normalize_whitespace(text)
+
+    assert "    - L3" in result
+    assert "      - L4" in result
+    # No item should have been promoted to the top level by losing indent.
+    assert "\n- L3" not in result
+
+
+def test_normalizer_preserves_deep_nested_ordered_list_indentation():
+    """Ordered list items nested past 3 spaces must also keep indentation."""
+    from markdown_ingress.adapters.normalizing.normalizer import Normalizer
+
+    n = Normalizer()
+    text = "1. One\n   1. Sub\n      1. SubSub\n"
+    result = n.normalize_whitespace(text)
+
+    assert "      1. SubSub" in result
+
+
 # ---------------------------------------------------------------------------
 # fetcher.py
 # ---------------------------------------------------------------------------

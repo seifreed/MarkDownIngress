@@ -99,13 +99,15 @@ class Normalizer:  # implements INormalizer protocol
     # - Unordered list items: "- ", "* ", "+ " (with optional leading spaces)
     # - Ordered list items: "1. ", "2. " etc (with optional leading spaces)
     # - Blockquotes: ">"
-    # Note: Indented code blocks (4+ spaces) are NOT preserved here because
-    # their interior spacing must not be collapsed. They're handled separately.
+    # Leading indentation is allowed to any depth so that nested list items
+    # (3rd level and deeper accumulate to 4+ spaces) keep their indentation.
+    # Genuine indented code blocks reach _append_indented_code_line first via
+    # the previous_blank_outside gate, so they are never matched here.
     _MARKDOWN_PREFIX_RE = re.compile(
         r"^(?:"
-        r"(?:[ ]{0,3}[-*+][ \t])"  # unordered list items (CommonMark: max 3 leading spaces)
-        r"|(?:[ ]{0,3}\d+\.[ \t])"  # ordered list items
-        r"|(?:[ ]{0,3}>)"  # blockquotes
+        r"(?:[ ]*[-*+][ \t])"  # unordered list items (nested lists indent past 3 spaces)
+        r"|(?:[ ]*\d+\.[ \t])"  # ordered list items
+        r"|(?:[ ]*>)"  # blockquotes
         r")",
     )
 
