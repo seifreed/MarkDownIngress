@@ -211,6 +211,34 @@ def test_block_markdown_preserves_inline_links_and_emphasis():
     assert para.text == "Visit the docs for important notes."
 
 
+def test_block_markdown_preserves_nested_blockquote_depth():
+    """Nested blockquotes gain a '> ' per level, like the main converter."""
+    html = (
+        "<html><body><article>"
+        "<blockquote><p>Outer</p><blockquote><p>Inner</p></blockquote></blockquote>"
+        "</article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert blocks[0].markdown.strip() == "> Outer\n>\n> > Inner"
+
+
+def test_html_structure_extractor_deep_blockquotes_do_not_crash():
+    html = (
+        "<html><body><article>"
+        + "<blockquote>" * 1200
+        + "<p>deep</p>"
+        + "</blockquote>" * 1200
+        + "</article></body></html>"
+    )
+
+    blocks = HTMLStructureExtractor().extract(html)
+
+    assert len(blocks) == 1
+    assert "deep" in blocks[0].markdown
+
+
 def test_block_markdown_drops_dangerous_link_scheme_keeping_text():
     """A javascript: href is stripped like the main converter, text preserved."""
     html = (

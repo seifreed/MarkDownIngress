@@ -22,6 +22,10 @@ CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
 # Inline HTML tags mapped to their surrounding Markdown emphasis markers.
 _INLINE_EMPHASIS = {"strong": "**", "b": "**", "em": "*", "i": "*"}
 
+# Bound recursive blockquote nesting so pathological input cannot overflow the
+# stack; deeper nesting is flattened to plain quoted text.
+_MAX_BLOCKQUOTE_DEPTH = 100
+
 
 def render_code_fence(code: str, language: str | None = None) -> str:
     """Render a fenced markdown code block.
@@ -145,12 +149,7 @@ class HTMLStructureExtractor:
             level = int(element.name[1])
             return f"{'#' * level} {self._inline_markdown(element.children)}".rstrip()
         if element.name == "blockquote":
-            blockquote_lines = [
-                line.strip()
-                for line in self._inline_markdown(element.children).splitlines()
-                if line.strip()
-            ]
-            return "\n".join(f"> {line}" for line in blockquote_lines)
+            return self._render_blockquote(element)
         if element.name == "pre":
             code = element.get_text("\n", strip=False)
             language = self._detect_code_language(element)
@@ -242,6 +241,32 @@ class HTMLStructureExtractor:
         if element.name in {"ul", "ol"}:
             return self._render_list(element)
         return element.get_text(" ", strip=True)
+
+    def _render_blockquote(self, element: Tag, depth: int = 0) -> str:
+        """Render a blockquote, adding a '> ' level per nesting depth.
+
+        Mirrors the main converter ('> > deep' for nested quotes, blank '>'
+        between paragraphs). A depth guard flattens pathologically deep nesting
+        to plain quoted text so malicious input cannot overflow the stack.
+        """
+        if depth >= _MAX_BLOCKQUOTE_DEPTH:
+            return f"> {' '.join(element.get_text(' ').split())}".rstrip()
+        groups: list[list[str]] = []
+        for child in element.children:
+            if isinstance(child, Tag) and child.name == "blockquote":
+                groups.append(self._render_blockquote(child, depth + 1).splitlines())
+            elif isinstance(child, Tag) and child.name in {"ul", "ol"}:
+                groups.append(self._render_list(child).splitlines())
+            else:
+                inline = self._inline_markdown([child])
+                if inline.strip():
+                    groups.append(inline.strip().splitlines())
+        lines: list[str] = []
+        for index, group in enumerate(groups):
+            if index > 0:
+                lines.append("")
+            lines.extend(group)
+        return "\n".join(f"> {line}".rstrip() for line in lines)
 
     def _render_list(self, element: Tag) -> str:
         lines: list[str] = []
