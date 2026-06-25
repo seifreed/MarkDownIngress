@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from bs4 import BeautifulSoup
-from markdownify import markdownify as md
+from markdownify import MarkdownConverter as MarkdownifyConverter
 
 from markdown_ingress.adapters.normalizing.normalizer import Normalizer
 from markdown_ingress.core.interfaces import IMarkdownConverter
@@ -26,16 +26,17 @@ class MarkdownConverter(IMarkdownConverter):
         self.normalizer = Normalizer()
 
     def convert(self, html: str) -> str:
-        html, placeholders = self._prepare_html(html)
+        soup, placeholders = self._prepare_soup(html)
 
-        markdown = md(
-            html,
+        # Convert the already-parsed soup directly instead of round-tripping
+        # through str(soup) + a second parse inside markdownify.markdownify().
+        markdown = MarkdownifyConverter(
             heading_style="ATX",
             bullets="-",
             strip=["script", "style"],
             escape_asterisks=False,
             escape_underscores=False,
-        )
+        ).convert_soup(soup)
 
         markdown = self.normalizer.normalize(markdown)
         markdown = self._clean_markdown(markdown)
@@ -46,13 +47,18 @@ class MarkdownConverter(IMarkdownConverter):
 
         return markdown
 
-    def _prepare_html(self, html: str) -> tuple[str, dict[str, str]]:
-        """Normalize links and protect complex structures before markdownify."""
+    def _prepare_soup(self, html: str) -> tuple[BeautifulSoup, dict[str, str]]:
+        """Parse HTML, normalize links, and protect complex structures."""
         soup = BeautifulSoup(html, "html.parser")
         placeholders: dict[str, str] = {}
         self._normalize_links(soup)
         self._protect_code_blocks(soup, placeholders)
         self._protect_tables(soup, placeholders)
+        return soup, placeholders
+
+    def _prepare_html(self, html: str) -> tuple[str, dict[str, str]]:
+        """Serialized form of :meth:`_prepare_soup` (kept for callers/tests)."""
+        soup, placeholders = self._prepare_soup(html)
         return str(soup), placeholders
 
     def _normalize_links(self, soup: Any) -> None:
