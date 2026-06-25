@@ -146,3 +146,25 @@ def test_markdown_converter_removes_obfuscated_dangerous_links():
     assert "vbscript:" not in markdown.lower()
     assert "data:text/html" not in markdown.lower()
     assert "[Safe](https://example.test/?ok=1)" in markdown
+
+
+def test_markdown_converter_preserves_multilevel_headings():
+    """ATX headings h2-h6 must keep their hash run intact, not split into '# #'."""
+    converter = MarkdownConverter()
+    html = "<article><h1>One</h1><h2>Two</h2><h3>Three</h3><h6>Six</h6></article>"
+
+    markdown = converter.convert(html)
+
+    assert "# One" in markdown
+    assert "## Two" in markdown
+    assert "### Three" in markdown
+    assert "###### Six" in markdown
+    assert "# # " not in markdown
+
+
+def test_markdown_converter_adds_space_to_spaceless_headings():
+    """A heading whose hashes touch the text gets a single normalizing space."""
+    converter = MarkdownConverter()
+
+    assert converter._clean_markdown("##NoSpace") == "## NoSpace\n"
+    assert converter._clean_markdown("######Deep") == "###### Deep\n"

@@ -131,7 +131,7 @@ class MarkdownConverter(IMarkdownConverter):
         import re
 
         markdown = re.sub(r"\n{3,}", "\n\n", markdown)
-        markdown = re.sub(r"^(#{1,6})(\S)", r"\1 \2", markdown, flags=re.MULTILINE)
+        markdown = re.sub(r"^(#{1,6})([^#\s])", r"\1 \2", markdown, flags=re.MULTILINE)
         markdown = re.sub(r"[ \t]+$", "", markdown, flags=re.MULTILINE)
 
         prev = None
