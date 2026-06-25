@@ -1616,6 +1616,9 @@ def test_benchmark_run_batch_skip_failures(monkeypatch):
     bench = Benchmark()
     results = bench.run_batch(["http://fail1.com", "http://fail2.com"], iterations=1)
     assert results == []
+    # Failures must be recorded with their reason so callers can surface them
+    assert [url for url, _ in bench.failures] == ["http://fail1.com", "http://fail2.com"]
+    assert all("network error" in reason for _, reason in bench.failures)
 
 
 def test_benchmark_compare_modes_both_fail(monkeypatch):

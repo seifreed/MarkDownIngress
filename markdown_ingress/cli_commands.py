@@ -336,6 +336,8 @@ def cmd_benchmark(args):
         iterations=args.iterations,
         compare_extractors_enabled=args.compare_extractors,
     )
+    for failed_url, reason in bench.failures:
+        console.print(f"[yellow]Skipped {failed_url}: {reason}")
     report = bench.generate_report(results)
     if args.output:
         Path(args.output).write_text(report, encoding="utf-8")

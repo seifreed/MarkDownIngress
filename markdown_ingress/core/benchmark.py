@@ -61,6 +61,7 @@ class Benchmark:
         self.model = model
         self._fetcher_factory = fetcher_factory
         self._compare_fn = compare_fn
+        self.failures: list[tuple[str, str]] = []
 
     def _create_comparison_fetcher(self) -> IFetcher:
         if self._fetcher_factory is None:
@@ -88,6 +89,7 @@ class Benchmark:
         timings = []
         last_doc = None
         errors = 0
+        last_error: str | None = None
 
         # Run multiple iterations
         for _ in range(iterations):
@@ -101,10 +103,12 @@ class Benchmark:
 
             except Exception as e:  # noqa: BLE001 - benchmark records failed iterations
                 errors += 1
+                last_error = str(e)
                 _logger.debug("Benchmark iteration failed: %s", e)
 
         if not timings or not last_doc:
-            raise ValueError(f"All benchmark iterations failed for {url}")
+            detail = f": {last_error}" if last_error else ""
+            raise ValueError(f"All benchmark iterations failed for {url}{detail}")
 
         # Calculate timing stats
         avg_time = statistics.mean(timings)
@@ -192,6 +196,7 @@ class Benchmark:
             List of BenchmarkResult objects
         """
         results = []
+        self.failures = []
 
         for url in urls:
             try:
@@ -203,8 +208,9 @@ class Benchmark:
                 )
                 results.append(result)
             except Exception as e:  # noqa: BLE001 - batch benchmarks skip failed URLs
-                # Skip failed URLs but log for debugging
+                # Skip failed URLs but record the reason so callers can surface it
                 _logger.debug("Benchmark failed for URL %s: %s", url, e)
+                self.failures.append((url, str(e)))
 
         return results
 
