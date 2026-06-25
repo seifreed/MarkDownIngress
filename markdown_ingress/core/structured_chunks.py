@@ -77,7 +77,7 @@ class ChunkBuilder:
                 markdown=markdown,
                 block_ordinals=[block.ordinal for block in group],
                 structural_hash=structural_hash,
-                token_estimate=self.token_estimator.estimate(text),
+                token_estimate=0,  # filled in once below, after any overlap edits
                 char_start=char_start,
                 char_end=char_end,
                 metadata={
@@ -92,6 +92,12 @@ class ChunkBuilder:
 
         if chunk_overlap > 0 and len(chunks) > 1:
             self._apply_overlap(chunks, chunk_overlap)
+
+        # Estimate tokens once per chunk on its final text. Doing it here instead
+        # of during construction avoids re-tokenizing every overlapped chunk
+        # (whose text gains an overlap prefix afterwards).
+        for chunk in chunks:
+            chunk.token_estimate = self.token_estimator.estimate(chunk.text)
 
         return chunks
 
@@ -118,7 +124,6 @@ class ChunkBuilder:
             curr_chunk.metadata["text_includes_overlap"] = True
             curr_chunk.metadata["emitted_char_start"] = overlap_prefix_len
             curr_chunk.metadata["emitted_char_end"] = overlap_prefix_len + original_text_len
-            curr_chunk.token_estimate = self.token_estimator.estimate(curr_chunk.text)
 
     def _group_blocks(
         self,
