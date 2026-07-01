@@ -43,6 +43,16 @@ def test_docker_compose_uses_current_schema() -> None:
     assert not compose.startswith("version:")
 
 
+def test_docker_healthchecks_use_get_not_head() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "--spider" not in dockerfile
+    assert "--spider" not in compose
+    assert "-O /dev/null http://localhost:8000/health" in dockerfile
+    assert '"-O", "/dev/null", "http://localhost:8000/health"' in compose
+
+
 def test_mcp_docs_and_template_use_installed_console_script() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     template = Path(".mcp.json.example").read_text(encoding="utf-8")

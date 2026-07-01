@@ -16,7 +16,7 @@ services:
       # Playwright specific
       - PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
