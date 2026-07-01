@@ -1,6 +1,6 @@
 # Multi-stage build for MarkDownIngress API Server
 # Stage 1: Base image with system dependencies
-FROM python:3.13-slim as base
+FROM python:3.13-slim AS base
 
 # Install system dependencies for Playwright
 RUN apt-get update && apt-get install -y \
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Stage 2: Dependencies
-FROM base as dependencies
+FROM base AS dependencies
 
 # Copy dependency files
 COPY pyproject.toml /app/
@@ -57,7 +57,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 RUN playwright install --with-deps chromium
 
 # Stage 3: Application
-FROM base as application
+FROM base AS application
 
 # Copy installed packages from dependencies stage
 COPY --from=dependencies /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
