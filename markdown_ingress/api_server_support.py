@@ -13,6 +13,7 @@ from markdown_ingress.api_server_models import (
     _allow_local_webhooks_enabled,
     _validate_url_no_ssrf,
 )
+from markdown_ingress.config_output_profiles import output_profile_fields
 from markdown_ingress.models import SafeDocument, SecurityReport
 
 _SENSITIVE_BATCH_ERROR_TYPES = frozenset(
@@ -32,6 +33,7 @@ _SENSITIVE_BATCH_ERROR_MARKERS = (
     "resolves to blocked",
     "database password",
 )
+_PROFILE_MANAGED_REQUEST_FIELDS = output_profile_fields()
 
 
 def _public_batch_error_detail(error: str | None, error_type: str | None = None) -> str | None:
@@ -112,7 +114,7 @@ def _common_ingest_kwargs(request: IngestRequest | BatchIngestRequest) -> dict[s
     Callers add the URL argument (``url=`` or ``urls=``) and any endpoint-specific
     extras such as ``max_concurrent``.
     """
-    return {
+    kwargs = {
         "mode": request.mode,
         "strict": request.strict,
         "timeout": float(request.timeout),
@@ -148,6 +150,11 @@ def _common_ingest_kwargs(request: IngestRequest | BatchIngestRequest) -> dict[s
         "render_cost_budget": request.render_cost_budget,
         "domain_policies": domain_policy_payload(request.domain_policies) or None,
     }
+    explicit_fields: set[str] = getattr(request, "model_fields_set", set())
+    if "output_profile" in explicit_fields:
+        for field_name in _PROFILE_MANAGED_REQUEST_FIELDS - explicit_fields:
+            kwargs.pop(field_name, None)
+    return kwargs
 
 
 def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[str, Any]:

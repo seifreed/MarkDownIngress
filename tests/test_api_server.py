@@ -46,7 +46,7 @@ from markdown_ingress.api_server_models import (
     RetryIngestRequest,
 )
 from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.models import SafeDocument, SecurityReport
+from markdown_ingress.models import FetchResult, SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchErrorItem
 
 client = TestClient(app)
@@ -823,6 +823,55 @@ def test_versioned_ingest_endpoint_forwards_profiles_and_domain_policies(mock_in
             "notes": "Docs profile",
         }
     ]
+
+
+def test_ingest_endpoint_output_profile_applies_profile_defaults(monkeypatch):
+    html = """
+    <html>
+      <head><title>Guide</title></head>
+      <body>
+        <main>
+          <h1>Guide</h1>
+          <p>Safe documentation content with enough words for extraction.</p>
+          <h2>Details</h2>
+          <p>More safe content for chunk generation and structured output.</p>
+        </main>
+      </body>
+    </html>
+    """
+
+    def fake_fetch_sync(self, url: str):
+        return FetchResult(
+            html=html,
+            url=url,
+            status_code=200,
+            final_url=url,
+            headers={},
+            timing_ms=1.0,
+            metadata={},
+        )
+
+    monkeypatch.setattr(
+        "markdown_ingress.adapters.fetching.httpx_fetcher.Fetcher.fetch_sync",
+        fake_fetch_sync,
+    )
+
+    response = client.post(
+        "/api/v1/ingest",
+        json={
+            "url": "https://example.com/guide",
+            "mode": "fast",
+            "output_profile": "rag_chunkable",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"]["output_profile"] == "rag_chunkable"
+    assert data["metadata"]["output_formats"] == ["markdown", "blocks", "chunks"]
+    assert data["metadata"]["chunking_strategy"] == "heading"
+    assert data["structured_blocks"]
+    assert data["chunks"]
 
 
 def test_ingest_endpoint_invalid_mode():
