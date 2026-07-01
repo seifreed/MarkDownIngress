@@ -2147,6 +2147,36 @@ def test_auto_mode_does_not_skip_render_for_author_content_urls():
     assert calls["renderer"] == 1
 
 
+def test_auto_mode_skips_render_for_small_substantial_fast_result():
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Small</h1>"
+                "<p>Enough text for a complete static page with useful content.</p>"
+                "</article></body></html>",
+            )
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            raise AssertionError("render should not run for substantial fast content")
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    doc = use_case.execute(
+        "https://example.com/small",
+        IngestConfig(mode="auto", timeout=3.0),
+    )
+
+    assert doc.metadata["auto_mode_used"] == "fast"
+    assert calls["renderer"] == 0
+
+
 def test_output_profile_rag_chunkable_emits_blocks_chunks_and_observability(
     monkeypatch, rich_article_html
 ):

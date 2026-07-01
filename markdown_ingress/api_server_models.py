@@ -155,7 +155,7 @@ class _IngestParams(BaseModel):
     chunking_strategy: ChunkingStrategy = Field(default="none")
     chunk_size: int = Field(default=1200, ge=100, le=MAX_CHUNK_SIZE)
     chunk_overlap: int = Field(default=120, ge=0, le=5000)
-    auto_render_threshold: int = Field(default=50, ge=1, le=5000)
+    auto_render_threshold: int = Field(default=10, ge=1, le=5000)
     screenshot: bool | None = None
     extract_metadata: bool = Field(default=True)
     extract_links: bool = Field(default=True)

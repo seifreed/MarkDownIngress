@@ -63,7 +63,7 @@ class IngestConfig:
     timeout: float = 30.0
     """Request timeout in seconds"""
 
-    auto_render_threshold: int = 50
+    auto_render_threshold: int = 10
     """Token threshold for auto mode (if fast returns < this, retry with render)"""
 
     # Rendering parameters (render mode only)

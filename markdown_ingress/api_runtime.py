@@ -93,7 +93,7 @@ _DEFAULT_NONE_RUNTIME_VALUES: dict[str, object] = {
     "strict": True,
     "model": "gpt-4",
     "timeout": 30.0,
-    "auto_render_threshold": 50,
+    "auto_render_threshold": 10,
     "stealth": False,
     "disable_http2": False,
     "extreme_mode": False,
