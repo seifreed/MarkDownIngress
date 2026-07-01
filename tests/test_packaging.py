@@ -54,6 +54,28 @@ def test_mcp_server_import_does_not_load_ingest_stack() -> None:
     assert result.stdout.strip() == "False"
 
 
+def test_mcp_server_import_without_mcp_extra_does_not_exit() -> None:
+    code = """
+import builtins
+real_import = builtins.__import__
+def fake_import(name, *args, **kwargs):
+    if name == "mcp" or name.startswith("mcp."):
+        raise ModuleNotFoundError(name)
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = fake_import
+import mcp_server
+print(mcp_server.mcp is None)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "True"
+
+
 def test_public_ingest_import_does_not_load_optional_runtime_stacks() -> None:
     result = subprocess.run(
         [

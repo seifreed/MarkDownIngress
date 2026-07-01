@@ -15,18 +15,25 @@ prefer this tool over its built-in web fetch.
 
 from __future__ import annotations
 
+from typing import Any
+
+_FastMCP: Any
 try:
-    from mcp.server.fastmcp import FastMCP
-except ModuleNotFoundError as exc:  # pragma: no cover
-    raise SystemExit(
+    from mcp.server.fastmcp import FastMCP as _FastMCP
+except ModuleNotFoundError:  # pragma: no cover
+    _FastMCP = None
+
+
+def _missing_mcp_message() -> str:
+    return (
         "The MCP server needs the 'mcp' package. Install it with:\n"
         '    pip install -e ".[mcp]"   (or: pip install mcp)'
-    ) from exc
-
-mcp = FastMCP("markdown-ingress")
+    )
 
 
-@mcp.tool()
+mcp = _FastMCP("markdown-ingress") if _FastMCP is not None else None
+
+
 async def fetch_url(url: str, render: bool = False, strict: bool = True) -> dict:
     """Fetch a web page as sanitized, token-optimized Markdown.
 
@@ -66,8 +73,14 @@ async def fetch_url(url: str, render: bool = False, strict: bool = True) -> dict
     }
 
 
+if mcp is not None:
+    mcp.tool()(fetch_url)
+
+
 def main() -> None:
     """Run the stdio MCP server."""
+    if mcp is None:
+        raise SystemExit(_missing_mcp_message())
     mcp.run()
 
 
