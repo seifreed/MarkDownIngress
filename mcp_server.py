@@ -27,7 +27,8 @@ except ModuleNotFoundError:  # pragma: no cover
 def _missing_mcp_message() -> str:
     return (
         "The MCP server needs the 'mcp' package. Install it with:\n"
-        '    pip install -e ".[mcp]"   (or: pip install mcp)'
+        '    pip install "markdown-ingress[mcp]"\n'
+        'For a source checkout: pip install -e ".[mcp]"'
     )
 
 

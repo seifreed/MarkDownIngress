@@ -91,6 +91,7 @@ def fake_import(name, *args, **kwargs):
 builtins.__import__ = fake_import
 import mcp_server
 print(mcp_server.mcp is None)
+print(mcp_server._missing_mcp_message())
 """
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -99,7 +100,10 @@ print(mcp_server.mcp is None)
         text=True,
     )
 
-    assert result.stdout.strip() == "True"
+    lines = result.stdout.splitlines()
+    assert lines[0] == "True"
+    assert 'pip install "markdown-ingress[mcp]"' in result.stdout
+    assert 'pip install -e ".[mcp]"' in result.stdout
 
 
 def test_mcp_fetch_url_uses_fast_mode_unless_render_requested(monkeypatch) -> None:
