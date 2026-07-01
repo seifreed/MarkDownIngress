@@ -284,6 +284,8 @@ def cmd_benchmark(args):
     )
     for failed_url, reason in bench.failures:
         console.print(f"[yellow]Skipped {failed_url}: {reason}")
+    if not results:
+        raise RuntimeError("No benchmark results")
     report = bench.generate_report(results)
     if args.output:
         Path(args.output).write_text(report, encoding="utf-8")

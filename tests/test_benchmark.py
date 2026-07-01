@@ -108,3 +108,29 @@ class TestBenchmark:
         report = report_path.read_text(encoding="utf-8")
         assert "Extractors:" in report
         assert "Extractor token averages:" in report
+
+    def test_cli_benchmark_fails_when_all_urls_fail(self, local_servers, tmp_path, monkeypatch):
+        """CLI benchmark exits non-zero when no URL produced timing data."""
+        monkeypatch.delenv("MDI_ALLOW_LOCAL_URLS", raising=False)
+        urls = tmp_path / "urls.txt"
+        urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "markdown_ingress.cli",
+                "benchmark",
+                str(urls),
+                "--iterations",
+                "1",
+                "--fast",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 1
+        assert "Skipped" in result.stdout
+        assert "No benchmark results" in result.stdout
