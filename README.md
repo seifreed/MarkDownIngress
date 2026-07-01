@@ -167,6 +167,8 @@ markdown-ingress benchmark urls.txt --iterations 5 --compare-extractors
 | `--output-profile PROFILE` | Apply `llm_safe`, `rag_chunkable`, `for_search`, `for_archive` |
 | `--extract-blocks` | Emit structured blocks (headings, tables, code, lists) |
 | `--chunking-strategy {none,heading,size}` | Build stable native chunks |
+| `--advanced-security` / `--use-llm` | Enable Nova semantic / optional LLM-assisted detection |
+| `--render-cost-budget N` | Cap render-mode cost units for auto/render workflows |
 | `--domain-policy-file FILE` | Load per-host policy overrides from JSON |
 | `--json` / `--save FILE` | Emit JSON / write primary output to a file |
 | `--show-observability` | Print stage timings and policy/cost telemetry |
