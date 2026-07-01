@@ -88,6 +88,26 @@ def _raise_runtime_http_error(exc: Exception) -> NoReturn:
     raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_DETAIL)
 
 
+def _log_runtime_error(message: str, exc: Exception, *args: object) -> None:
+    """Keep expected HTTP-mapped failures out of server error logs."""
+    if isinstance(
+        exc,
+        (
+            ImportError,
+            UnsupportedContentTypeError,
+            DomainCircuitOpenError,
+            httpx.InvalidURL,
+            httpx.UnsupportedProtocol,
+            httpx.HTTPStatusError,
+            ValueError,
+            PolicyBlockedError,
+        ),
+    ):
+        _logger.debug(message, *args, exc_info=True)
+        return
+    _logger.exception(message, *args)
+
+
 def _is_queue_full_error(exc: Exception) -> bool:
     """Return whether a RuntimeError from the job queue is the expected capacity denial."""
     return str(exc) == "Job queue is full"
@@ -122,7 +142,7 @@ async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
         )
         return to_document_response(doc)
     except Exception as exc:
-        _logger.exception("Error processing ingest request for %s", request.url)
+        _log_runtime_error("Error processing ingest request for %s", exc, request.url)
         _raise_runtime_http_error(exc)
 
 
@@ -143,7 +163,7 @@ async def handle_retry_ingest(request: RetryIngestRequest, retry_ingest_func) ->
         )
         return to_document_response(doc)
     except Exception as exc:
-        _logger.exception("Error processing retry ingest request for %s", request.url)
+        _log_runtime_error("Error processing retry ingest request for %s", exc, request.url)
         _raise_runtime_http_error(exc)
 
 
@@ -151,7 +171,7 @@ async def handle_sync_batch(request: BatchIngestRequest, ingest_many_func) -> Ba
     try:
         return BatchIngestResponse(**await sync_batch_response(request, ingest_many_func))
     except Exception as exc:
-        _logger.exception("Error processing sync batch request")
+        _log_runtime_error("Error processing sync batch request", exc)
         _raise_runtime_http_error(exc)
 
 

@@ -725,19 +725,20 @@ def test_ingest_endpoint_auto_mode(mock_ingest):
 
 
 @patch("markdown_ingress.api_server.ingest")
-def test_ingest_endpoint_returns_403_for_policy_block(mock_ingest):
+def test_ingest_endpoint_returns_403_for_policy_block(mock_ingest, caplog):
     blocked_doc = create_mock_document()
     blocked_doc.metadata["policy_action"] = "block"
     blocked_doc.flags = blocked_doc.flags + ["policy_block"]
     mock_ingest.side_effect = PolicyBlockedError("Blocked by policy", document=blocked_doc)
 
-    response = client.post(
-        "/api/v1/ingest",
-        json={
-            "url": "https://example.com",
-            "mode": "fast",
-        },
-    )
+    with caplog.at_level(logging.ERROR, logger="markdown_ingress.api_server_handlers"):
+        response = client.post(
+            "/api/v1/ingest",
+            json={
+                "url": "https://example.com",
+                "mode": "fast",
+            },
+        )
 
     # Security fix (S12): 403 must not leak flags or policy_action.
     assert response.status_code == 403
@@ -746,6 +747,7 @@ def test_ingest_endpoint_returns_403_for_policy_block(mock_ingest):
     assert data["detail"]["message"] == "Content blocked by security policy"
     assert "policy_action" not in data["detail"]
     assert "flags" not in data["detail"]
+    assert not caplog.records
 
 
 @patch("markdown_ingress.api_server.ingest")
