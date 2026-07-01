@@ -678,6 +678,12 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapsh
         current_queue = JOB_QUEUE
         history = list(_JOB_QUEUE_HISTORY)
         repair_thread = _JOB_QUEUE_REPAIR_THREAD
+    if current_queue is None and not history:
+        _ensure_job_queue_initialized()
+        with _JOB_QUEUE_LOCK:
+            current_queue = JOB_QUEUE
+            history = list(_JOB_QUEUE_HISTORY)
+            repair_thread = _JOB_QUEUE_REPAIR_THREAD
     return build_job_subsystem_snapshot(
         JobSubsystemSnapshotInputs(
             current_queue=current_queue,
