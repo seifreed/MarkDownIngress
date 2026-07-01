@@ -8,6 +8,7 @@ from pathlib import Path
 
 from markdown_ingress.adapters.fetching.httpx_fetcher import UnsupportedContentTypeError
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.core.policy import PolicyBlockedError
 from tests.url_dataset_campaign import (
     CampaignScenario,
     _load_availability_pool,
@@ -54,6 +55,11 @@ def test_classify_error_preserves_non_html_exception_classification():
         "Unsupported content type for HTML ingestion: application/pdf"
     )
     assert classify_error(exc) == "dataset_non_html"
+
+
+def test_classify_error_maps_policy_blocks():
+    exc = PolicyBlockedError("Policy 'normal' blocked content")
+    assert classify_error(exc) == "policy_blocked"
 
 
 def test_classify_error_maps_http_status_variants():

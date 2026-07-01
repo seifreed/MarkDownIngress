@@ -20,6 +20,7 @@ from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher, Unsupporte
 from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_AVAILABLE
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.orchestrator import get_ingest_stats, reset_ingest_stats
+from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument
 
 DATASET_URL = "https://raw.githubusercontent.com/ada-url/url-dataset/refs/heads/main/out.txt"
@@ -417,6 +418,8 @@ def classify_error(exc: Exception) -> str:
     message = str(exc).lower()
     if "circuit breaker open" in message:
         return "local_guardrail_circuit_breaker"
+    if isinstance(exc, PolicyBlockedError):
+        return "policy_blocked"
     if isinstance(exc, UnsupportedContentTypeError):
         return "dataset_non_html"
 
