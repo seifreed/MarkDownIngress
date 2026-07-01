@@ -3,6 +3,7 @@
 import asyncio
 import gc
 import importlib
+import importlib.util
 import pickle
 import queue as queue_module
 import threading
@@ -205,13 +206,11 @@ def test_batch_processor_applies_only_explicit_overrides_on_base_config():
     assert config.timeout == 10.0
 
 
-def test_batch_processor_renderer_availability_uses_playwright_constant(monkeypatch):
-    import markdown_ingress.adapters.rendering.playwright_renderer as renderer_module
+def test_batch_processor_renderer_availability_uses_find_spec(monkeypatch):
     import markdown_ingress.application.batch as batch_module
 
-    original = renderer_module.PLAYWRIGHT_INSTALLED
     try:
-        monkeypatch.setattr(renderer_module, "PLAYWRIGHT_INSTALLED", False)
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
         reloaded_batch = importlib.reload(batch_module)
 
         processor = reloaded_batch.BatchProcessor(mode="auto")
@@ -219,7 +218,6 @@ def test_batch_processor_renderer_availability_uses_playwright_constant(monkeypa
         assert reloaded_batch.RENDERER_AVAILABLE is False
         assert processor._batch_use_case.ingest_use_case.playwright_available is False
     finally:
-        monkeypatch.setattr(renderer_module, "PLAYWRIGHT_INSTALLED", original)
         importlib.reload(batch_module)
 
 

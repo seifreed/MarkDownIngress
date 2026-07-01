@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.util import find_spec
 
 from markdown_ingress.api_runtime import (
     _validate_batch_max_concurrent as _validate_max_concurrent,
@@ -21,12 +22,7 @@ from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 _logger = logging.getLogger(__name__)
 
-try:
-    from markdown_ingress.adapters.rendering.playwright_renderer import PLAYWRIGHT_INSTALLED
-
-    RENDERER_AVAILABLE = PLAYWRIGHT_INSTALLED
-except ImportError:
-    RENDERER_AVAILABLE = False
+RENDERER_AVAILABLE = find_spec("playwright") is not None
 
 
 @dataclass

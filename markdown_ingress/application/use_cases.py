@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from importlib.util import find_spec
 from typing import cast
 
 from markdown_ingress.application.batch_ingest_use_case import (
@@ -59,13 +60,7 @@ _logger = logging.getLogger(__name__)
 _register_all_factories()
 # -------------------------------------------------------------------------------
 
-try:
-    import playwright.async_api as _playwright_check
-
-    PLAYWRIGHT_AVAILABLE: bool = True
-    del _playwright_check
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
+PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 
 
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:

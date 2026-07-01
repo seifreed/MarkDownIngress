@@ -20,21 +20,18 @@ from markdown_ingress.core.stealth.js_payloads import (
 
 _rng = random.SystemRandom()
 
-try:
-    from playwright.async_api import (
-        Error as PlaywrightError,
-    )
-    from playwright.async_api import (
-        TimeoutError as PlaywrightTimeoutError,
-    )
-except ImportError:  # pragma: no cover
-    PlaywrightError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
-    PlaywrightTimeoutError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
-
 
 def _get_random_webgl_fingerprint() -> tuple[str, str]:
     """Return one realistic WebGL vendor/renderer pair."""
     return _rng.choice(WEBGL_FINGERPRINTS)
+
+
+def _playwright_errors() -> tuple[type[BaseException], ...]:
+    try:
+        from playwright.async_api import Error, TimeoutError
+    except ImportError:  # pragma: no cover
+        return (Exception,)
+    return (TimeoutError, Error)
 
 
 # ============================================================================
@@ -92,5 +89,5 @@ async def inject_stealth_post_nav(page) -> None:
     """
     try:
         await page.evaluate(STEALTH_JS_POST_LOAD)
-    except (PlaywrightTimeoutError, PlaywrightError):
+    except _playwright_errors():
         pass  # pragma: no cover

@@ -8,10 +8,8 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from importlib.util import find_spec
 
-from markdown_ingress.adapters.rendering.playwright_renderer import (
-    PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
-)
 from markdown_ingress.api_runtime import (
     UNSET,
     _validate_batch_max_concurrent,
@@ -37,6 +35,7 @@ from markdown_ingress.shared_results import BatchResult
 
 logger = logging.getLogger(__name__)
 
+PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
 
 

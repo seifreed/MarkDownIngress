@@ -1,10 +1,8 @@
 """Main public API for MarkDownIngress."""
 
 from collections.abc import Callable, Sequence
+from importlib.util import find_spec
 
-from markdown_ingress.adapters.rendering.playwright_renderer import (
-    PLAYWRIGHT_INSTALLED as PLAYWRIGHT_AVAILABLE,
-)
 from markdown_ingress.api_facade import (
     UNSET,
     RetryIngestRequest,
@@ -22,6 +20,7 @@ from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
 
+PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 _ingest_resolved = ingest_resolved
 
 
