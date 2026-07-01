@@ -14,7 +14,6 @@ from rich.table import Table
 
 from markdown_ingress import __version__, compare_extractors, ingest, ingest_many_async
 from markdown_ingress.api_runtime import UNSET
-from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.cli_parsing import (
     _extract_cli_feature_flags,
     determine_mode,
@@ -75,85 +74,6 @@ def cmd_ingest(args):
             exc_info=True,
         )
         sys.exit(1)
-
-
-def create_batch_processor(args: Namespace) -> BatchProcessor:
-    """Create and configure batch processor."""
-    runtime_config = load_runtime_config(args)
-    base_config = runtime_config.to_ingest_config() if runtime_config is not None else None
-    explicit_overrides: set[str] = set()
-    mode = determine_mode(args) or (runtime_config.mode if runtime_config is not None else "auto")
-    if determine_mode(args) is not None:
-        explicit_overrides.add("mode")
-    # Handle strict flag: distinguish between explicit False, explicit True, and not set
-    # --strict sets strict=True, --permissive sets strict=False
-    # If neither is set, use runtime_config.strict or None (let config resolution handle default)
-    if getattr(args, "permissive", False):
-        strict = False
-        explicit_overrides.add("strict")
-    elif getattr(args, "strict", False):
-        strict = True
-        explicit_overrides.add("strict")
-    elif runtime_config is not None:
-        strict = runtime_config.strict
-    else:
-        strict = True  # Match IngestConfig default
-
-    # Validate and apply timeout with minimum
-    timeout = (
-        args.timeout
-        if args.timeout is not None
-        else (runtime_config.batch_timeout if runtime_config is not None else 30.0)
-    )
-    if args.timeout is not None or (
-        runtime_config is not None and "batch_timeout" in runtime_config.explicit_keys()
-    ):
-        explicit_overrides.add("timeout")
-    if timeout is not None and timeout <= 0:
-        raise ValueError(f"timeout must be > 0, got {timeout}")
-
-    # Validate and apply concurrent with minimum
-    concurrent = (
-        args.concurrent
-        if args.concurrent is not None
-        else (runtime_config.batch_max_concurrent if runtime_config is not None else 5)
-    )
-    if concurrent is not None and concurrent < 1:
-        raise ValueError(f"concurrent must be >= 1, got {concurrent}")
-
-    model = (
-        args.model
-        if getattr(args, "model", None) is not None
-        else (runtime_config.model if runtime_config is not None else "gpt-4")
-    )
-    if getattr(args, "model", None) is not None:
-        explicit_overrides.add("model")
-    return BatchProcessor(
-        mode=mode,
-        strict=strict,
-        model=model,
-        max_concurrent=concurrent,
-        timeout=timeout,
-        base_config=base_config,
-        explicit_overrides=frozenset(explicit_overrides),
-    )
-
-
-async def process_batch_with_progress(processor, urls):
-    """Process URLs with progress bar."""
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Processing URLs...", total=len(urls))
-
-        def on_progress(current, _total, _url):
-            progress.update(task, completed=current)
-
-        processor.on_progress = on_progress
-        return await processor.process_batch_async(urls)
 
 
 def _resolve_output_format(args, config_output_format: str | None) -> str:

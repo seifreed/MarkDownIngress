@@ -16,7 +16,6 @@ import pytest
 
 from markdown_ingress import __version__
 from markdown_ingress.api_runtime import UNSET, build_runtime_config
-from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.cli import main
 from markdown_ingress.cli_commands import (
     _build_batch_json_output,
@@ -26,12 +25,6 @@ from markdown_ingress.cli_commands import (
 )
 from markdown_ingress.cli_commands import (
     build_json_output as _build_json_output,
-)
-from markdown_ingress.cli_commands import (
-    create_batch_processor as _create_batch_processor,
-)
-from markdown_ingress.cli_commands import (
-    process_batch_with_progress as _process_batch_with_progress,
 )
 from markdown_ingress.cli_parsing import (
     IngestArgs,
@@ -566,123 +559,6 @@ class TestLoadUrlsFromFile:
         with pytest.raises(SystemExit) as exc:
             _load_urls_from_file(str(f))
         assert exc.value.code == 0
-
-
-# ── _create_batch_processor ────────────────────────────────────────────────────
-
-
-class TestCreateBatchProcessor:
-    def test_returns_processor(self):
-        args = Namespace(
-            fast=False,
-            render=False,
-            strict=True,
-            permissive=False,
-            concurrent=3,
-            timeout=10.0,
-            model=None,
-            config=None,
-        )
-        processor = _create_batch_processor(args)
-        assert isinstance(processor, BatchProcessor)
-
-    def test_fast_mode_propagated(self):
-        args = Namespace(
-            fast=True,
-            render=False,
-            strict=True,
-            permissive=False,
-            concurrent=1,
-            timeout=5.0,
-            model=None,
-            config=None,
-        )
-        assert _create_batch_processor(args).mode == "fast"
-
-    def test_config_defaults_propagated(self, tmp_path):
-        config_path = tmp_path / "batch.yaml"
-        config_path.write_text(
-            "mode: render\nstrict: false\nmodel: claude\nbatch_timeout: 22\n"
-            "batch_max_concurrent: 7\n"
-        )
-        args = Namespace(
-            fast=False,
-            render=False,
-            strict=None,
-            permissive=False,
-            concurrent=None,
-            timeout=None,
-            model=None,
-            config=str(config_path),
-        )
-        processor = _create_batch_processor(args)
-        assert processor.mode == "render"
-        assert processor.strict is False
-        assert processor.model == "claude"
-        assert processor.timeout == 22
-        assert processor.max_concurrent == 7
-        assert processor._build_config().timeout == 22
-
-    def test_config_timeout_is_not_overwritten_by_default_batch_timeout(self, tmp_path):
-        config_path = tmp_path / "batch.yaml"
-        config_path.write_text("timeout: 5\n")
-        args = Namespace(
-            fast=False,
-            render=False,
-            strict=None,
-            permissive=False,
-            concurrent=None,
-            timeout=None,
-            model=None,
-            config=str(config_path),
-        )
-
-        config = _create_batch_processor(args)._build_config()
-
-        assert config.timeout == 5.0
-
-    def test_preserves_full_runtime_config_in_build_config(self, tmp_path):
-        config_path = tmp_path / "batch.yaml"
-        config_path.write_text(
-            "output_profile: for_archive\n"
-            "extract_blocks: true\n"
-            "custom_patterns:\n"
-            "  - abc\n"
-            "cache_enabled: true\n"
-            "cache_type: memory\n"
-            "cache_ttl: 123\n"
-        )
-        args = Namespace(
-            fast=False,
-            render=False,
-            strict=None,
-            permissive=False,
-            concurrent=None,
-            timeout=None,
-            model=None,
-            config=str(config_path),
-        )
-
-        processor = _create_batch_processor(args)
-        config = processor._build_config()
-
-        assert config.output_profile == "for_archive"
-        assert config.extract_blocks is True
-        assert config.custom_patterns == ["abc"]
-        assert config.cache is not None
-        assert config.cache_ttl == 123
-
-
-# ── _process_batch_with_progress ──────────────────────────────────────────────
-
-
-class TestProcessBatchWithProgress:
-    def test_returns_batch_result(self, local_server):
-        processor = BatchProcessor(mode="fast", strict=True, max_concurrent=1, timeout=10.0)
-        result = asyncio.run(_process_batch_with_progress(processor, [local_server]))
-        assert result.total == 1
-        # on_progress inner callback is invoked by the processor
-        assert result.successful >= 0
 
 
 # ── batch display helpers ──────────────────────────────────────────────────────
