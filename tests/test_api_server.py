@@ -1771,6 +1771,27 @@ def test_batch_job_submit_returns_503_when_queue_unavailable(monkeypatch):
     assert response.json()["detail"] == "Job queue is unavailable"
 
 
+def test_batch_job_submit_returns_429_when_queue_is_full(monkeypatch):
+    class FullQueue:
+        state = "open"
+
+        def submit(self, *args, **kwargs):
+            raise RuntimeError("Job queue is full")
+
+    monkeypatch.setattr(api_server, "JOB_QUEUE", FullQueue())
+    monkeypatch.setattr(api_server, "_job_queue_initialized", True)
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_HISTORY", [])
+    monkeypatch.setattr(api_server, "_JOB_QUEUE_REPAIR_THREAD", None)
+
+    response = client.post(
+        "/api/v1/jobs/batch",
+        json={"urls": ["https://example.com"], "mode": "fast"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Job queue is full"
+
+
 def test_batch_job_status_returns_503_when_queue_unavailable(monkeypatch):
     monkeypatch.setattr(api_server, "JOB_QUEUE", None)
     monkeypatch.setattr(api_server, "_job_queue_initialized", True)
