@@ -9,7 +9,6 @@ from typing import cast
 from urllib.parse import urlparse
 
 from markdown_ingress import __version__
-from markdown_ingress.api_runtime import UNSET
 from markdown_ingress.cli_ingest_args import MAX_CHUNK_OVERLAP_CLI as MAX_CHUNK_OVERLAP_CLI
 from markdown_ingress.cli_ingest_args import MAX_CHUNK_SIZE_CLI as MAX_CHUNK_SIZE_CLI
 from markdown_ingress.cli_ingest_args import (
@@ -102,6 +101,8 @@ def _resolve_strict_arg(args):
 def _resolve_screenshot_arg(args):
     if hasattr(args, "screenshot") and args.screenshot:
         return args.screenshot
+    from markdown_ingress.api_runtime import UNSET
+
     return UNSET
 
 

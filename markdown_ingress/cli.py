@@ -3,12 +3,6 @@
 
 import sys
 
-from markdown_ingress.cli_commands import (
-    cmd_batch,
-    cmd_benchmark,
-    cmd_compare,
-    cmd_ingest,
-)
 from markdown_ingress.cli_parsing import (
     create_batch_parser,
     create_benchmark_parser,
@@ -25,6 +19,8 @@ def main():
     if is_legacy_mode():
         parser = create_legacy_parser()
         args = parser.parse_args()
+        from markdown_ingress.cli_commands import cmd_ingest
+
         cmd_ingest(args)
         return
 
@@ -40,12 +36,20 @@ def main():
         parser.print_help()
         sys.exit(0)
     if args.command == "ingest":
+        from markdown_ingress.cli_commands import cmd_ingest
+
         cmd_ingest(args)
     elif args.command == "batch":
+        from markdown_ingress.cli_commands import cmd_batch
+
         cmd_batch(args)
     elif args.command == "compare":
+        from markdown_ingress.cli_commands import cmd_compare
+
         cmd_compare(args)
     elif args.command == "benchmark":
+        from markdown_ingress.cli_commands import cmd_benchmark
+
         cmd_benchmark(args)
 
 

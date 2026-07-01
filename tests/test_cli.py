@@ -6,6 +6,7 @@ Uses real ThreadingHTTPServer instead of mocks for HTTP-dependent paths.
 import argparse
 import asyncio
 import json
+import subprocess
 import sys
 import threading
 from argparse import Namespace
@@ -1287,3 +1288,28 @@ class TestMain:
         )
         main()  # no SystemExit expected
         assert out_dir.exists()
+
+
+def test_cli_import_does_not_load_command_stack() -> None:
+    code = (
+        "import sys; import markdown_ingress.cli; "
+        "print('markdown_ingress.cli_commands' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "False"
+
+
+def test_package_import_does_not_load_api_stack() -> None:
+    code = "import sys; import markdown_ingress; print('markdown_ingress.api' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "False"
