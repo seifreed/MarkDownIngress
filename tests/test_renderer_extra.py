@@ -482,16 +482,12 @@ async def test_wait_for_content_selector_miss_and_function_timeout():
     Exercise lines 511-512 (selector lookup fails → continue) and
     547-550 (content verification function times out → warning logged).
 
-    Uses a page without article/main/.content/#content so the first 5
-    CONTENT_SELECTORS all time-out, then 'body' is found.  The page also
-    has no <p> element and short text, so wait_for_function always returns
-    false and times out (covering lines 547-550).
+    Uses a page without article/main/.content/#content so 'body' is found,
+    but body text is empty and wait_for_function times out.
     """
     from playwright.async_api import async_playwright
 
-    # Minimal HTML: has <body> but no article/main/.content/#content/<p>
-    # text content < 50 chars → JS content-check function never returns true
-    minimal_html = b"<html><body><span>hi</span></body></html>"
+    minimal_html = b"<html><body><span></span></body></html>"
 
     class MinimalHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -549,6 +545,50 @@ async def test_wait_for_content_uses_combined_selector_query():
 
     assert page.selector_queries == [("article, main, body", 2500)]
     assert page.function_timeout > 0
+
+
+@pytest.mark.asyncio
+async def test_wait_for_content_accepts_body_text_without_timeout(caplog):
+    from playwright.async_api import async_playwright
+
+    body_html = b"<html><body><span>Body-only content.</span></body></html>"
+
+    class BodyOnlyHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body_html)))
+            self.end_headers()
+            self.wfile.write(body_html)
+
+        def log_message(self, fmt, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), BodyOnlyHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        renderer = Renderer(timeout=15.0, wait_until="load")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context()
+                try:
+                    page = await context.new_page()
+                    await page.goto(url, wait_until="load")
+                    with caplog.at_level("INFO"):
+                        await renderer._wait_for_content(page, max_wait=0.2)
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
+    finally:
+        server.shutdown()
+
+    assert "Content verification passed" in caplog.text
+    assert "Content verification timed out" not in caplog.text
 
 
 @pytest.mark.asyncio

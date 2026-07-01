@@ -66,9 +66,8 @@ async def wait_for_content(
                 const body = document.body;
                 if (!body) return false;
 
-                const hasContent = document.querySelector('p, article, main, [role="main"]');
-                if (!hasContent) return false;
-
+                const hasContent = document.querySelector('p, article, main, [role="main"]')
+                    || body;
                 const text = (hasContent.innerText || body.innerText || '').trim();
                 if (!text) return false;
 
