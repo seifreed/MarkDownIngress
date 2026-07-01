@@ -104,7 +104,10 @@ def _require_rate_limit(request: Request, x_api_key: str | None = Header(default
     import markdown_ingress.api_server as _srv
 
     client_id = _rate_limit_client_id(request, x_api_key)
-    allowed, retry_after = _srv._check_rate_limit(client_id)
+    try:
+        allowed, retry_after = _srv._check_rate_limit(client_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not allowed:
         raise HTTPException(
             status_code=429,

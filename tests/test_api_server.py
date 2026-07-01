@@ -2307,6 +2307,20 @@ def test_rate_limit_uses_client_ip_for_anonymous_requests():
     assert api_server._rate_limit_client_id(request, None) == "ip:203.0.113.10"
 
 
+def test_rate_limit_backend_errors_return_service_unavailable(monkeypatch):
+    def fail_rate_limit(_client_id):
+        raise RuntimeError("MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package")
+
+    request = Request({"type": "http", "client": ("203.0.113.10", 12345), "headers": []})
+    monkeypatch.setattr(api_server, "_check_rate_limit", fail_rate_limit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        api_server._require_rate_limit(request)
+
+    assert exc_info.value.status_code == 503
+    assert "redis" in exc_info.value.detail
+
+
 def test_detect_multiworker_environment_ignores_invalid_worker_counts(monkeypatch, caplog):
     monkeypatch.setenv("GUNICORN_WORKERS", "not-an-int")
     monkeypatch.delenv("UVICORN_WORKERS", raising=False)
