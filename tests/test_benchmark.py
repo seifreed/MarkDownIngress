@@ -2,6 +2,8 @@
 Tests for benchmarking utilities
 """
 
+import subprocess
+import sys
 from contextlib import ExitStack
 
 import pytest
@@ -73,3 +75,36 @@ class TestBenchmark:
         assert "Timing:" in report
         assert "Tokens:" in report
         assert "Summary" in report
+
+    def test_cli_benchmark_compare_extractors_reports_comparison(
+        self, local_servers, tmp_path, monkeypatch
+    ):
+        """CLI benchmark --compare-extractors includes extractor data."""
+        monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")
+        urls = tmp_path / "urls.txt"
+        report_path = tmp_path / "report.txt"
+        urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "markdown_ingress.cli",
+                "benchmark",
+                str(urls),
+                "--iterations",
+                "1",
+                "--fast",
+                "--compare-extractors",
+                "--output",
+                str(report_path),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stderr
+        report = report_path.read_text(encoding="utf-8")
+        assert "Extractors:" in report
+        assert "Extractor token averages:" in report
