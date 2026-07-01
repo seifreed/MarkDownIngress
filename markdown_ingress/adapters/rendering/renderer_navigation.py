@@ -68,11 +68,11 @@ async def wait_for_content(
                 const body = document.body;
                 if (!body) return false;
 
-                const text = body.innerText || '';
-                if (text.trim().length < 50) return false;
-
                 const hasContent = document.querySelector('p, article, main, [role="main"]');
                 if (!hasContent) return false;
+
+                const text = (hasContent.innerText || body.innerText || '').trim();
+                if (!text) return false;
 
                 const loadingIndicators = document.querySelectorAll(
                     '[class*="loading"], [class*="spinner"], [id*="loading"]'

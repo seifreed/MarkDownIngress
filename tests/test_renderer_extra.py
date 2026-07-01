@@ -530,6 +530,50 @@ async def test_wait_for_content_selector_miss_and_function_timeout():
         server.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_wait_for_content_accepts_short_article_without_timeout(caplog):
+    from playwright.async_api import async_playwright
+
+    short_html = b"<html><body><article><h1>Ok</h1><p>Short.</p></article></body></html>"
+
+    class ShortArticleHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(short_html)))
+            self.end_headers()
+            self.wfile.write(short_html)
+
+        def log_message(self, fmt, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ShortArticleHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        renderer = Renderer(timeout=15.0, wait_until="load")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context()
+                try:
+                    page = await context.new_page()
+                    await page.goto(url, wait_until="load")
+                    with caplog.at_level("INFO"):
+                        await renderer._wait_for_content(page, max_wait=0.2)
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
+    finally:
+        server.shutdown()
+
+    assert "Content verification passed" in caplog.text
+    assert "Content verification timed out" not in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # AdvancedStealthRenderer: exception path (lines 123-125, 140) + disable_http2 (169)
 # ---------------------------------------------------------------------------
