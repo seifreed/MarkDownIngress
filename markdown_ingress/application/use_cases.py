@@ -55,10 +55,7 @@ from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
 
 _logger = logging.getLogger(__name__)
-
-# --- Bootstrap: register concrete adapters into core registries -----------------
-_register_all_factories()
-# -------------------------------------------------------------------------------
+_FACTORIES_REGISTERED = False
 
 PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 
@@ -79,6 +76,10 @@ class IngestUseCase:
         *,
         playwright_available: bool | None = None,
     ) -> None:
+        global _FACTORIES_REGISTERED
+        if not _FACTORIES_REGISTERED:
+            _register_all_factories()
+            _FACTORIES_REGISTERED = True
         _used_default_orchestrator = orchestrator is None
         if _used_default_orchestrator:
             from markdown_ingress.core.orchestrator import IngestOrchestrator
