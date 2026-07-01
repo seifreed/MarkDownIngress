@@ -58,7 +58,7 @@ async def fetch_url(url: str, render: bool = False, strict: bool = True) -> dict
     try:
         doc = await ingest_async(
             url,
-            config=IngestConfig(mode="render" if render else "auto", strict=strict),
+            config=IngestConfig(mode="render" if render else "fast", strict=strict),
         )
     except Exception as exc:  # noqa: BLE001 - report a clean tool error, never crash the server
         return {"error": f"{type(exc).__name__}: {exc}", "url": url}

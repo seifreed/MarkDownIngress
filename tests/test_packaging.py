@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.util
 import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_bundled_nova_rules_are_declared_as_package_data() -> None:
@@ -88,6 +90,31 @@ print(mcp_server.mcp is None)
     )
 
     assert result.stdout.strip() == "True"
+
+
+def test_mcp_fetch_url_uses_fast_mode_unless_render_requested(monkeypatch) -> None:
+    import markdown_ingress
+    import mcp_server
+
+    seen_modes: list[str] = []
+
+    async def fake_ingest_async(url, *, config):
+        seen_modes.append(config.mode)
+        return SimpleNamespace(
+            markdown="# ok\n",
+            injection_score=0.0,
+            flags=[],
+            token_estimate=2,
+            content_hash="sha256:test",
+            metadata={"url": url},
+        )
+
+    monkeypatch.setattr(markdown_ingress, "ingest_async", fake_ingest_async)
+
+    asyncio.run(mcp_server.fetch_url("https://example.com", render=False))
+    asyncio.run(mcp_server.fetch_url("https://example.com", render=True))
+
+    assert seen_modes == ["fast", "render"]
 
 
 def test_public_ingest_import_does_not_load_optional_runtime_stacks() -> None:
