@@ -27,6 +27,20 @@ def test_mcp_server_is_packaged_and_exposed_as_console_script() -> None:
     assert pyproject["project"]["scripts"]["markdown-ingress-mcp"] == "mcp_server:main"
 
 
+def test_dockerfile_copies_declared_py_modules() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    for module in pyproject["tool"]["setuptools"]["py-modules"]:
+        assert f"COPY {module}.py " in dockerfile
+
+
+def test_docker_compose_uses_current_schema() -> None:
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert not compose.startswith("version:")
+
+
 def test_mcp_docs_and_template_use_installed_console_script() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     template = Path(".mcp.json.example").read_text(encoding="utf-8")

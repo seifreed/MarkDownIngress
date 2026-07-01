@@ -66,6 +66,7 @@ COPY --from=dependencies /root/.cache/ms-playwright /root/.cache/ms-playwright
 
 # Copy application code
 COPY markdown_ingress/ /app/markdown_ingress/
+COPY mcp_server.py /app/
 COPY pyproject.toml /app/
 COPY README.md /app/
 COPY LICENSE /app/
