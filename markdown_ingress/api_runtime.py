@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, cast
 
@@ -37,6 +36,8 @@ def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T
     Raises if called while an event loop is already running, since asyncio.run
     cannot nest.
     """
+    import asyncio
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
