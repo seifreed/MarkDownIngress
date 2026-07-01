@@ -307,6 +307,8 @@ pip install "markdown-ingress[api]"
 uvicorn markdown_ingress.api_server:app --port 8000
 ```
 
+Set `MDI_API_KEY` to require `X-API-Key` on protected endpoints.
+
 Versioned endpoints under `/api/v1`:
 
 ```text
@@ -322,6 +324,7 @@ GET  /api/v1/health              Health check
 ```bash
 curl -X POST http://localhost:8000/api/v1/ingest \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $MDI_API_KEY" \
   -d '{"url":"https://example.com","mode":"fast","strict":true}'
 ```
 
