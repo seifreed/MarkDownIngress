@@ -303,10 +303,19 @@ def test_security_report_endpoint_error(_mock):
 
 
 @patch("uvicorn.run")
-def test_main_calls_uvicorn(mock_uvicorn):
+def test_main_calls_uvicorn(mock_uvicorn, monkeypatch):
     """Line 294: main() invokes uvicorn.run."""
+    monkeypatch.setenv("MDI_HOST", "127.0.0.2")
+    monkeypatch.setenv("MDI_PORT", "8123")
+
     main()
-    mock_uvicorn.assert_called_once()
+
+    mock_uvicorn.assert_called_once_with(
+        "markdown_ingress.api_server:app",
+        host="127.0.0.2",
+        port=8123,
+        reload=False,
+    )
 
 
 def test_api_server_import_does_not_load_uvicorn() -> None:

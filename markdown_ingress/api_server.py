@@ -764,7 +764,8 @@ def main():
     import uvicorn
 
     host = os.getenv("MDI_HOST") or "127.0.0.1"
-    uvicorn.run("markdown_ingress.api_server:app", host=host, port=8000, reload=False)
+    port = _read_positive_int_env("MDI_PORT", 8000)
+    uvicorn.run("markdown_ingress.api_server:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":
