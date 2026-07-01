@@ -67,6 +67,10 @@ def _raise_runtime_http_error(exc: Exception) -> NoReturn:
             status_code=mapped_status,
             detail="Upstream fetch returned an HTTP error",
         )
+    if isinstance(exc, httpx.TimeoutException):
+        raise HTTPException(status_code=504, detail="Upstream fetch timed out")
+    if isinstance(exc, httpx.RequestError):
+        raise HTTPException(status_code=502, detail="Upstream fetch failed")
     if isinstance(exc, ValueError):
         # Never echo ValueError message back — it often carries internal
         # hostnames, IP addresses, or filesystem paths (e.g. SSRF protection).
@@ -99,6 +103,7 @@ def _log_runtime_error(message: str, exc: Exception, *args: object) -> None:
             httpx.InvalidURL,
             httpx.UnsupportedProtocol,
             httpx.HTTPStatusError,
+            httpx.RequestError,
             ValueError,
             PolicyBlockedError,
         ),
