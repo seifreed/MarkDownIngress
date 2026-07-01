@@ -23,8 +23,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover
         '    pip install -e ".[mcp]"   (or: pip install mcp)'
     ) from exc
 
-from markdown_ingress import IngestConfig, ingest_async
-
 mcp = FastMCP("markdown-ingress")
 
 
@@ -48,6 +46,8 @@ async def fetch_url(url: str, render: bool = False, strict: bool = True) -> dict
         ``token_estimate``, ``content_hash`` and ``metadata`` — or an
         ``error`` key if the fetch was refused or failed.
     """
+    from markdown_ingress import IngestConfig, ingest_async
+
     try:
         doc = await ingest_async(
             url,

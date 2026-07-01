@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -32,6 +34,24 @@ def test_mcp_docs_and_template_use_installed_console_script() -> None:
     assert 'pip install "markdown-ingress[mcp]"' in readme
     assert "markdown-ingress-mcp" in readme
     assert '"command": "markdown-ingress-mcp"' in template
+
+
+def test_mcp_server_import_does_not_load_ingest_stack() -> None:
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import mcp_server; print('markdown_ingress.api' in sys.modules)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "False"
 
 
 def test_public_docs_do_not_contain_local_machine_paths() -> None:
