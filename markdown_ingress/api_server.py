@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import uvicorn
 from fastapi import Depends, FastAPI
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
@@ -756,6 +755,8 @@ register_legacy_routes(
 
 def main():
     """Run the server."""
+    import uvicorn
+
     host = os.getenv("MDI_HOST") or "127.0.0.1"
     uvicorn.run("markdown_ingress.api_server:app", host=host, port=8000, reload=False)
 

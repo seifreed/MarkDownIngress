@@ -3,6 +3,8 @@ Tests to cover missing lines in api.py, api_server.py, and orchestrator.py.
 Uses real local HTTP servers and FastAPI TestClient — no business-logic mocks.
 """
 
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
@@ -305,6 +307,17 @@ def test_main_calls_uvicorn(mock_uvicorn):
     """Line 294: main() invokes uvicorn.run."""
     main()
     mock_uvicorn.assert_called_once()
+
+
+def test_api_server_import_does_not_load_uvicorn() -> None:
+    code = "import sys; import markdown_ingress.api_server; print('uvicorn' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "False"
 
 
 # ── IngestConfig: clone + override immutability ───────────────────────────────
