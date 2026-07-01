@@ -35,6 +35,15 @@ def register_cache_factory(fn: Callable[[str, str | None, int], Cache]) -> None:
     _cache_backend_factory = fn
 
 
+def _default_cache_backend(cache_type: str, sqlite_path: str | None, ttl: int) -> Cache:
+    from markdown_ingress.adapters.cache.memory import MemoryCache
+    from markdown_ingress.adapters.cache.sqlite import SQLiteCache
+
+    if cache_type == "sqlite":
+        return SQLiteCache(db_path=sqlite_path or ".cache/markdown_ingress.db", default_ttl=ttl)
+    return MemoryCache(default_ttl=ttl)
+
+
 _collect_config_init_values = config_validation.collect_init_values
 _validate_regex_patterns = config_validation.validate_regex_patterns
 _validate_string_list = config_validation.validate_string_list
@@ -194,12 +203,8 @@ class Config:
         ):
             return self._cache_backend
 
-        if _cache_backend_factory is None:
-            raise RuntimeError(
-                "No cache factory registered; call register_cache_factory() before "
-                "using Config.create_cache()."
-            )
-        self._cache_backend = _cache_backend_factory(self.cache_type, sqlite_path, self.cache_ttl)
+        cache_factory = _cache_backend_factory or _default_cache_backend
+        self._cache_backend = cache_factory(self.cache_type, sqlite_path, self.cache_ttl)
         self._cache_backend_settings = cache_settings
         return self._cache_backend
 
