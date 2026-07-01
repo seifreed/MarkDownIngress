@@ -527,6 +527,15 @@ class TestCmdIngest:
             cmd_ingest(IngestArgs(url="http://127.0.0.1:1", timeout=2.0))
         assert exc.value.code == 1
 
+    def test_failure_does_not_print_traceback_by_default(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            cmd_ingest(IngestArgs(url="http://127.0.0.1:1", timeout=2.0))
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 1
+        assert "Error:" in captured.out
+        assert "Traceback" not in captured.err
+
 
 # ── _load_urls_from_file ───────────────────────────────────────────────────────
 

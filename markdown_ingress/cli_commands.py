@@ -69,7 +69,11 @@ def cmd_ingest(args):
         sys.exit(0)
     except Exception as exc:
         console.print(f"[red]Error: {exc}")
-        _logger.exception("Error in cmd_ingest for %s", getattr(args, "url", "unknown"))
+        _logger.debug(
+            "Error in cmd_ingest for %s",
+            getattr(args, "url", "unknown"),
+            exc_info=True,
+        )
         sys.exit(1)
 
 
