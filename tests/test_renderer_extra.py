@@ -455,6 +455,9 @@ async def test_render_with_resource_blocking_disabled(local_test_server):
     renderer = Renderer(block_resources=False, timeout=15.0, wait_until="load")
     result = await renderer.render(local_test_server)
     assert result.status_code == 200
+    assert result.metadata["resource_blocking"] is False
+    assert result.metadata["blocked_requests"] == 0
+    assert result.metadata["total_requests"] >= 1
 
 
 # ---------------------------------------------------------------------------

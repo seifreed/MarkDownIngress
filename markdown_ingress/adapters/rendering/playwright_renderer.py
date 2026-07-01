@@ -225,7 +225,7 @@ class Renderer(SharedRendererMixin, IRenderer):
             stats = blocker.get_stats()
             metadata.update(
                 {
-                    "resource_blocking": True,
+                    "resource_blocking": self.block_resources,
                     "blocked_requests": stats["blocked_requests"],
                     "total_requests": stats["total_requests"],
                     "block_rate_pct": stats["block_rate_pct"],
