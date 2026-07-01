@@ -9,17 +9,13 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib.util import find_spec
+from typing import Any, cast
 
 from markdown_ingress.api_runtime import (
     UNSET,
     _validate_batch_max_concurrent,
     build_runtime_config,
     run_ingest_many_blocking,
-)
-from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
-from markdown_ingress.application.use_cases import (
-    GenerateSecurityReportUseCase,
-    IngestUseCase,
 )
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, validate_positive_int
@@ -37,6 +33,33 @@ logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
+_LAZY_EXPORTS = {
+    "BatchIngestUseCase": (
+        "markdown_ingress.application.batch_ingest_use_case",
+        "BatchIngestUseCase",
+    ),
+    "GenerateSecurityReportUseCase": (
+        "markdown_ingress.application.use_cases",
+        "GenerateSecurityReportUseCase",
+    ),
+    "IngestUseCase": ("markdown_ingress.application.use_cases", "IngestUseCase"),
+}
+
+
+def __getattr__(name: str) -> object:
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = target
+    from importlib import import_module
+
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
+
+
+def _lazy_class(name: str) -> Any:
+    return globals().get(name) or __getattr__(name)
 
 
 @dataclass(frozen=True)
@@ -83,9 +106,9 @@ def ingest_resolved(
     playwright_available: bool = PLAYWRIGHT_AVAILABLE,
 ) -> SafeDocument:
     """Execute ingestion using a fully resolved runtime config."""
-    use_case = IngestUseCase(playwright_available=playwright_available)
+    use_case = _lazy_class("IngestUseCase")(playwright_available=playwright_available)
     try:
-        return use_case.execute(url, config)
+        return cast(SafeDocument, use_case.execute(url, config))
     finally:
         use_case.close()
 
@@ -143,9 +166,9 @@ async def ingest_many_async_impl(
 
     url_list = list(urls)
     runtime_config = build_runtime_config(**runtime_kwargs)
-    use_case = IngestUseCase(playwright_available=playwright_available)
+    use_case = _lazy_class("IngestUseCase")(playwright_available=playwright_available)
     try:
-        batch_use_case = BatchIngestUseCase(ingest_use_case=use_case)
+        batch_use_case = _lazy_class("BatchIngestUseCase")(ingest_use_case=use_case)
         result = await batch_use_case.execute(
             url_list,
             config_builder=runtime_config.clone,
@@ -169,7 +192,7 @@ async def ingest_many_async_impl(
                         target_url,
                         exc,
                     )
-        return result
+        return cast(BatchResult, result)
     finally:
         use_case.close()
 
@@ -316,9 +339,14 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
 def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     """Generate a detailed security report through the dedicated use case."""
     config = build_runtime_config(**runtime_kwargs)
-    use_case = IngestUseCase(playwright_available=PLAYWRIGHT_AVAILABLE)
+    use_case = _lazy_class("IngestUseCase")(playwright_available=PLAYWRIGHT_AVAILABLE)
     try:
-        report = GenerateSecurityReportUseCase(ingest_use_case=use_case).execute(url, config)
+        report = cast(
+            SecurityReport,
+            _lazy_class("GenerateSecurityReportUseCase")(ingest_use_case=use_case).execute(
+                url, config
+            ),
+        )
     finally:
         use_case.close()
     if config.save_reports:
