@@ -48,6 +48,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     "tiktoken>=0.7.0" \
     "PyYAML>=6.0" \
     "rich>=14.0" \
+    "langdetect>=1.0.9" \
     "playwright>=1.43.0" \
     fastapi \
     "uvicorn[standard]" \
