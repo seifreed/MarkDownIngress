@@ -75,6 +75,23 @@ class TestCLIBatch:
             assert "results" in data
             assert data["summary"]["total"] == 1
 
+    def test_batch_command_json_stdout_is_parseable(self, local_servers):
+        """Batch JSON stdout is not prefixed by progress output."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            urls_file = Path(tmpdir) / "urls.txt"
+            urls_file.write_text(f"{local_servers[0]}\n")
+
+            result = subprocess.run(
+                _cli_cmd("batch", str(urls_file), "--json", "--no-content"),
+                capture_output=True,
+                text=True,
+            )
+
+            assert result.returncode == 0
+            data = json.loads(result.stdout)
+            assert data["summary"]["total"] == 1
+            assert data["results"][0]["url"] == local_servers[0]
+
     def test_batch_with_comments_and_empty_lines(self, local_servers):
         """Batch command ignores comments and empty lines"""
         with tempfile.TemporaryDirectory() as tmpdir:

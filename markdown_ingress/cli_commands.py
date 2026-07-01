@@ -204,7 +204,7 @@ def _build_batch_json_output(
     }
 
 
-async def ingest_many_with_progress(args, urls):
+async def ingest_many_with_progress(args, urls, *, show_progress: bool = True):
     """Run batch ingestion through the public API with progress updates."""
     runtime_config = load_runtime_config(args)
     runtime_ingest_config = (
@@ -225,17 +225,7 @@ async def ingest_many_with_progress(args, urls):
     if hasattr(args, "screenshot") and args.screenshot:
         screenshot = args.screenshot
 
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("[cyan]Processing URLs...", total=len(urls))
-
-        def on_progress(current, _total, _url):
-            progress.update(task, completed=current)
-
+    async def run(on_progress=None):
         return await ingest_many_async(
             urls,
             config=runtime_ingest_config,
@@ -256,6 +246,22 @@ async def ingest_many_with_progress(args, urls):
             on_progress=on_progress,
         )
 
+    if not show_progress:
+        return await run()
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Processing URLs...", total=len(urls))
+
+        def on_progress(current, _total, _url):
+            progress.update(task, completed=current)
+
+        return await run(on_progress)
+
 
 def cmd_batch(args):
     """Handle batch URL processing."""
@@ -265,7 +271,11 @@ def cmd_batch(args):
     if output_format != "json":
         console.print(f"[bold]Processing {len(urls)} URLs...[/bold]")
         console.print()
-    batch_result = asyncio.run(ingest_many_with_progress(args, urls))
+    batch_result = asyncio.run(
+        ingest_many_with_progress(args, urls, show_progress=False)
+        if output_format == "json"
+        else ingest_many_with_progress(args, urls)
+    )
     if output_format == "json":
         if args.output:
             save_args = Namespace(**vars(args))
