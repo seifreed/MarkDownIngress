@@ -184,8 +184,11 @@ def create_benchmark_parser(subparsers):
         action="store_true",
         help="Run extractor comparison when HTML is available",
     )
-    benchmark_parser.add_argument("--render", action="store_true", help="Force render mode")
-    benchmark_parser.add_argument("--fast", action="store_true", help="Force fast mode")
+    _add_mode_args(
+        benchmark_parser,
+        render_help="Force render mode",
+        fast_help="Force fast mode",
+    )
 
 
 def _is_valid_url(url_string: str) -> bool:

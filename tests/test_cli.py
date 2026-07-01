@@ -1105,6 +1105,13 @@ class TestParsers:
         with pytest.raises(SystemExit):
             p.parse_args(["benchmark", "urls.txt", "--iterations", "0"])
 
+    def test_benchmark_mode_flags_are_mutually_exclusive(self):
+        p = argparse.ArgumentParser()
+        sp = p.add_subparsers(dest="cmd")
+        _create_benchmark_parser(sp)
+        with pytest.raises(SystemExit):
+            p.parse_args(["benchmark", "urls.txt", "--fast", "--render"])
+
 
 # ── _is_legacy_mode ────────────────────────────────────────────────────────────
 
