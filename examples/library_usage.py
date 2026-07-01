@@ -3,6 +3,8 @@
 Example: use MarkDownIngress as a normal PyPI library.
 """
 
+import os
+
 from markdown_ingress import IngestConfig, MemoryCache, ingest
 
 
@@ -15,7 +17,7 @@ def main() -> None:
         policy_name="normal",
     )
 
-    doc = ingest("https://example.com", config=config)
+    doc = ingest(os.getenv("MDI_EXAMPLE_URL", "https://example.com"), config=config)
 
     print(f"Title: {doc.metadata.get('title')}")
     print(f"Mode: {doc.metadata.get('mode')}")

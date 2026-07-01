@@ -3,6 +3,8 @@
 Example usage of retry_ingest with exponential backoff
 """
 
+import os
+
 from markdown_ingress import retry_ingest
 
 
@@ -11,7 +13,7 @@ def main() -> None:
     print("=" * 60)
 
     # Basic usage
-    doc = retry_ingest("https://example.com")
+    doc = retry_ingest(os.getenv("MDI_EXAMPLE_URL", "https://example.com"))
 
     print("✅ Success!")
     print(f"  Retry attempts: {doc.metadata['retry_attempts']}")

@@ -4,6 +4,7 @@ Example: ingest multiple URLs concurrently from Python.
 """
 
 import asyncio
+import os
 
 from markdown_ingress import (
     IngestConfig,
@@ -24,20 +25,25 @@ async def main() -> None:
         policy_name="normal",
     )
 
-    urls = [
-        "https://example.com",
-        "https://example.org",
-        "https://iana.org/domains/example",
-    ]
+    urls = os.getenv("MDI_EXAMPLE_URLS")
+    url_list = (
+        urls.split(",")
+        if urls
+        else [
+            "https://example.com",
+            "https://example.org",
+            "https://iana.org/domains/example",
+        ]
+    )
 
-    result = await ingest_many_async(urls, config=config, max_concurrent=3)
+    result = await ingest_many_async(url_list, config=config, max_concurrent=3)
 
     print(f"Successful: {result.successful}")
     print(f"Failed: {result.failed}")
 
     errors_by_index = {error.index: error.error for error in result.error_items}
 
-    for index, (url, doc) in enumerate(zip(urls, result.documents, strict=False)):
+    for index, (url, doc) in enumerate(zip(url_list, result.documents, strict=False)):
         if doc is None:
             print(f"FAIL {url}: {errors_by_index.get(index, 'unknown error')}")
             continue

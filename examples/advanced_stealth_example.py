@@ -10,6 +10,7 @@ This script demonstrates:
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -49,7 +50,7 @@ async def example_basic_usage():
     )
 
     # Test URL - bot detection testing service
-    test_url = "https://bot.sannysoft.com/"
+    test_url = os.getenv("MDI_EXAMPLE_STEALTH_URL", "https://bot.sannysoft.com/")
 
     print(f"\nRendering: {test_url}")
     print("This site tests for bot detection indicators...")
@@ -112,7 +113,7 @@ async def example_custom_config():
         stealth_config=config,
     )
 
-    test_url = "https://www.google.com"
+    test_url = os.getenv("MDI_EXAMPLE_STEALTH_URL", "https://www.google.com")
 
     print(f"\nRendering: {test_url}")
 

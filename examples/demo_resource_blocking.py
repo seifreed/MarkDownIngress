@@ -9,6 +9,7 @@ This script shows how to use the ResourceBlocker to:
 """
 
 import asyncio
+import os
 import sys
 
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
@@ -17,7 +18,7 @@ from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
 async def demo_resource_blocking():
     """Demonstrate resource blocking with before/after comparison."""
 
-    test_url = "https://www.bbc.com/news"  # News site with lots of images/media
+    test_url = os.getenv("MDI_EXAMPLE_URL", "https://www.bbc.com/news")
 
     print("=" * 80)
     print("Resource Blocking Demo")
