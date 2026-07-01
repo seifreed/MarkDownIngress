@@ -38,19 +38,31 @@ def main():
     if args.command == "ingest":
         from markdown_ingress.cli_commands import cmd_ingest
 
-        cmd_ingest(args)
+        _run_command(cmd_ingest, args)
     elif args.command == "batch":
         from markdown_ingress.cli_commands import cmd_batch
 
-        cmd_batch(args)
+        _run_command(cmd_batch, args)
     elif args.command == "compare":
         from markdown_ingress.cli_commands import cmd_compare
 
-        cmd_compare(args)
+        _run_command(cmd_compare, args)
     elif args.command == "benchmark":
         from markdown_ingress.cli_commands import cmd_benchmark
 
-        cmd_benchmark(args)
+        _run_command(cmd_benchmark, args)
+
+
+def _run_command(command, args):
+    try:
+        command(args)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        from markdown_ingress.cli_console import console
+
+        console.print(f"[red]Error: {exc}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

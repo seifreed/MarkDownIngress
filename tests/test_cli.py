@@ -43,6 +43,9 @@ from markdown_ingress.cli_parsing import (
     create_batch_parser as _create_batch_parser,
 )
 from markdown_ingress.cli_parsing import (
+    create_benchmark_parser as _create_benchmark_parser,
+)
+from markdown_ingress.cli_parsing import (
     create_ingest_parser as _create_ingest_parser,
 )
 from markdown_ingress.cli_parsing import (
@@ -1219,6 +1222,13 @@ class TestParsers:
         p = _create_standard_parser()
         assert p is not None
 
+    def test_benchmark_iterations_must_be_positive(self):
+        p = argparse.ArgumentParser()
+        sp = p.add_subparsers(dest="cmd")
+        _create_benchmark_parser(sp)
+        with pytest.raises(SystemExit):
+            p.parse_args(["benchmark", "urls.txt", "--iterations", "0"])
+
 
 # ── _is_legacy_mode ────────────────────────────────────────────────────────────
 
@@ -1288,6 +1298,34 @@ class TestMain:
         )
         main()  # no SystemExit expected
         assert out_dir.exists()
+
+    def test_compare_missing_file_does_not_print_traceback(self, monkeypatch, capsys, tmp_path):
+        monkeypatch.setattr(sys, "argv", ["cli", "compare", str(tmp_path / "missing.html")])
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 1
+        assert "Error:" in captured.out
+        assert "Traceback" not in captured.out
+        assert "Traceback" not in captured.err
+
+    def test_batch_invalid_concurrent_does_not_print_traceback(self, monkeypatch, capsys, tmp_path):
+        urls_file = tmp_path / "urls.txt"
+        urls_file.write_text("https://example.com\n")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["cli", "batch", str(urls_file), "--concurrent", "0", "--json"],
+        )
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+        captured = capsys.readouterr()
+        assert exc.value.code == 1
+        assert "Error:" in captured.out
+        assert "Traceback" not in captured.out
+        assert "Traceback" not in captured.err
 
 
 def test_cli_import_does_not_load_command_stack() -> None:

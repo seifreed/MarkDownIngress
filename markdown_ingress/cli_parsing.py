@@ -164,11 +164,20 @@ def create_compare_parser(subparsers):
     compare_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
 
+def _positive_int(value: str) -> int:
+    ivalue = int(value)
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError("value must be >= 1")
+    return ivalue
+
+
 def create_benchmark_parser(subparsers):
     benchmark_parser = subparsers.add_parser("benchmark", help="Benchmark a list of URLs")
     benchmark_parser.add_argument("file", help="File containing URLs (one per line)")
     benchmark_parser.add_argument("--model", default=None, help="LLM model for token estimation")
-    benchmark_parser.add_argument("--iterations", type=int, default=3, help="Iterations per URL")
+    benchmark_parser.add_argument(
+        "--iterations", type=_positive_int, default=3, help="Iterations per URL"
+    )
     benchmark_parser.add_argument("--output", "-o", help="Write report to file")
     benchmark_parser.add_argument(
         "--compare-extractors",
