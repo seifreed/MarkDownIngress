@@ -14,6 +14,7 @@ from markdown_ingress.core.metadata_jsonld import (
 from markdown_ingress.core.metadata_urls import extract_canonical_url
 
 logger = logging.getLogger(__name__)
+_LANGDETECT_SAMPLE_CHARS = 5000
 
 
 def _empty_language_info() -> dict[str, Any]:
@@ -100,7 +101,7 @@ def _detect_content_language_info(
             text = body.text(strip=True)
             if text and len(text) > 50:
                 detected_lang = _normalize_language_code(
-                    cast(str, detect(text)),
+                    cast(str, detect(text[:_LANGDETECT_SAMPLE_CHARS])),
                     normalize_multilingual=normalize_multilingual,
                 )
                 if detected_lang:

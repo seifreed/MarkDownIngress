@@ -5,7 +5,7 @@ Tests for metadata extraction
 import importlib
 import json
 
-from markdown_ingress.core.metadata_extractor import MetadataExtractor
+from markdown_ingress.core.metadata_extractor import _LANGDETECT_SAMPLE_CHARS, MetadataExtractor
 from markdown_ingress.core.metadata_jsonld import _load_deep_graph_jsonld_text
 
 
@@ -119,6 +119,24 @@ def test_content_language_detection_is_deterministic():
     extractor = MetadataExtractor()
     extractor.extract(html, "https://example.com")
     assert detector_factory.seed == 0
+
+
+def test_content_language_detection_samples_long_text(monkeypatch):
+    """Long bodies should not be fully sent to langdetect."""
+    langdetect = importlib.import_module("langdetect")
+    seen_lengths: list[int] = []
+
+    def fake_detect(text: str) -> str:
+        seen_lengths.append(len(text))
+        return "en"
+
+    monkeypatch.setattr(langdetect, "detect", fake_detect)
+    html = f"<html><body>{'English content. ' * 1000}</body></html>"
+
+    metadata = MetadataExtractor().extract(html, "https://example.com")
+
+    assert metadata["language"] == "en"
+    assert seen_lengths == [_LANGDETECT_SAMPLE_CHARS]
 
 
 def test_extract_description():
