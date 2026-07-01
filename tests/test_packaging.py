@@ -54,6 +54,25 @@ def test_mcp_server_import_does_not_load_ingest_stack() -> None:
     assert result.stdout.strip() == "False"
 
 
+def test_public_ingest_import_does_not_load_optional_nova_stack() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from markdown_ingress import ingest; "
+                "print('nova' in sys.modules, 'torch' in sys.modules, callable(ingest))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "False False True"
+
+
 def test_public_docs_do_not_contain_local_machine_paths() -> None:
     docs = [
         Path("README.md"),

@@ -8,6 +8,7 @@ import contextlib
 import io
 import logging
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -26,23 +27,34 @@ from markdown_ingress.core.security_validation import (
 
 logger = logging.getLogger(__name__)
 
-NovaMatcher: Any
-NovaParser: Any
-
-try:
-    _nova_module = import_module("nova")
-    NovaMatcher = getattr(_nova_module, "NovaMatcher")
-    NovaParser = getattr(_nova_module, "NovaParser")
-
-    NOVA_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    NOVA_AVAILABLE = False  # pragma: no cover
+NovaMatcher: Any = None
+NovaParser: Any = None
+NOVA_AVAILABLE = find_spec("nova") is not None
 
 _BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection.nova"
 
 # Default severity thresholds (can be overridden via constructor)
 DEFAULT_HIGH_THRESHOLD = 0.7
 DEFAULT_MEDIUM_THRESHOLD = 0.3
+
+
+def _load_nova_api() -> tuple[Any, Any]:
+    """Load Nova's heavy optional API only when advanced scanning is requested."""
+    global NOVA_AVAILABLE, NovaMatcher, NovaParser
+
+    if NovaMatcher is not None and NovaParser is not None:
+        return NovaMatcher, NovaParser
+
+    try:
+        nova_module = import_module("nova")
+    except ImportError as exc:
+        NOVA_AVAILABLE = False
+        raise ImportError("nova-hunting not installed") from exc
+
+    NovaMatcher = getattr(nova_module, "NovaMatcher")
+    NovaParser = getattr(nova_module, "NovaParser")
+    NOVA_AVAILABLE = True
+    return NovaMatcher, NovaParser
 
 
 def _coerce_rule_score(raw_score: object, rule_name: str) -> float:
@@ -84,6 +96,9 @@ class NovaGuard:
     ):
         if not NOVA_AVAILABLE:
             raise ImportError("nova-hunting not installed")  # pragma: no cover
+        nova_matcher, nova_parser = _load_nova_api()
+        self._nova_matcher = nova_matcher
+        self._nova_parser = nova_parser
 
         # Validate severity thresholds
         severity_high_threshold = _ensure_threshold(
@@ -131,7 +146,7 @@ class NovaGuard:
             with contextlib.redirect_stdout(io.StringIO()):
                 for rule in self.rules:
                     self.matchers.append(
-                        NovaMatcher(rule=rule, create_llm_evaluator=self.enable_llm)
+                        self._nova_matcher(rule=rule, create_llm_evaluator=self.enable_llm)
                     )
         else:
             logger.warning(
@@ -177,7 +192,8 @@ class NovaGuard:
                 resolved_path,
             )
 
-        parser = NovaParser()
+        parser_factory = getattr(self, "_nova_parser", NovaParser)
+        parser = parser_factory()
 
         try:
             file_content = read_rules_file_atomically(resolved_path)
@@ -230,7 +246,8 @@ class NovaGuard:
         """Load bundled NOVA rules for prompt injection detection."""
         if not _BUNDLED_RULES_PATH.exists():
             return []
-        parser = NovaParser()
+        parser_factory = getattr(self, "_nova_parser", NovaParser)
+        parser = parser_factory()
         with open(_BUNDLED_RULES_PATH, encoding="utf-8") as f:
             content = f.read()
         rules, parse_failures = parse_bundled_rule_content(content, parser)
