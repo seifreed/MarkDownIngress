@@ -255,6 +255,24 @@ def test_ci_security_job_audits_project_dependencies() -> None:
     assert workflow.index(project_install) < workflow.index(dependency_audit)
 
 
+def test_ci_codecov_upload_uses_v6_files_input() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "codecov/codecov-action@v6" in workflow
+    assert "files: ./coverage.xml" in workflow
+    assert "file: ./coverage.xml" not in workflow
+
+
+def test_dataset_workflows_do_not_use_ls_to_locate_latest_run() -> None:
+    for workflow_path in (
+        Path(".github/workflows/url-baseline.yml"),
+        Path(".github/workflows/url-campaign.yml"),
+    ):
+        workflow = workflow_path.read_text(encoding="utf-8")
+        assert "latest_run=$(find " in workflow
+        assert "ls -1dt" not in workflow
+
+
 def test_project_declares_only_python_313_and_314_support() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

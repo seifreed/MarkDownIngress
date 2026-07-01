@@ -65,7 +65,7 @@ jobs:
       - name: Locate latest campaign run
         id: campaign_run
         run: |
-          latest_run=$(ls -1dt artifacts/url_dataset_campaign/campaign_* | head -n 1)
+          latest_run=$(find artifacts/url_dataset_campaign -maxdepth 1 -type d -name 'campaign_*' | sort -r | head -n 1)
           echo "latest_run=${latest_run}" >> "$GITHUB_OUTPUT"
           echo "Latest run: ${latest_run}"
 
