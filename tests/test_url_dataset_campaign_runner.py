@@ -271,8 +271,13 @@ def test_run_campaign_writes_preselection_progress(monkeypatch, tmp_path: Path):
     )
 
     progress = json.loads((Path(summary["run_dir"]) / "progress.json").read_text(encoding="utf-8"))
+    scenario_summary = summary["scenario_summaries"]["fast_default"]
     assert progress["current_scenario"] == "fast_default"
     assert progress["availability_checked"] == 4
+    assert summary["duration_seconds"] > 0
+    assert summary["urls_per_second"] > 0
+    assert scenario_summary["duration_seconds"] > 0
+    assert scenario_summary["urls_per_second"] > 0
 
 
 def test_run_campaign_resume_skips_completed_scenario(monkeypatch, tmp_path: Path):

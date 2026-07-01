@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import urllib.request
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
@@ -944,17 +945,23 @@ def _scenario_summary(
     scenario_concurrency: int,
     warnings_file: Path,
     errors_file: Path,
+    duration_seconds: float,
 ) -> dict[str, Any]:
+    assigned_urls = len(urls_for_scenario)
     return {
         "scenario": scenario.name,
         "description": scenario.description,
-        "assigned_urls": len(urls_for_scenario),
+        "assigned_urls": assigned_urls,
         "config": _scenario_summary_config(scenario),
         "counts": _counts_payload(scenario_counts),
         "warning_types": dict(warning_types),
         "error_types": dict(error_types),
         "resumed_completed_indexes": completed_count,
         "scenario_concurrency": scenario_concurrency,
+        "duration_seconds": duration_seconds,
+        "urls_per_second": (
+            assigned_urls / duration_seconds if assigned_urls and duration_seconds > 0 else None
+        ),
         "warnings_file": str(warnings_file),
         "errors_file": str(errors_file),
     }
@@ -981,6 +988,7 @@ def _print_scenario_progress(
 async def _run_campaign_scenario(
     state: CampaignRunState, scenario: CampaignScenario, urls_for_scenario: list[str]
 ) -> None:
+    started_at = time.perf_counter()
     scenario_dir = _scenario_output_dir(state.run_dir, scenario)
     warnings_file = scenario_dir / "warnings.jsonl"
     errors_file = scenario_dir / "errors.jsonl"
@@ -1036,6 +1044,7 @@ async def _run_campaign_scenario(
             scenario_concurrency=scenario_concurrency,
             warnings_file=warnings_file,
             errors_file=errors_file,
+            duration_seconds=time.perf_counter() - started_at,
         )
         _write_json(scenario_dir / "summary.json", summary)
         state.scenario_summaries[scenario.name] = summary
@@ -1072,6 +1081,7 @@ def _campaign_summary_payload(
     urls: list[str],
     scenarios: list[CampaignScenario],
     allocation: dict[str, list[str]],
+    duration_seconds: float,
 ) -> dict[str, Any]:
     return {
         "dataset_url": DATASET_URL,
@@ -1085,6 +1095,8 @@ def _campaign_summary_payload(
         "enabled_scenarios": [scenario.name for scenario in scenarios],
         "concurrency": state.concurrency,
         "batch_size": state.batch_size,
+        "duration_seconds": duration_seconds,
+        "urls_per_second": len(urls) / duration_seconds if urls and duration_seconds > 0 else None,
         "counts": _counts_payload(state.campaign_counts),
         "warning_types": dict(state.campaign_warning_types),
         "error_types": dict(state.campaign_error_types),
@@ -1104,6 +1116,7 @@ def run_campaign(
     batch_size: int,
     resume_run_dir: str | None = None,
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     run_dir = _campaign_run_dir(resume_run_dir)
     progress_file = run_dir / "progress.json"
     urls, dropped_url_types, availability_error_types, availability_checked = asyncio.run(
@@ -1144,6 +1157,7 @@ def run_campaign(
         urls=urls,
         scenarios=scenarios,
         allocation=allocation,
+        duration_seconds=time.perf_counter() - started_at,
     )
     _write_json(run_dir / "summary.json", summary)
     return summary
