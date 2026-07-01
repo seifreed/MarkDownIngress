@@ -12,6 +12,7 @@ from markdown_ingress.adapters.rendering.advanced_stealth_renderer import (
     render_with_advanced_stealth_sync,
 )
 from markdown_ingress.adapters.rendering.playwright_renderer import Renderer
+from markdown_ingress.adapters.rendering.renderer_navigation import wait_for_content
 from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.core.stealth import get_advanced_stealth_config
 
@@ -528,6 +529,26 @@ async def test_wait_for_content_selector_miss_and_function_timeout():
                 await browser.close()
     finally:
         server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_content_uses_combined_selector_query():
+    class FakePage:
+        def __init__(self):
+            self.selector_queries = []
+
+        async def wait_for_selector(self, selector, timeout):
+            self.selector_queries.append((selector, timeout))
+
+        async def wait_for_function(self, _script, timeout):
+            self.function_timeout = timeout
+
+    page = FakePage()
+
+    await wait_for_content(page, max_wait=6, selectors=("article", "main", "body"))
+
+    assert page.selector_queries == [("article, main, body", 2500)]
+    assert page.function_timeout > 0
 
 
 @pytest.mark.asyncio

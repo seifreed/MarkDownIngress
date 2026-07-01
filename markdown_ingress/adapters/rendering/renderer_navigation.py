@@ -41,18 +41,16 @@ async def wait_for_content(
     wait_start = time.time()
     max_wait_ms = max_wait * 1000
 
-    for selector in selectors:
-        elapsed_ms = (time.time() - wait_start) * 1000
-        remaining_ms = max(0, max_wait_ms - elapsed_ms)
-        if remaining_ms <= 0:
-            break
-        try:
-            selector_timeout = min(2500, remaining_ms)
-            await page.wait_for_selector(selector, timeout=selector_timeout)
-            logger.info("[Smart Wait] Found content selector: %s", selector)
-            break
-        except (PlaywrightTimeoutError, PlaywrightError):
-            continue
+    if selectors:
+        remaining_ms = max(0, max_wait_ms)
+        if remaining_ms > 0:
+            try:
+                selector_query = ", ".join(selectors)
+                selector_timeout = min(2500, remaining_ms)
+                await page.wait_for_selector(selector_query, timeout=selector_timeout)
+                logger.info("[Smart Wait] Found content selector: %s", selector_query)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                pass
 
     elapsed = time.time() - wait_start
     remaining_ms = max(0, (max_wait - elapsed)) * 1000
