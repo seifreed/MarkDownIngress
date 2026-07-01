@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "markdown-ingress": {
-      "command": "/abs/path/to/markdown-ingress/venv/bin/python",
-      "args": ["/abs/path/to/markdown-ingress/mcp_server.py"]
+      "command": "markdown-ingress-mcp",
+      "args": []
     }
   }
 }

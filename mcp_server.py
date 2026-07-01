@@ -5,8 +5,8 @@ Run this as an MCP stdio server so agents (Claude Code, Cursor, etc.) can
 fetch web pages through the MarkDownIngress pipeline — sanitized,
 token-optimized Markdown plus a prompt-injection score — instead of raw HTML.
 
-    pip install -e ".[mcp]"      # installs the `mcp` SDK
-    python mcp_server.py         # stdio server (point your agent at this)
+    pip install "markdown-ingress[mcp]"
+    markdown-ingress-mcp         # stdio server (point your agent at this)
 
 See the "Coding Agent Integration (MCP)" section of the README for the client
 configuration and the AGENTS.md / CLAUDE.md snippet that tells the agent to
@@ -66,5 +66,10 @@ async def fetch_url(url: str, render: bool = False, strict: bool = True) -> dict
     }
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the stdio MCP server."""
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

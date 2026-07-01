@@ -2,6 +2,7 @@
 Tests for metadata extraction
 """
 
+import importlib
 import json
 
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
@@ -102,9 +103,9 @@ def test_extract_language_from_content_language_list_uses_primary_language():
 
 def test_content_language_detection_is_deterministic():
     """langdetect must be seeded so detection is reproducible across runs."""
-    from langdetect import DetectorFactory
+    detector_factory = getattr(importlib.import_module("langdetect"), "DetectorFactory")
 
-    DetectorFactory.seed = 12345  # simulate a fresh process with a random seed
+    detector_factory.seed = 12345  # simulate a fresh process with a random seed
     html = """
     <html>
     <head><title>Test</title></head>
@@ -117,7 +118,7 @@ def test_content_language_detection_is_deterministic():
     """
     extractor = MetadataExtractor()
     extractor.extract(html, "https://example.com")
-    assert DetectorFactory.seed == 0
+    assert detector_factory.seed == 0
 
 
 def test_extract_description():

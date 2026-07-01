@@ -18,6 +18,22 @@ def test_bundled_nova_rules_are_declared_as_package_data() -> None:
     assert "*.nova" in package_data["markdown_ingress.rules"]
 
 
+def test_mcp_server_is_packaged_and_exposed_as_console_script() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "mcp_server" in pyproject["tool"]["setuptools"]["py-modules"]
+    assert pyproject["project"]["scripts"]["markdown-ingress-mcp"] == "mcp_server:main"
+
+
+def test_mcp_docs_and_template_use_installed_console_script() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    template = Path(".mcp.json.example").read_text(encoding="utf-8")
+
+    assert 'pip install "markdown-ingress[mcp]"' in readme
+    assert "markdown-ingress-mcp" in readme
+    assert '"command": "markdown-ingress-mcp"' in template
+
+
 def test_public_docs_do_not_contain_local_machine_paths() -> None:
     docs = [
         Path("README.md"),

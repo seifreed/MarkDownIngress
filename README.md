@@ -332,11 +332,14 @@ so they pull **sanitized, token-optimized Markdown with a prompt-injection
 score** instead of raw HTML from a built-in web fetch.
 
 ```bash
-pip install -e ".[mcp]"     # installs the MCP SDK
-python mcp_server.py        # runs the stdio MCP server
+pip install "markdown-ingress[mcp]"
+markdown-ingress-mcp        # runs the stdio MCP server
 ```
 
-`mcp_server.py` exposes a single tool:
+From a source checkout, `pip install -e ".[mcp]"` and `python mcp_server.py`
+still work for local development.
+
+The MCP server exposes a single tool:
 
 ```text
 fetch_url(url, render=False, strict=True)
@@ -345,20 +348,19 @@ fetch_url(url, render=False, strict=True)
 
 ### Register it in Claude Code
 
-Add the server to `.mcp.json` (per project) or `~/.claude.json` (global), using
-absolute paths to the venv interpreter and the script. Copy the bundled
-template and fill in your paths:
+Add the server to `.mcp.json` (per project) or `~/.claude.json` (global). Copy
+the bundled template:
 
 ```bash
-cp .mcp.json.example .mcp.json   # then edit the two /abs/path/to/... entries
+cp .mcp.json.example .mcp.json
 ```
 
 ```json
 {
   "mcpServers": {
     "markdown-ingress": {
-      "command": "/abs/path/to/venv/bin/python",
-      "args": ["/abs/path/to/mcp_server.py"]
+      "command": "markdown-ingress-mcp",
+      "args": []
     }
   }
 }

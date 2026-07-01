@@ -10,15 +10,10 @@ finalizer must skip the warning while finalizing and still emit it otherwise.
 
 import warnings
 
+import httpx
+
 from markdown_ingress.adapters.fetching import client_lifecycle
 from markdown_ingress.adapters.fetching.client_lifecycle import ClientLifecycleMixin
-
-
-class _Sentinel:
-    closed = False
-
-    def close(self) -> None:
-        self.closed = True
 
 
 class _Fetcher(ClientLifecycleMixin):
@@ -27,7 +22,7 @@ class _Fetcher(ClientLifecycleMixin):
 
         self._client_lock = threading.Lock()
         self._async_client_lock_guard = threading.Lock()
-        self._sync_client = _Sentinel()
+        self._sync_client = httpx.Client()
         self._async_client = None
         self._async_client_lock = None
 
@@ -46,7 +41,7 @@ def test_del_skips_warning_during_finalization(monkeypatch):
     # Must not raise even though warnings.warn would; cleanup still runs.
     fetcher.__del__()
 
-    assert sync_client.closed is True
+    assert sync_client.is_closed is True
     assert fetcher._sync_client is None
 
 
