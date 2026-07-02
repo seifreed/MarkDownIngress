@@ -21,16 +21,21 @@ CONTENT_SELECTORS = (
     "body",
 )
 
+PlaywrightError: type[Exception]
+PlaywrightTimeoutError: type[Exception]
 try:
     from playwright.async_api import (
-        Error as PlaywrightError,
+        Error as _PlaywrightError,
     )
     from playwright.async_api import (
-        TimeoutError as PlaywrightTimeoutError,
+        TimeoutError as _PlaywrightTimeoutError,
     )
+
+    PlaywrightError = _PlaywrightError
+    PlaywrightTimeoutError = _PlaywrightTimeoutError
 except ImportError:  # pragma: no cover
-    PlaywrightError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
-    PlaywrightTimeoutError = Exception  # type: ignore[assignment, misc]  # pragma: no cover
+    PlaywrightError = Exception  # pragma: no cover
+    PlaywrightTimeoutError = Exception  # pragma: no cover
 
 
 async def wait_for_content(
