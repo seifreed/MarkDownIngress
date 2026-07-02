@@ -14,6 +14,10 @@ from markdown_ingress.adapters.jobs.job_queue_models import STOP_WORKER, utcnow
 
 _logger = logging.getLogger(__name__)
 
+_LEASE_LOST_ERROR = "Job queue lease was lost; this instance can no longer accept or execute jobs"
+_INLINE_JOBS_DID_NOT_STOP_ERROR = "Job queue inline jobs did not stop before lease release"
+_WORKERS_DID_NOT_STOP_ERROR = "Job queue workers did not stop before lease release"
+
 
 class JobQueueLifecycleMixin:
     """Lease ownership, heartbeat, lifecycle state, and shutdown behavior."""
@@ -50,18 +54,14 @@ class JobQueueLifecycleMixin:
         self: Any, *, require_lease: bool = False, allow_closing: bool = False
     ) -> None:
         if self._lease_lost:
-            raise RuntimeError(
-                "Job queue lease was lost; this instance can no longer accept or execute jobs"
-            )
+            raise RuntimeError(_LEASE_LOST_ERROR)
         if self._closed:
             raise RuntimeError("Job queue is closed")
         if self._closing and not allow_closing:
             raise RuntimeError("Job queue is closing")
         if require_lease and not self._still_owns_lease():
             self._lease_lost = True
-            raise RuntimeError(
-                "Job queue lease was lost; this instance can no longer accept or execute jobs"
-            )
+            raise RuntimeError(_LEASE_LOST_ERROR)
 
     def _still_owns_lease(self: Any) -> bool:
         with closing(self._connect()) as conn:
@@ -204,9 +204,9 @@ class JobQueueLifecycleMixin:
         if not preserve_state_on_inline_timeout:
             return
         if self._inline_jobs_running > 0:
-            raise RuntimeError("Job queue inline jobs did not stop before lease release")
+            raise RuntimeError(_INLINE_JOBS_DID_NOT_STOP_ERROR)
         if any(worker.is_alive() for worker in self._workers):
-            raise RuntimeError("Job queue workers did not stop before lease release")
+            raise RuntimeError(_WORKERS_DID_NOT_STOP_ERROR)
 
     def _wait_for_inline_jobs_before_close_locked(
         self: Any,
@@ -219,7 +219,7 @@ class JobQueueLifecycleMixin:
                 continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError("Job queue inline jobs did not stop before lease release")
+                raise RuntimeError(_INLINE_JOBS_DID_NOT_STOP_ERROR)
             self._state_changed.wait(timeout=min(0.1, remaining))
 
     def _begin_close_and_wait_inline_jobs(
@@ -250,7 +250,7 @@ class JobQueueLifecycleMixin:
             worker.join(timeout=2.0)
         still_alive = [worker for worker in self._workers if worker.is_alive()]
         if still_alive:
-            raise RuntimeError("Job queue workers did not stop before lease release")
+            raise RuntimeError(_WORKERS_DID_NOT_STOP_ERROR)
 
     def _stop_heartbeat_for_close(self: Any) -> None:
         self._heartbeat_stop.set()
