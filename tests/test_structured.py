@@ -3,9 +3,18 @@ from markdown_ingress.core.structured import (
     HTMLStructureExtractor,
     blocks_to_dicts,
     chunks_to_dicts,
+    register_token_estimator_factory,
     render_code_fence,
     render_markdown_table,
 )
+
+
+class _TokenEstimator:
+    def estimate(self, text: str) -> int:
+        return len(text.split())
+
+
+register_token_estimator_factory(_TokenEstimator)
 
 HTML = """
 <html>
