@@ -61,6 +61,8 @@ from markdown_ingress.api_server_job_queue_repair import (
 from markdown_ingress.api_server_job_queue_selection import (
     JobQueueSelection,
     current_queue_after_repair_close_failure,
+    current_queue_if_expected_changed,
+    queue_if_expected_state,
     select_job_queue_for_use,
 )
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
@@ -258,16 +260,12 @@ def _promote_external_owner_queue(expected_queue):
 
 def _current_queue_if_expected_changed(expected_queue):
     with _JOB_QUEUE_LOCK:
-        if JOB_QUEUE is not expected_queue:
-            return JOB_QUEUE
-    return None
+        return current_queue_if_expected_changed(expected_queue, JOB_QUEUE)
 
 
 def _queue_if_expected_state(expected_queue, states: set[str]):
     with _JOB_QUEUE_LOCK:
-        if getattr(expected_queue, "state", None) in states:
-            return expected_queue
-    return None
+        return queue_if_expected_state(expected_queue, states)
 
 
 def _replacement_for_runtime_build_error(expected_queue, exc: RuntimeError):

@@ -38,3 +38,15 @@ def current_queue_after_repair_close_failure(
     if current_queue is None:
         raise RuntimeError("Job queue is unavailable")
     return current_queue
+
+
+def current_queue_if_expected_changed(expected_queue: Any, current_queue: Any) -> Any | None:
+    if current_queue is not expected_queue:
+        return current_queue
+    return None
+
+
+def queue_if_expected_state(expected_queue: Any, states: set[str]) -> Any | None:
+    if getattr(expected_queue, "state", None) in states:
+        return expected_queue
+    return None
