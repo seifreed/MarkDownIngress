@@ -180,44 +180,6 @@ app = FastAPI(
 )
 
 
-# BUG FIX #5: Use functions to get current state instead of caching at module level.
-# This prevents stale references during module reload.
-def _get_previous_watchdog_thread():
-    """Get the previous watchdog thread from globals, avoiding stale references."""
-    return previous_or_current_reference(
-        globals(),
-        "_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD",
-        "_JOB_QUEUE_WATCHDOG_THREAD",
-    )
-
-
-def _get_previous_watchdog_stop():
-    """Get the previous watchdog stop event from globals, avoiding stale references."""
-    return previous_or_current_reference(
-        globals(),
-        "_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP",
-        "_JOB_QUEUE_WATCHDOG_STOP",
-    )
-
-
-def _get_previous_repair_thread():
-    """Get the previous repair thread from globals, avoiding stale references."""
-    return previous_or_current_reference(
-        globals(),
-        "_PREVIOUS_JOB_QUEUE_REPAIR_THREAD",
-        "_JOB_QUEUE_REPAIR_THREAD",
-    )
-
-
-def _get_previous_repair_stop():
-    """Get the previous repair stop event from globals, avoiding stale references."""
-    return previous_or_current_reference(
-        globals(),
-        "_PREVIOUS_JOB_QUEUE_REPAIR_STOP",
-        "_JOB_QUEUE_REPAIR_STOP",
-    )
-
-
 _JOB_QUEUE_LOCK = threading.RLock()
 _JOB_QUEUE_INIT_LOCK = threading.Lock()  # Protects lazy job queue initialization
 _JOB_QUEUE_BUILD_LOCK = threading.Lock()
@@ -523,16 +485,24 @@ def _init_job_queue(previous_queue=None):
     # This prevents issues with stale references during module reload.
     stop_control_thread(
         "Previous job queue repair thread",
-        _get_previous_repair_thread(),
-        _get_previous_repair_stop(),
+        previous_or_current_reference(
+            globals(), "_PREVIOUS_JOB_QUEUE_REPAIR_THREAD", "_JOB_QUEUE_REPAIR_THREAD"
+        ),
+        previous_or_current_reference(
+            globals(), "_PREVIOUS_JOB_QUEUE_REPAIR_STOP", "_JOB_QUEUE_REPAIR_STOP"
+        ),
     )
     stop_control_thread("Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP)
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
     stop_control_thread(
         "Previous job queue watchdog thread",
-        _get_previous_watchdog_thread(),
-        _get_previous_watchdog_stop(),
+        previous_or_current_reference(
+            globals(), "_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD", "_JOB_QUEUE_WATCHDOG_THREAD"
+        ),
+        previous_or_current_reference(
+            globals(), "_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP", "_JOB_QUEUE_WATCHDOG_STOP"
+        ),
     )
     stop_control_thread(
         "Job queue watchdog thread", _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
