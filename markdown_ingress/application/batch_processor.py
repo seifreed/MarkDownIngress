@@ -97,6 +97,26 @@ class _BatchUrlProcessor:
             started_at=started_at,
         )
 
+    def _record_process_start(self, prepared: _PreparedBatchRequest) -> None:
+        if not self._ctx.batch_tracks_metrics:
+            return
+        bump_ingest_stat("requests_total")
+        record_mode_request(prepared.requested_mode)
+
+    def _record_process_timing(
+        self,
+        prepared: _PreparedBatchRequest,
+        *,
+        started_at: float,
+        cache_hit: bool,
+    ) -> None:
+        if not self._ctx.batch_tracks_metrics or cache_hit:
+            return
+        record_mode_timing(
+            prepared.requested_mode,
+            (time.perf_counter() - started_at) * 1000.0,
+        )
+
     async def _try_cache(self, prepared: _PreparedBatchRequest, started_at: float) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
@@ -249,9 +269,7 @@ class _BatchUrlProcessor:
         """Process a single URL: cache check, inflight dedup, then leader or follower path."""
         ctx = self._ctx
         started_at = time.perf_counter()
-        if ctx.batch_tracks_metrics:
-            bump_ingest_stat("requests_total")
-            record_mode_request(prepared.requested_mode)
+        self._record_process_start(prepared)
         record: _BatchInFlightRecord | None = None
         semaphore_held = False
         cache_hit = False
@@ -279,8 +297,8 @@ class _BatchUrlProcessor:
         finally:
             if semaphore_held:
                 ctx.semaphore.release()
-            if ctx.batch_tracks_metrics and not cache_hit:
-                record_mode_timing(
-                    prepared.requested_mode,
-                    (time.perf_counter() - started_at) * 1000.0,
-                )
+            self._record_process_timing(
+                prepared,
+                started_at=started_at,
+                cache_hit=cache_hit,
+            )
