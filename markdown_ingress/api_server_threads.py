@@ -6,16 +6,6 @@ import threading
 from collections.abc import Mapping
 
 
-def previous_or_current_reference(
-    module_globals: Mapping[str, object],
-    previous_key: str,
-    current_key: str,
-) -> object | None:
-    """Resolve a previous reload reference, falling back to the active reference."""
-    previous_value = module_globals.get(previous_key)
-    return previous_value if previous_value is not None else module_globals.get(current_key)
-
-
 def stop_control_thread(
     name: str,
     thread: threading.Thread | None,
@@ -28,3 +18,36 @@ def stop_control_thread(
         thread.join(timeout=1.0)
         if thread.is_alive():
             raise RuntimeError(f"{name} did not stop before reload")
+
+
+def _thread_reference(value: object | None) -> threading.Thread | None:
+    return value if isinstance(value, threading.Thread) else None
+
+
+def _event_reference(value: object | None) -> threading.Event | None:
+    return value if isinstance(value, threading.Event) else None
+
+
+def stop_reloaded_control_thread_pair(
+    *,
+    module_globals: Mapping[str, object],
+    name: str,
+    previous_thread_key: str,
+    current_thread_key: str,
+    previous_stop_key: str,
+    current_stop_key: str,
+) -> None:
+    previous_thread = module_globals.get(previous_thread_key) or module_globals.get(
+        current_thread_key
+    )
+    previous_stop = module_globals.get(previous_stop_key) or module_globals.get(current_stop_key)
+    stop_control_thread(
+        f"Previous {name}",
+        _thread_reference(previous_thread),
+        _event_reference(previous_stop),
+    )
+    stop_control_thread(
+        name[:1].upper() + name[1:],
+        _thread_reference(module_globals.get(current_thread_key)),
+        _event_reference(module_globals.get(current_stop_key)),
+    )

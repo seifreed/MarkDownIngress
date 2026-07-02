@@ -86,8 +86,7 @@ from markdown_ingress.api_server_snapshot import (
 )
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.api_server_threads import (
-    previous_or_current_reference,
-    stop_control_thread,
+    stop_reloaded_control_thread_pair,
 )
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
@@ -481,31 +480,23 @@ def _init_job_queue(previous_queue=None):
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
 
-    # BUG FIX #5: Use getter functions instead of cached module-level variables.
-    # This prevents issues with stale references during module reload.
-    stop_control_thread(
-        "Previous job queue repair thread",
-        previous_or_current_reference(
-            globals(), "_PREVIOUS_JOB_QUEUE_REPAIR_THREAD", "_JOB_QUEUE_REPAIR_THREAD"
-        ),
-        previous_or_current_reference(
-            globals(), "_PREVIOUS_JOB_QUEUE_REPAIR_STOP", "_JOB_QUEUE_REPAIR_STOP"
-        ),
+    stop_reloaded_control_thread_pair(
+        module_globals=globals(),
+        name="job queue repair thread",
+        previous_thread_key="_PREVIOUS_JOB_QUEUE_REPAIR_THREAD",
+        current_thread_key="_JOB_QUEUE_REPAIR_THREAD",
+        previous_stop_key="_PREVIOUS_JOB_QUEUE_REPAIR_STOP",
+        current_stop_key="_JOB_QUEUE_REPAIR_STOP",
     )
-    stop_control_thread("Job queue repair thread", _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP)
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
-    stop_control_thread(
-        "Previous job queue watchdog thread",
-        previous_or_current_reference(
-            globals(), "_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD", "_JOB_QUEUE_WATCHDOG_THREAD"
-        ),
-        previous_or_current_reference(
-            globals(), "_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP", "_JOB_QUEUE_WATCHDOG_STOP"
-        ),
-    )
-    stop_control_thread(
-        "Job queue watchdog thread", _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
+    stop_reloaded_control_thread_pair(
+        module_globals=globals(),
+        name="job queue watchdog thread",
+        previous_thread_key="_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD",
+        current_thread_key="_JOB_QUEUE_WATCHDOG_THREAD",
+        previous_stop_key="_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP",
+        current_stop_key="_JOB_QUEUE_WATCHDOG_STOP",
     )
     _JOB_QUEUE_WATCHDOG_STOP = None
     _JOB_QUEUE_WATCHDOG_THREAD = None
