@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import threading
+from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,8 @@ def cleanup_pending_screenshots() -> None:
         paths = list(_active_screenshots)
         _active_screenshots.clear()
     for path in paths:
-        try:
+        with suppress(OSError):
             os.unlink(path)
-        except OSError:
-            pass
 
 
 async def capture_screenshot(page, screenshot: bool | str | None) -> str | None:
