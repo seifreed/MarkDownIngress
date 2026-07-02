@@ -1,14 +1,22 @@
-"""Pydantic models and API type aliases for the FastAPI server."""
+"""Request models for the FastAPI server."""
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from markdown_ingress.api_server_env import _read_bool_env, _read_positive_int_env
+from markdown_ingress.api_server_response_models import (
+    BatchIngestResponse,
+    BatchJobAccepted,
+    BatchJobResponse,
+    ExtractorComparisonResponse,
+    IngestResponse,
+    JobStatus,
+    SecurityReportResponse,
+)
 from markdown_ingress.config_models import (
     VALID_OUTPUT_REPRESENTATIONS,
     VALID_POLICY_NAMES,
@@ -21,9 +29,6 @@ from markdown_ingress.core.ssrf import (
     validate_http_url_no_ssrf_with_dns_check,
 )
 
-JobStatus = Literal["queued", "running", "completed", "failed"]
-_logger = logging.getLogger(__name__)
-
 MAX_BATCH_URLS = _read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100)
 MAX_TIMEOUT_SECONDS = _read_positive_int_env("MDI_API_MAX_TIMEOUT", 300)
 MAX_CHUNK_SIZE = _read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000)
@@ -32,6 +37,21 @@ MAX_CHUNK_SIZE = _read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000)
 # body amplify into large CPU work. Cap both at the HTTP boundary.
 MAX_CUSTOM_PATTERNS = _read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000)
 MAX_DOMAIN_POLICIES = _read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000)
+
+__all__ = [
+    "BatchIngestRequest",
+    "BatchIngestResponse",
+    "BatchJobAccepted",
+    "BatchJobResponse",
+    "DomainPolicyModel",
+    "ExtractorComparisonResponse",
+    "HTMLCompareRequest",
+    "IngestRequest",
+    "IngestResponse",
+    "JobStatus",
+    "RetryIngestRequest",
+    "SecurityReportResponse",
+]
 
 
 def _allow_local_webhooks_enabled() -> bool:
@@ -262,80 +282,8 @@ class BatchIngestRequest(_IngestParams):
         return self
 
 
-class IngestResponse(BaseModel):
-    markdown: str
-    metadata: dict[str, Any]
-    token_estimate: int
-    injection_score: float
-    flags: list[str]
-    content_hash: str
-    removed_elements: dict[str, Any]
-    screenshot_path: str | None = None
-    enriched_metadata: dict[str, Any] | None = None
-    links: dict[str, Any] | None = None
-    nova_score: float | None = None
-    nova_details: dict[str, Any] | None = None
-    structured_blocks: list[dict[str, Any]] | None = None
-    chunks: list[dict[str, Any]] | None = None
-    security_explanation: dict[str, Any] | None = None
-    observability: dict[str, Any] | None = None
-
-
-class BatchIngestResponse(BaseModel):
-    results: list[dict[str, Any]]
-    success_count: int
-    failure_count: int
-
-
-class SecurityReportResponse(BaseModel):
-    injection_score: float
-    risk_level: str
-    pattern_matches: list[dict[str, Any]]
-    flags: list[str]
-    hidden_content_detected: bool
-    hidden_elements_count: int
-    imperative_density: float
-    url: str
-    title: str
-    timestamp: str
-    version: str
-    token_estimate: int
-    token_reduction_percent: float
-    original_size_bytes: int
-    cleaned_size_bytes: int
-    content_hash: str
-    structural_hash: str
-    removed_elements: dict[str, Any]
-    language: str | None = None
-    explanation: dict[str, Any] = Field(default_factory=dict)
-    observability: dict[str, Any] = Field(default_factory=dict)
-
-
-class BatchJobAccepted(BaseModel):
-    job_id: str
-    status: JobStatus
-    created_at: str
-    poll_url: str
-    expires_in_seconds: int
-    ttl_applies_to: Literal["completed_jobs"] = "completed_jobs"
-
-
-class BatchJobResponse(BaseModel):
-    job_id: str
-    status: JobStatus
-    created_at: str
-    started_at: str | None = None
-    completed_at: str | None = None
-    result: dict[str, Any] | None = None
-    error: str | None = None
-
-
 class HTMLCompareRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     html: str = Field(..., min_length=1, max_length=2_000_000)
     model: str = Field(default="gpt-4")
-
-
-class ExtractorComparisonResponse(BaseModel):
-    results: dict[str, dict[str, Any]]
