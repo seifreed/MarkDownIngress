@@ -85,7 +85,7 @@ class ExtractorEvaluator:
 
     def _evaluate_trafilatura(self, html: str) -> ExtractorComparisonResult:
         try:
-            import trafilatura  # type: ignore[import-not-found,import-untyped]
+            trafilatura = cast(Any, import_module("trafilatura"))
         except ImportError:
             return ExtractorComparisonResult.unavailable("trafilatura", "trafilatura not installed")
         try:
