@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from importlib import import_module
 from typing import Any
 
 from markdown_ingress.api_server_env import _read_positive_int_env
@@ -34,7 +35,7 @@ def _get_redis_rate_limit_client():
         if _rate_limit_redis_client is not None:
             return _rate_limit_redis_client
         try:
-            import redis  # type: ignore[import-not-found]
+            redis = import_module("redis")
         except ImportError as exc:
             raise RuntimeError(
                 "MDI_RATE_LIMIT_BACKEND=redis requires the 'redis' package. "
