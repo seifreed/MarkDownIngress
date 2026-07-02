@@ -9,7 +9,6 @@ import os
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +53,10 @@ from markdown_ingress.api_server_job_history import (
     remember_job_queue,
 )
 from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
+from markdown_ingress.api_server_job_queue_selection import (
+    JobQueueSelection,
+    select_job_queue_for_use,
+)
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
@@ -195,13 +198,6 @@ _RECOVERABLE_QUEUE_STATES = {"closing", "lease_lost", "external_owner", "backend
 _REPAIRABLE_QUEUE_STATES = _RECOVERABLE_QUEUE_STATES | {"closed"}
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
-
-
-@dataclass(frozen=True)
-class _JobQueueSelection:
-    queue_to_return: Any | None
-    queue_to_repair: Any | None
-    start_repair: bool = False
 
 
 def _build_job_queue() -> PersistentJobQueue:
@@ -574,21 +570,9 @@ def _ensure_job_queue_initialized():
             _logger.exception("Failed to initialize job queue")
 
 
-def _select_job_queue_for_use() -> _JobQueueSelection:
+def _select_job_queue_for_use() -> JobQueueSelection:
     with _JOB_QUEUE_LOCK:
-        queue = JOB_QUEUE
-        if queue is None:
-            raise RuntimeError("Job queue is unavailable")
-        state = getattr(queue, "state", None)
-        if state not in _REPAIRABLE_QUEUE_STATES:
-            return _JobQueueSelection(queue_to_return=queue, queue_to_repair=None)
-        if state == "external_owner":
-            return _JobQueueSelection(
-                queue_to_return=queue,
-                queue_to_repair=None,
-                start_repair=True,
-            )
-        return _JobQueueSelection(queue_to_return=None, queue_to_repair=queue)
+        return select_job_queue_for_use(JOB_QUEUE, _REPAIRABLE_QUEUE_STATES)
 
 
 def _current_queue_after_repair_close_failure(queue_to_repair: Any) -> Any | None:
