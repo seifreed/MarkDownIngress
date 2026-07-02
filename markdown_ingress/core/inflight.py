@@ -42,18 +42,13 @@ _ALL_INFLIGHT_REGISTRIES_LOCK = threading.Lock()
 
 
 class InFlightRegistry:
-    """Isolated in-flight registry owned by one runtime/orchestrator.
-
-    BUG FIX: Implements periodic cleanup to prevent unbounded growth from orphaned entries.
-    Entries that exceed TTL without completion are automatically cleaned up.
-    """
+    """Isolated in-flight registry owned by one runtime/orchestrator."""
 
     def __init__(self) -> None:
         self._requests: OrderedDict[str, InFlightEntry] = OrderedDict()
         self._lock = threading.Lock()
         self._cleanup_control_lock = threading.Lock()
         self._last_orphan_cleanup_at: float = 0.0
-        # BUG FIX: Background cleanup thread to remove orphaned entries
         self._cleanup_thread: threading.Thread | None = None
         self._cleanup_stop = threading.Event()
         with _ALL_INFLIGHT_REGISTRIES_LOCK:
@@ -68,8 +63,8 @@ class InFlightRegistry:
         Args:
             interval_seconds: Time between cleanup runs (default 5 minutes)
 
-        BUG FIX: Prevents unbounded growth by periodically removing orphaned entries
-        even when acquire() is not called frequently.
+        Entries that exceed TTL without completion are removed even when
+        acquire() is not called frequently.
         """
         with self._cleanup_control_lock:
             if self._cleanup_thread is not None and self._cleanup_thread.is_alive():
@@ -287,12 +282,8 @@ class InFlightRegistry:
                 entry.done = True
                 entry.condition.notify_all()
 
-        # LOCK ORDERING FIX: Remove from registry AFTER releasing
-        # entry.condition.  The previous code acquired _lock inside the
-        # entry.condition block (condition -> _lock), while acquire() uses
-        # (_lock -> condition), creating an ABBA deadlock.  By deferring
-        # the removal to here, _lock and entry.condition are never held
-        # simultaneously during the long release path.
+        # Preserve _lock -> entry.condition ordering used by acquire(); do not
+        # take _lock while entry.condition is held.
         with self._lock:
             current = self._requests.get(request_key)
             if current is entry:
