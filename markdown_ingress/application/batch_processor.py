@@ -137,6 +137,21 @@ class _BatchUrlProcessor:
         """Register in-flight tracking. Returns (record, is_leader)."""
         return await register_batch_inflight(self._ctx, prepared.request_key)
 
+    async def _handle_follower_exception(
+        self,
+        prepared: _PreparedBatchRequest,
+        record: _BatchInFlightRecord,
+        started_at: float,
+        exc: Exception,
+    ) -> bool:
+        await self._ctx.append_error(
+            BatchErrorItem.from_exception(prepared.index, prepared.url, exc)
+        )
+        self._record_item_result(prepared, success=False, started_at=started_at)
+        await remove_finished_batch_inflight(self._ctx, prepared.request_key, record)
+        await self._report_completion(prepared.url)
+        return False
+
     async def _handle_follower(
         self,
         prepared: _PreparedBatchRequest,
@@ -157,11 +172,7 @@ class _BatchUrlProcessor:
             await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             raise
         except Exception as exc:  # noqa: BLE001 - follower records leader failure as item
-            await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
-            self._record_item_result(prepared, success=False, started_at=started_at)
-            await remove_finished_batch_inflight(ctx, prepared.request_key, record)
-            await self._report_completion(prepared.url)
-            return False
+            return await self._handle_follower_exception(prepared, record, started_at, exc)
         shared = copy.deepcopy(shared_document)
         mark_batch_document(
             shared,
