@@ -128,7 +128,6 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._init_db()
         except sqlite3.Error:
-            # BUG FIX: Clean up connection on failure to prevent resource leak
             if hasattr(self, "conn") and self.conn:
                 close_connection_after_init_failure(self.conn, _logger)
             raise
@@ -324,13 +323,11 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             finally:
                 cache.close()
         """
-        # BUG FIX: Remove TOCTOU race - check and set atomically under lock
+        # Check and mark closed atomically under the database lock.
         with self._db_lock:
             if self._closed:
                 return
             self._closed = True
-            # Close connection inside the lock to prevent race condition
-            # where another thread is using conn.close() while we're closing it
             close_connection_for_cache(self.conn, _logger)
 
     def __enter__(self) -> "SQLiteCache":
