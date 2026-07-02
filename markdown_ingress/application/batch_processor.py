@@ -8,6 +8,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from markdown_ingress.application.batch_document_metadata import mark_batch_document
 from markdown_ingress.application.batch_inflight import (
     cancel_batch_inflight,
     publish_batch_inflight_exception,
@@ -29,12 +30,7 @@ from markdown_ingress.core.ingest_stats import (
     record_mode_result,
     record_mode_timing,
 )
-from markdown_ingress.core.metadata_keys import (
-    CACHE_HIT,
-    INFLIGHT_DEDUPLICATED,
-    INFLIGHT_SHARED_COUNT,
-    REQUESTED_MODE,
-)
+from markdown_ingress.core.metadata_keys import REQUESTED_MODE
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.reporting import persist_report_for_document
 from markdown_ingress.shared_results import BatchErrorItem
@@ -170,10 +166,12 @@ class _BatchUrlProcessor:
             await self._report_completion(prepared.url)
             return False
         shared = copy.deepcopy(shared_document)
-        shared.metadata[INFLIGHT_DEDUPLICATED] = True
-        shared.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-        shared.metadata.setdefault(CACHE_HIT, False)
-        shared.metadata[REQUESTED_MODE] = prepared.requested_mode
+        mark_batch_document(
+            shared,
+            requested_mode=prepared.requested_mode,
+            inflight_deduplicated=True,
+            shared_count=shared_count,
+        )
         ctx.set_document(prepared.index, shared)
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=True)
@@ -219,16 +217,18 @@ class _BatchUrlProcessor:
                     exc,
                     exc_info=True,
                 )
-        document.metadata[REQUESTED_MODE] = prepared.requested_mode
         shared_count = await publish_batch_inflight_result(
             ctx,
             prepared.request_key,
             record,
             document,
         )
-        document.metadata[INFLIGHT_DEDUPLICATED] = False
-        document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-        document.metadata.setdefault(CACHE_HIT, False)
+        mark_batch_document(
+            document,
+            requested_mode=prepared.requested_mode,
+            inflight_deduplicated=False,
+            shared_count=shared_count,
+        )
         ctx.set_document(prepared.index, document)
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=True)
@@ -241,10 +241,12 @@ class _BatchUrlProcessor:
         """Execute an item without batch in-flight sharing."""
         ctx = self._ctx
         document = await self._execute_item(prepared)
-        document.metadata[REQUESTED_MODE] = prepared.requested_mode
-        document.metadata[INFLIGHT_DEDUPLICATED] = False
-        document.metadata[INFLIGHT_SHARED_COUNT] = 0
-        document.metadata.setdefault(CACHE_HIT, False)
+        mark_batch_document(
+            document,
+            requested_mode=prepared.requested_mode,
+            inflight_deduplicated=False,
+            shared_count=0,
+        )
         ctx.set_document(prepared.index, document)
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=True)
