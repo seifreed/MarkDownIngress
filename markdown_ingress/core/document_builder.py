@@ -12,6 +12,12 @@ from markdown_ingress.core.document_assembly import (
     _build_safe_document,
     _SafeDocumentAssemblyContext,
 )
+from markdown_ingress.core.document_dependencies import (
+    register_document_builder_factories as _register_document_builder_factories,
+)
+from markdown_ingress.core.document_dependencies import (
+    resolve_pipeline_dependencies as _resolve_pipeline_dependencies,
+)
 from markdown_ingress.core.document_plugins import (
     DocumentPluginContext,
     create_document_plugin_context,
@@ -27,23 +33,17 @@ from markdown_ingress.core.document_security_patterns import (
     _dedupe_preserving_order as _dedupe_preserving_order,
 )
 from markdown_ingress.core.domain_rules import apply_domain_html_rules
-from markdown_ingress.core.hashing import Hasher
 from markdown_ingress.core.ingest_stats import timed_stage_with_snapshot
 from markdown_ingress.core.interfaces import IExtractor, IMarkdownConverter, ITokenEstimator
 from markdown_ingress.core.link_analyzer import LinkAnalyzer
 from markdown_ingress.core.metadata_extractor import MetadataExtractor
 from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.core.scoring import Scorer
 from markdown_ingress.core.security_engine import SecurityEngine
 from markdown_ingress.core.structured import (
     ChunkBuilder,
     HTMLStructureExtractor,
 )
 from markdown_ingress.models import FetchResult, SafeDocument
-
-_extractor_factory: Callable[[bool], IExtractor] | None = None
-_md_converter_factory: Callable[[], IMarkdownConverter] | None = None
-_token_estimator_factory: Callable[[str], ITokenEstimator] | None = None
 
 
 @dataclass(frozen=True)
@@ -66,37 +66,11 @@ def register_document_builder_factories(
     md_converter_factory: Callable[[], IMarkdownConverter],
     token_estimator_factory: Callable[[str], ITokenEstimator],
 ) -> None:
-    global _extractor_factory, _md_converter_factory, _token_estimator_factory
-    _extractor_factory = extractor_factory
-    _md_converter_factory = md_converter_factory
-    _token_estimator_factory = token_estimator_factory
-
-
-def _resolve_pipeline_dependencies(orchestrator, config: IngestConfig):
-    """Return (extractor, md_converter, hasher, token_estimator, scorer) for the pipeline."""
-    if orchestrator.extractor is None:
-        if _extractor_factory is None:
-            raise RuntimeError(
-                "No extractor factory registered — call register_document_builder_factories()."
-            )
-        extractor: IExtractor = _extractor_factory(config.strict)
-    else:
-        extractor = orchestrator.extractor
-    if orchestrator.md_converter is None:
-        if _md_converter_factory is None:
-            raise RuntimeError("No md_converter factory registered.")
-        md_converter: IMarkdownConverter = _md_converter_factory()
-    else:
-        md_converter = orchestrator.md_converter
-    hasher = orchestrator.hasher or Hasher()
-    if orchestrator.token_estimator is None:
-        if _token_estimator_factory is None:
-            raise RuntimeError("No token_estimator factory registered.")
-        token_estimator: ITokenEstimator = _token_estimator_factory(config.model)
-    else:
-        token_estimator = orchestrator.token_estimator
-    scorer = orchestrator.scorer or Scorer()
-    return extractor, md_converter, hasher, token_estimator, scorer
+    _register_document_builder_factories(
+        extractor_factory,
+        md_converter_factory,
+        token_estimator_factory,
+    )
 
 
 def _extract_and_apply_domain_rules(
