@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from importlib import import_module
 from typing import Any, cast
 
 from selectolax.parser import HTMLParser
@@ -80,28 +81,31 @@ def detect_content_language_info(
     normalize_multilingual: bool,
 ) -> dict[str, Any] | None:
     try:
-        from langdetect import DetectorFactory, detect  # type: ignore[import-untyped]
-        from langdetect.lang_detect_exception import (  # type: ignore[import-untyped]
-            LangDetectException,
-        )
+        langdetect = cast(Any, import_module("langdetect"))
+        langdetect_exceptions = cast(Any, import_module("langdetect.lang_detect_exception"))
 
         # langdetect seeds its detector randomly per process, so the same text
         # can resolve to different languages across runs. Pin the seed for
         # deterministic output.
-        DetectorFactory.seed = 0
+        langdetect.DetectorFactory.seed = 0
 
         body = parser.css_first("body")
         if body:
             text = body.text(strip=True)
             if text and len(text) > 50:
                 detected_lang = normalize_language_code(
-                    cast(str, detect(text[:LANGDETECT_SAMPLE_CHARS])),
+                    cast(str, langdetect.detect(text[:LANGDETECT_SAMPLE_CHARS])),
                     normalize_multilingual=normalize_multilingual,
                 )
                 if detected_lang:
                     return language_info(detected_lang, "langdetect", 0.6)
     except ImportError:
-        pass  # langdetect not installed - graceful degradation
-    except (AttributeError, LangDetectException, TypeError, ValueError) as exc:
+        return None
+    except (
+        AttributeError,
+        langdetect_exceptions.LangDetectException,
+        TypeError,
+        ValueError,
+    ) as exc:
         logger.debug("langdetect failed: %s", exc)
     return None
