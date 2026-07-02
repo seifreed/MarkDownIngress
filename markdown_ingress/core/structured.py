@@ -14,10 +14,12 @@ from markdown_ingress.core.structured_chunks import ChunkBuilder as ChunkBuilder
 from markdown_ingress.core.structured_chunks import (
     register_token_estimator_factory as register_token_estimator_factory,
 )
+from markdown_ingress.core.structured_metadata import (
+    CODE_LANGUAGE_CLASS_PREFIXES as CODE_LANGUAGE_CLASS_PREFIXES,
+)
+from markdown_ingress.core.structured_metadata import build_block_metadata, detect_code_language
 from markdown_ingress.core.url_safety import dangerous_url_scheme
 from markdown_ingress.models import DocumentChunk, StructuredBlock
-
-CODE_LANGUAGE_CLASS_PREFIXES = ("language-", "lang-", "highlight-")
 
 # Inline HTML tags mapped to their surrounding Markdown emphasis markers.
 _INLINE_EMPHASIS = {"strong": "**", "b": "**", "em": "*", "i": "*"}
@@ -137,7 +139,7 @@ class HTMLStructureExtractor:
                 ordinal=ordinal,
                 level=level,
                 structural_hash=self.hasher.hash_structural(markdown.strip()),
-                metadata=self._build_metadata(element, block_type),
+                metadata=build_block_metadata(element, block_type),
             )
             blocks.append(block)
             ordinal += 1
@@ -313,34 +315,7 @@ class HTMLStructureExtractor:
         return direct, nested_lists
 
     def _detect_code_language(self, element: Tag) -> str | None:
-        raw_classes: list[str] = []
-        for candidate in (element, element.find("code")):
-            if candidate is None:
-                continue
-            classes = candidate.get("class")
-            if isinstance(classes, str):
-                raw_classes.append(classes)
-            else:
-                raw_classes.extend(list(classes or []))
-
-        for value in raw_classes:
-            for prefix in CODE_LANGUAGE_CLASS_PREFIXES:
-                if value.startswith(prefix):
-                    return value.removeprefix(prefix)
-        return None
-
-    def _build_metadata(self, element: Tag, block_type: str) -> dict:
-        metadata: dict[str, object] = {"tag": element.name}
-        if block_type == "table":
-            rows = element.find_all("tr")
-            metadata["rows"] = len(rows)
-            metadata["columns"] = max(
-                (len(row.find_all(["th", "td"])) for row in rows),
-                default=0,
-            )
-        if block_type == "code":
-            metadata["language"] = self._detect_code_language(element)
-        return metadata
+        return detect_code_language(element)
 
     def _is_within_container(self, element: Tag) -> bool:
         """Return whether a block tag is nested inside a container we already serialize.
