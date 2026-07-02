@@ -506,6 +506,14 @@ def _reset_job_queue_control_thread_refs() -> None:
     _JOB_QUEUE_WATCHDOG_THREAD = None
 
 
+def _fallback_queue_for_init_build_error(previous_queue: Any | None, exc: RuntimeError):
+    if not _is_active_owner_error(exc):
+        return None
+    if previous_queue is not None:
+        return _promote_external_owner_queue(previous_queue)
+    return _ExternalOwnerJobQueue(JOB_DB_PATH)
+
+
 def _init_job_queue(previous_queue=None):
     _stop_reloaded_job_queue_control_threads()
     _reset_job_queue_control_thread_refs()
@@ -515,10 +523,9 @@ def _init_job_queue(previous_queue=None):
     try:
         return _build_job_queue()
     except RuntimeError as exc:
-        if _is_active_owner_error(exc):
-            if previous_queue is not None:
-                return _promote_external_owner_queue(previous_queue)
-            return _ExternalOwnerJobQueue(JOB_DB_PATH)
+        fallback_queue = _fallback_queue_for_init_build_error(previous_queue, exc)
+        if fallback_queue is not None:
+            return fallback_queue
         raise
 
 
