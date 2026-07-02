@@ -77,7 +77,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     "\u2015": "-",  # Horizontal bar
     "\u2212": "-",  # Minus sign
     "\uff0d": "-",  # Fullwidth hyphen-minus
-    # BUG FIX: Add fullwidth characters (commonly used in obfuscation)
+    # Fullwidth characters commonly used in obfuscation.
     "\uff01": "!",  # Fullwidth exclamation mark
     "\uff02": '"',  # Fullwidth quotation mark
     "\uff03": "#",  # Fullwidth number sign
@@ -171,7 +171,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     "\uff5c": "|",  # Fullwidth vertical line
     "\uff5d": "}",  # Fullwidth right curly bracket
     "\uff5e": "~",  # Fullwidth tilde
-    # BUG FIX: Add Armenian homoglyphs (commonly used in obfuscation attacks)
+    # Armenian homoglyphs commonly used in obfuscation attacks.
     "\u0561": "a",  # Armenian small letter ayb (looks like a)
     "\u0531": "A",  # Armenian capital letter AYB
     "\u0562": "b",  # Armenian small letter ben (looks like b)
@@ -196,7 +196,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     "\u053f": "K",  # Armenian capital letter KĒN
     "\u0578": "u",  # Armenian small letter vo (looks like u)
     "\u0548": "U",  # Armenian capital letter VO
-    # BUG FIX: Add Cherokee homoglyphs (commonly used in obfuscation attacks)
+    # Cherokee homoglyphs commonly used in obfuscation attacks.
     "\u13a0": "A",  # Cherokee letter A
     "\u13aa": "E",  # Cherokee letter E
     "\u13b6": "I",  # Cherokee letter I
@@ -211,7 +211,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     # Zero-width characters (security: remove to prevent bypass attacks)
     "\u200c": "",  # Zero-width non-joiner (ZWNJ) - invisible, used to bypass pattern detection
     "\u200d": "",  # Zero-width joiner (ZWJ) - invisible, used to bypass pattern detection
-    # BUG FIX: Add Georgian homoglyphs (commonly used in obfuscation attacks)
+    # Georgian homoglyphs commonly used in obfuscation attacks.
     "\u10d0": "a",  # Georgian an (looks like a)
     "\u10d1": "b",  # Georgian ban (looks like b)
     "\u10d2": "g",  # Georgian gan (looks like g)
@@ -232,7 +232,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     "\u10e1": "s",  # Georgian san (looks like s)
     "\u10e2": "t",  # Georgian tarin (looks like t)
     "\u10e3": "u",  # Georgian un (looks like u)
-    # BUG FIX: Add Mathematical Alphanumeric Symbols (U+1D400-U+1D7FF)
+    # Mathematical Alphanumeric Symbols (U+1D400-U+1D7FF).
     # These are bold/italic/script variants that look like regular Latin characters
     # Full block would be large; include most common variants
     "\U0001d400": "A",  # Mathematical Bold Capital A
@@ -354,9 +354,7 @@ _UTF7_SEQUENCE_RE = re.compile(r"\+[A-Za-z0-9/]+-")
 _NESTED_QUANTIFIER_RE = re.compile(
     r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d+,?\d*})"
 )
-# BUG FIX: Detect deeply nested quantifiers like ((a+)+), ((.?)*)
-# These patterns have groups containing quantified groups with outer quantifiers
-# which cause exponential backtracking
+# Groups containing quantified groups with outer quantifiers can backtrack exponentially.
 _DEEPLY_NESTED_QUANTIFIER_RE = re.compile(r"\(\s*\([^)]*[+*][^)]*\)\s*[+*]")
 _SECURITY_IGNORABLE_TRANSLATION = str.maketrans(
     {
@@ -370,8 +368,7 @@ _SECURITY_IGNORABLE_TRANSLATION = str.maketrans(
 # ---------------------------------------------------------------------------
 
 # Unicode whitespace characters that should match \s in patterns.
-# BUG FIX: Added missing whitespace characters (NEL, LRM/RLM, ZWNBSP)
-# Includes: NBSP, various space widths, line/paragraph separators, etc.
+# Includes NBSP, NEL, LRM/RLM, ZWNBSP, space widths, and line/paragraph separators.
 UNICODE_WHITESPACE_PATTERN = (
     r"[\s\u00A0\u1680\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\u0085\u200E\u200F\uFEFF]"
 )
