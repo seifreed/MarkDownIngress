@@ -91,7 +91,6 @@ from markdown_ingress.api_server_threads import (
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
-# Module-level logger for error handling
 _logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
@@ -110,13 +109,12 @@ _request_counts: dict[str, RequestWindow] = {}
 
 
 _rate_limit_lock = threading.Lock()
-_rate_limit_cleanup_counter: int = 0  # Counter for periodic cleanup
-_RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000  # Cleanup every N requests
-_RATE_LIMIT_MAX_CLIENTS: int = 10000  # Max clients before forced cleanup
+_rate_limit_cleanup_counter: int = 0
+_RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000
+_RATE_LIMIT_MAX_CLIENTS: int = 10000
 
 _RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
 
-# BUG FIX: Warn about per-worker rate limiting in multi-worker deployments
 if _detect_multiworker_environment():
     _logger.warning(
         "Rate limiting is per-worker in multi-worker deployments. "
@@ -211,21 +209,12 @@ def _build_job_queue() -> PersistentJobQueue:
 
 
 def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
-    """Record a job queue in history for cleanup tracking.
-
-    BUG FIX: Always acquire _JOB_QUEUE_LOCK before modifying _JOB_QUEUE_HISTORY.
-    This function may be called from contexts that don't hold the lock,
-    so we ensure thread-safety by acquiring it here.
-    """
+    """Record a job queue in history for cleanup tracking."""
     remember_job_queue(_JOB_QUEUE_HISTORY, _JOB_QUEUE_LOCK, queue)
 
 
 def _prune_job_queue_history() -> None:
-    """Remove job queues from history that no longer have visible jobs.
-
-    BUG FIX #3: All access to _JOB_QUEUE_HISTORY is protected by _JOB_QUEUE_LOCK.
-    This includes both reading (iteration) and writing (slice assignment).
-    """
+    """Remove job queues from history that no longer have visible jobs."""
     prune_job_queue_history(
         _JOB_QUEUE_HISTORY,
         _JOB_QUEUE_LOCK,
@@ -298,9 +287,6 @@ def _build_replacement_queue_or_current(expected_queue):
             if fallback_queue is not None:
                 return fallback_queue
             raise
-        # BUG FIX #2: Catch only specific exceptions, not all exceptions.
-        # Previously caught all Exception including MemoryError, KeyboardInterrupt, etc.
-        # Only catch database/file errors that indicate transient backend issues.
         except (SQLiteError, OSError):
             fallback_queue = _queue_if_expected_state(
                 expected_queue, {"backend_error", "external_owner"}
@@ -520,7 +506,7 @@ def _init_job_queue(previous_queue=None):
         raise
 
 
-# Lazy initialization to prevent server crash on startup if job queue fails
+# Lazy initialization defers backend errors until an endpoint needs the queue.
 JOB_QUEUE: PersistentJobQueue | None = None
 _job_queue_initialized = False
 _job_queue_init_failed_at: float | None = None
@@ -540,7 +526,6 @@ def _ensure_job_queue_initialized():
         if time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS:
             return
     with _JOB_QUEUE_INIT_LOCK:
-        # Double-check after acquiring lock to prevent race condition
         if _job_queue_initialized:
             return
         if _job_queue_init_failed_at is not None:
@@ -557,15 +542,11 @@ def _ensure_job_queue_initialized():
             _job_queue_init_failed_at = None
             _start_job_queue_watchdog()
         except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error):
-            # Catch specific exceptions. Do NOT set _job_queue_initialized = True
-            # on failure so that subsequent calls can retry after backoff.
             _job_queue_init_failed_at = time.monotonic()
             _logger.exception("Failed to initialize job queue")
-            # JOB_QUEUE remains None; endpoints will handle unavailable queue
 
 
 def _get_job_queue():
-    # Ensure job queue is initialized before use (lazy initialization)
     _ensure_job_queue_initialized()
     with _JOB_QUEUE_LOCK:
         queue = JOB_QUEUE
@@ -576,9 +557,6 @@ def _get_job_queue():
         if getattr(queue, "state", None) == "external_owner":
             queue_to_return = queue
         else:
-            # BUG FIX #1: Capture the queue reference before releasing lock.
-            # This prevents TOCTOU race where JOB_QUEUE changes between
-            # releasing the lock and attempting repair/rebuild.
             queue_to_repair = queue
             queue_to_return = None
 
@@ -601,7 +579,6 @@ def _get_job_queue():
             _maybe_start_job_queue_repair()
             return current
         raise
-    # Pass the queue we attempted to repair, rebuild will handle TOCTOU internally
     return _build_replacement_queue_or_current(queue_to_repair)
 
 
@@ -705,7 +682,6 @@ health_detailed = _api_routes.health_detailed
 root = _api_routes.root
 
 
-# Compatibility aliases for existing clients/tests.
 register_legacy_routes(
     app,
     [Depends(_require_api_key), Depends(_require_rate_limit)],
