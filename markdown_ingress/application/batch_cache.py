@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from markdown_ingress.application.cache_resolution import (
+    _CACHE_BACKEND_ERRORS,
     _purge_corrupt_cache_entry,
     write_cache_entry,
 )
@@ -29,7 +30,7 @@ def read_batch_cached_document(
         return None
     try:
         cached = prepared.cache_backend.get(prepared.cache_key)
-    except Exception as exc:  # noqa: BLE001 - cache backends fail open as misses
+    except _CACHE_BACKEND_ERRORS as exc:
         _logger.warning(
             "Batch cache lookup failed for %s; continuing without cache: %s",
             prepared.cache_key,
@@ -45,7 +46,7 @@ def read_batch_cached_document(
         bump_ingest_stat("cache_hits")
         cached_copy.metadata[REQUESTED_MODE] = prepared.requested_mode
         return cached_copy
-    except Exception as exc:  # noqa: BLE001 - corrupt cached values are purged
+    except _CACHE_BACKEND_ERRORS as exc:
         _logger.warning(
             "Failed to clone cached batch document for %s, cache entry may be corrupt: %s",
             prepared.cache_key,

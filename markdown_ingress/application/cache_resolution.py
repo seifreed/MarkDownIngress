@@ -22,6 +22,7 @@ from markdown_ingress.core.metadata_keys import (
 from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
+_CACHE_BACKEND_ERRORS = (AttributeError, OSError, RuntimeError, TypeError, ValueError)
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
     """Best-effort removal of a corrupt cache value before recomputing."""
     try:
         cache_backend.delete(cache_key)
-    except Exception as exc:  # noqa: BLE001 - cache backends fail open as cache misses
+    except _CACHE_BACKEND_ERRORS as exc:
         _logger.warning(
             "Failed to delete corrupt cache entry for %s; continuing as cache miss: %s",
             cache_key,
@@ -59,7 +60,7 @@ def write_cache_entry(
         return
     try:
         cache_backend.set(cache_key, document, ttl=ttl)
-    except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
+    except _CACHE_BACKEND_ERRORS as exc:
         _logger.warning(
             "%s write failed for %s; continuing without cache: %s",
             label,
@@ -101,7 +102,7 @@ class _CacheResolutionHelper:
             return None
         try:
             cached = cache_backend.get(cache_key)
-        except Exception as exc:  # noqa: BLE001 - cache backends fail open as misses
+        except _CACHE_BACKEND_ERRORS as exc:
             _logger.warning(
                 "Cache lookup failed for %s; continuing without cache: %s",
                 cache_key,
@@ -118,7 +119,7 @@ class _CacheResolutionHelper:
             bump_ingest_stat("cache_hits")
             cached_copy.metadata[REQUESTED_MODE] = requested_mode
             record_mode_result(requested_mode, success=True)
-        except Exception as exc:  # noqa: BLE001 - corrupt cached values are purged
+        except _CACHE_BACKEND_ERRORS as exc:
             _logger.warning(
                 "Failed to clone cached document for %s, cache entry may be corrupt: %s",
                 cache_key,
