@@ -54,7 +54,10 @@ from markdown_ingress.api_server_job_history import (
 )
 from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
 from markdown_ingress.api_server_job_queue_init import close_previous_job_queue_for_init
-from markdown_ingress.api_server_job_queue_repair import job_queue_repair_retry_delay
+from markdown_ingress.api_server_job_queue_repair import (
+    job_queue_repair_finished,
+    job_queue_repair_retry_delay,
+)
 from markdown_ingress.api_server_job_queue_selection import (
     JobQueueSelection,
     select_job_queue_for_use,
@@ -379,10 +382,7 @@ def _finish_repair_if_replaced_or_terminal(
     stop_event: threading.Event,
 ) -> bool:
     replacement_queue = _build_replacement_queue_or_current(queue)
-    if replacement_queue is not queue:
-        _clear_job_queue_repair_state(stop_event)
-        return True
-    if state == "backend_error":
+    if job_queue_repair_finished(queue, replacement_queue, state):
         _clear_job_queue_repair_state(stop_event)
         return True
     return False
