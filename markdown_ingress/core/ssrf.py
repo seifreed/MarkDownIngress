@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import socket
 from urllib.parse import urlsplit
 
+from markdown_ingress.core.ssrf_dns import (
+    dns_pin_matches_hostname as _dns_pin_matches_hostname,
+)
+from markdown_ingress.core.ssrf_dns import (
+    validate_dns_hostname_for_ssrf as _validate_dns_hostname_with_resolver,
+)
+from markdown_ingress.core.ssrf_dns import (
+    validate_hostname_dns_ips_for_ssrf as _validate_hostname_dns_ips_for_ssrf,
+)
 from markdown_ingress.core.ssrf_hostname import (
     validate_hostname_literal_for_ssrf,
     validate_non_ip_hostname_for_ssrf,
@@ -42,58 +50,17 @@ from markdown_ingress.core.ssrf_url import (
 logger = logging.getLogger(__name__)
 
 
-def _resolve_hostname_ips_for_ssrf(
-    hostname: str,
-) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
-    """Resolve a hostname and return unique IPs for SSRF validation."""
-    try:
-        addr_info = socket.getaddrinfo(hostname, None)
-    except (socket.gaierror, OSError, UnicodeError) as exc:
-        raise ValueError(f"URL host could not be resolved (SSRF protection): {hostname}") from exc
-
-    resolved: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
-    for _, _, _, _, sockaddr in addr_info:
-        ip_text = str(sockaddr[0]).split("%", 1)[0]
-        try:
-            resolved.append(normalize_ip_for_ssrf(ipaddress.ip_address(ip_text)))
-        except ValueError:
-            continue
-
-    if not resolved:
-        raise ValueError(f"URL host could not be resolved (SSRF protection): {hostname}")
-
-    unique: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
-    seen: set[str] = set()
-    for ip in resolved:
-        key = str(ip)
-        if key not in seen:
-            seen.add(key)
-            unique.append(ip)
-    return tuple(unique)
-
-
 def validate_hostname_dns_ips_for_ssrf(
     hostname: str,
     *,
     allow_local: bool = False,
 ) -> tuple[str, ...]:
     """Resolve and validate all DNS answers for a hostname."""
-    normalized = normalize_hostname(hostname)
-    if not normalized:
-        raise ValueError("URL must have a valid host")
-    if not allow_local and is_blocked_hostname(normalized):
-        raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
-
-    resolved_ips = _resolve_hostname_ips_for_ssrf(normalized)
-    validated_ips: list[str] = []
-    for resolved_ip in resolved_ips:
-        if not allow_local and is_blocked_ip_address(resolved_ip):
-            raise ValueError(
-                f"URL hostname resolves to blocked IP (SSRF protection): "
-                f"{normalized} -> {resolved_ip}"
-            )
-        validated_ips.append(str(resolved_ip))
-    return tuple(validated_ips)
+    return _validate_hostname_dns_ips_for_ssrf(
+        hostname,
+        allow_local=allow_local,
+        resolver=socket.getaddrinfo,
+    )
 
 
 def dns_pin_matches_hostname(
@@ -103,24 +70,20 @@ def dns_pin_matches_hostname(
     allow_local: bool = False,
 ) -> bool:
     """Return whether an installed browser DNS pin is valid for a hostname."""
-    try:
-        pin = normalize_ip_for_ssrf(ipaddress.ip_address(normalize_hostname(pinned_ip)))
-    except ValueError:
-        return False
-    if not allow_local and is_blocked_ip_address(pin):
-        return False
-    return str(pin) in validate_hostname_dns_ips_for_ssrf(
+    return _dns_pin_matches_hostname(
         hostname,
+        pinned_ip,
         allow_local=allow_local,
+        resolver=socket.getaddrinfo,
     )
 
 
 def _validate_dns_hostname_for_ssrf(hostname: str, *, allow_local: bool) -> str:
-    resolved_ips = validate_hostname_dns_ips_for_ssrf(hostname, allow_local=allow_local)
-    # Return the first resolved IP to pin DNS and prevent rebinding
-    if resolved_ips:
-        return resolved_ips[0]
-    return hostname
+    return _validate_dns_hostname_with_resolver(
+        hostname,
+        allow_local=allow_local,
+        resolver=socket.getaddrinfo,
+    )
 
 
 def validate_hostname_for_ssrf(
