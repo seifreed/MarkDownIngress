@@ -54,6 +54,7 @@ from markdown_ingress.api_server_job_history import (
 )
 from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
 from markdown_ingress.api_server_job_queue_init import close_previous_job_queue_for_init
+from markdown_ingress.api_server_job_queue_repair import job_queue_repair_retry_delay
 from markdown_ingress.api_server_job_queue_selection import (
     JobQueueSelection,
     select_job_queue_for_use,
@@ -348,12 +349,13 @@ def _current_recoverable_job_queue(
 
 
 def _wait_for_next_job_queue_repair_attempt(stop_event: threading.Event, state: str | None) -> None:
-    if state == "external_owner":
-        stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
-    elif state == "backend_error":
-        stop_event.wait(_BACKEND_ERROR_REPAIR_RETRY_SECONDS)
-    else:
-        stop_event.wait(0.25)
+    stop_event.wait(
+        job_queue_repair_retry_delay(
+            state,
+            external_owner_seconds=_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS,
+            backend_error_seconds=_BACKEND_ERROR_REPAIR_RETRY_SECONDS,
+        )
+    )
 
 
 def _maybe_wait_for_external_owner_backend(
