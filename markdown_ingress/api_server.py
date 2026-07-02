@@ -481,6 +481,21 @@ def _stop_reloaded_job_queue_control_threads() -> None:
         )
 
 
+def _close_previous_job_queue_for_init(previous_queue: Any | None) -> Any | None:
+    if previous_queue is None:
+        return None
+    close = getattr(previous_queue, "close", None)
+    if callable(close):
+        try:
+            close()
+        except RuntimeError:
+            if getattr(previous_queue, "state", None) in _RECOVERABLE_QUEUE_STATES:
+                return previous_queue
+            raise
+    _remember_job_queue(previous_queue)
+    return None
+
+
 def _init_job_queue(previous_queue=None):
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
@@ -490,16 +505,9 @@ def _init_job_queue(previous_queue=None):
     _JOB_QUEUE_REPAIR_THREAD = None
     _JOB_QUEUE_WATCHDOG_STOP = None
     _JOB_QUEUE_WATCHDOG_THREAD = None
-    if previous_queue is not None:
-        close = getattr(previous_queue, "close", None)
-        if callable(close):
-            try:
-                close()
-            except RuntimeError:
-                if getattr(previous_queue, "state", None) in _RECOVERABLE_QUEUE_STATES:
-                    return previous_queue
-                raise
-        _remember_job_queue(previous_queue)
+    reused_queue = _close_previous_job_queue_for_init(previous_queue)
+    if reused_queue is not None:
+        return reused_queue
     try:
         return _build_job_queue()
     except RuntimeError as exc:
