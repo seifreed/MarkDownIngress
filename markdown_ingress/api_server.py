@@ -53,6 +53,7 @@ from markdown_ingress.api_server_job_history import (
     remember_job_queue,
 )
 from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
+from markdown_ingress.api_server_job_queue_init import close_previous_job_queue_for_init
 from markdown_ingress.api_server_job_queue_selection import (
     JobQueueSelection,
     select_job_queue_for_use,
@@ -477,21 +478,6 @@ def _stop_reloaded_job_queue_control_threads() -> None:
         )
 
 
-def _close_previous_job_queue_for_init(previous_queue: Any | None) -> Any | None:
-    if previous_queue is None:
-        return None
-    close = getattr(previous_queue, "close", None)
-    if callable(close):
-        try:
-            close()
-        except RuntimeError:
-            if getattr(previous_queue, "state", None) in _RECOVERABLE_QUEUE_STATES:
-                return previous_queue
-            raise
-    _remember_job_queue(previous_queue)
-    return None
-
-
 def _reset_job_queue_control_thread_refs() -> None:
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
@@ -513,7 +499,11 @@ def _fallback_queue_for_init_build_error(previous_queue: Any | None, exc: Runtim
 def _init_job_queue(previous_queue=None):
     _stop_reloaded_job_queue_control_threads()
     _reset_job_queue_control_thread_refs()
-    reused_queue = _close_previous_job_queue_for_init(previous_queue)
+    reused_queue = close_previous_job_queue_for_init(
+        previous_queue,
+        recoverable_states=_RECOVERABLE_QUEUE_STATES,
+        remember_job_queue=_remember_job_queue,
+    )
     if reused_queue is not None:
         return reused_queue
     try:
