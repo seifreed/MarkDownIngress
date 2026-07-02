@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import suppress
 
 from markdown_ingress.models import SafeDocument
 
@@ -36,15 +37,13 @@ def _copy_custom_attrs(source: Exception, target: Exception) -> None:
     }
     for attr, value in getattr(source, "__dict__", {}).items():
         if attr not in skip:
-            try:
+            with suppress(AttributeError, TypeError):
                 copied_value: object
                 if attr == "document":
                     copied_value = copy.deepcopy(value) if isinstance(value, SafeDocument) else None
                 else:
                     copied_value = make_picklable(value)
                 setattr(target, attr, copied_value)
-            except (AttributeError, TypeError):
-                pass
 
 
 def _prepare_exception_copy(
@@ -55,10 +54,8 @@ def _prepare_exception_copy(
 ) -> Exception:
     """Apply queue-safe state from source to a copied exception."""
     raw_args = source.args if args is None else args
-    try:
+    with suppress(AttributeError, TypeError):
         target.args = tuple(make_picklable(arg) for arg in raw_args)
-    except (AttributeError, TypeError):
-        pass
     # Queue-safe by construction: __cause__/__context__/__traceback__ are
     # excluded from Python's default exception serialization (only type, args
     # and __dict__ are carried). Attaching the raw source preserves the real
