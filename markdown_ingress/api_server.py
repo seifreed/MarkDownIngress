@@ -572,6 +572,16 @@ def _select_job_queue_for_use() -> _JobQueueSelection:
         return _JobQueueSelection(queue_to_return=None, queue_to_repair=queue)
 
 
+def _current_queue_after_repair_close_failure(queue_to_repair: Any) -> Any | None:
+    with _JOB_QUEUE_LOCK:
+        if getattr(queue_to_repair, "state", None) not in _REPAIRABLE_QUEUE_STATES:
+            return None
+        current = JOB_QUEUE
+        if current is None:
+            raise RuntimeError("Job queue is unavailable")
+        return current
+
+
 def _get_job_queue():
     _ensure_job_queue_initialized()
     selection = _select_job_queue_for_use()
@@ -586,14 +596,10 @@ def _get_job_queue():
     try:
         _close_queue_for_repair(queue_to_repair)
     except (RuntimeError, TypeError) as exc:
-        # Re-check state under lock after repair failure
-        with _JOB_QUEUE_LOCK:
-            if getattr(queue_to_repair, "state", None) in _REPAIRABLE_QUEUE_STATES:
-                current = JOB_QUEUE
-                if current is None:
-                    raise RuntimeError("Job queue is unavailable") from exc
-            else:
-                current = None
+        try:
+            current = _current_queue_after_repair_close_failure(queue_to_repair)
+        except RuntimeError as unavailable:
+            raise unavailable from exc
         if current is not None:
             _maybe_start_job_queue_repair()
             return current
