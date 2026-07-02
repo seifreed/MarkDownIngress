@@ -514,6 +514,13 @@ _job_queue_init_failed_at: float | None = None
 _JOB_QUEUE_RETRY_BACKOFF_SECONDS = 10.0
 
 
+def _job_queue_init_backoff_active() -> bool:
+    return (
+        _job_queue_init_failed_at is not None
+        and time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS
+    )
+
+
 def _ensure_job_queue_initialized():
     """Initialize job queue lazily to prevent server crash on module import.
 
@@ -523,15 +530,13 @@ def _ensure_job_queue_initialized():
     global JOB_QUEUE, _job_queue_initialized, _job_queue_init_failed_at
     if _job_queue_initialized:
         return
-    if _job_queue_init_failed_at is not None:
-        if time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS:
-            return
+    if _job_queue_init_backoff_active():
+        return
     with _JOB_QUEUE_INIT_LOCK:
         if _job_queue_initialized:
             return
-        if _job_queue_init_failed_at is not None:
-            if time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS:
-                return
+        if _job_queue_init_backoff_active():
+            return
         if JOB_QUEUE is not None:
             _job_queue_initialized = True
             _job_queue_init_failed_at = None
