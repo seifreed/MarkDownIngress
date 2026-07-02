@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 
 from markdown_ingress.models import FetchResult, SafeDocument
 
@@ -15,7 +16,5 @@ def cleanup_screenshot_on_failure(
     if document is None and fetch_result.metadata.get("screenshot_temp"):
         path = fetch_result.metadata.get("screenshot_path")
         if path:
-            try:
+            with suppress(OSError):
                 os.unlink(path)
-            except OSError:
-                pass
