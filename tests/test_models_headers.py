@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 
@@ -65,19 +67,21 @@ def test_case_insensitive_headers_copy_preserves_case_insensitive_lookup():
 
 def test_case_insensitive_headers_reject_non_string_items():
     headers = CaseInsensitiveHeaders()
+    unsafe_headers: Any = headers
 
     with pytest.raises(TypeError, match="header key must be a string"):
-        headers[None] = "value"  # type: ignore[index]
+        unsafe_headers[None] = "value"
 
     with pytest.raises(TypeError, match="header value must be a string"):
-        headers["X-Test"] = 1  # type: ignore[assignment]
+        unsafe_headers["X-Test"] = 1
 
 
 def test_case_insensitive_headers_setdefault_rejects_non_string_items():
     headers = CaseInsensitiveHeaders()
+    unsafe_headers: Any = headers
 
     with pytest.raises(TypeError, match="header key must be a string"):
-        headers.setdefault(None, "value")  # type: ignore[arg-type]
+        unsafe_headers.setdefault(None, "value")
 
     with pytest.raises(TypeError, match="header value must be a string"):
-        headers.setdefault("X-Test", 1)  # type: ignore[arg-type]
+        unsafe_headers.setdefault("X-Test", 1)
