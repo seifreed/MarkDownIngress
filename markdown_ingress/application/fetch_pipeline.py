@@ -201,21 +201,29 @@ class _FetchPipeline:
                 FetchResult,
                 context.timed_stage("fetch_render", lambda: renderer.render_sync(context.url)),
             )
-            if context.screenshot_was_temp:
-                reported_screenshot_path = fetch_result.metadata.get("screenshot_path")
-                if reported_screenshot_path:
-                    if (
-                        context.screenshot_temp_path is not None
-                        and str(reported_screenshot_path) != context.screenshot_temp_path
-                    ):
-                        _cleanup_screenshot(context.screenshot_temp_path)
-                    fetch_result.metadata[SCREENSHOT_TEMP] = True
-                else:
-                    _cleanup_screenshot(context.screenshot_temp_path)
+            self._reconcile_temp_screenshot(context, fetch_result)
         except Exception as render_exc:  # noqa: BLE001 - render mode returns structured failure
             return self._handle_render_failure(context, render_exc)
         else:
             return fetch_result
+
+    @staticmethod
+    def _reconcile_temp_screenshot(
+        context: _RenderAttemptContext,
+        fetch_result: FetchResult,
+    ) -> None:
+        if not context.screenshot_was_temp:
+            return
+        reported_screenshot_path = fetch_result.metadata.get("screenshot_path")
+        if reported_screenshot_path:
+            if (
+                context.screenshot_temp_path is not None
+                and str(reported_screenshot_path) != context.screenshot_temp_path
+            ):
+                _cleanup_screenshot(context.screenshot_temp_path)
+            fetch_result.metadata[SCREENSHOT_TEMP] = True
+            return
+        _cleanup_screenshot(context.screenshot_temp_path)
 
     def _fetch_render(
         self,
