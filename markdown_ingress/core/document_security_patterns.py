@@ -11,8 +11,11 @@ from markdown_ingress.core import security as security_module
 from markdown_ingress.core.policy import PolicyEngine
 from markdown_ingress.core.security_engine import (
     SecurityEngine,
-    SecurityExplanationContext,
     _dedupe_preserving_order,
+)
+from markdown_ingress.core.security_explanation import (
+    SecurityExplanationContext,
+    build_security_explanation,
 )
 from markdown_ingress.models import ExtractionResult, InjectionAnalysis
 
@@ -129,7 +132,7 @@ def _run_and_merge_custom_analysis(
         context.policy_engine.policy.warn_threshold,
         strict=context.config.strict,
     )
-    security_result["explanation"] = context.security_engine._build_explanation(
+    security_result["explanation"] = build_security_explanation(
         SecurityExplanationContext(
             final_score=security_result["injection_score"],
             basic_analysis=InjectionAnalysis(

@@ -9,11 +9,14 @@ Implements progressive security scanning:
 
 import logging
 import math
-from dataclasses import dataclass
 from typing import Any
 
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+from markdown_ingress.core.security_explanation import (
+    SecurityExplanationContext,
+    build_security_explanation,
+)
 from markdown_ingress.core.security_nova_result import NOVA_DISABLED_SCORE, parse_nova_result
 from markdown_ingress.core.security_validation import (
     effective_security_thresholds,
@@ -24,16 +27,6 @@ from markdown_ingress.core.security_validation import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class SecurityExplanationContext:
-    final_score: float
-    basic_analysis: Any
-    nova_details: dict
-    scan_method: str
-    block_threshold: float = 0.7
-    warn_threshold: float = 0.4
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -210,7 +203,7 @@ class SecurityEngine:
             "advanced_security_available": not self._nova_init_failed,
             "pattern_matches": basic_analysis.pattern_matches,
             "imperative_density": basic_analysis.imperative_density,
-            "explanation": self._build_explanation(
+            "explanation": build_security_explanation(
                 SecurityExplanationContext(
                     final_score=final_score,
                     basic_analysis=basic_analysis,
@@ -241,51 +234,3 @@ class SecurityEngine:
             flags.append(f"severity:{nova_details['severity']}")
 
         return _dedupe_preserving_order(flags)
-
-    def _build_explanation(
-        self,
-        context: SecurityExplanationContext,
-    ) -> dict:
-        """Produce actionable explainability data for downstream consumers."""
-        triggers = []
-        for match in context.basic_analysis.pattern_matches:
-            samples = []
-            for sample in match.get("samples", []):
-                if isinstance(sample, tuple):
-                    samples.append(" ".join(str(part) for part in sample if part))
-                else:
-                    samples.append(str(sample))
-            triggers.append(
-                {
-                    "source": "pattern",
-                    "name": match.get("pattern"),
-                    "weight": match.get("weight"),
-                    "occurrences": match.get("occurrences"),
-                    "samples": samples,
-                }
-            )
-
-        triggers.extend(
-            {"source": "nova", "name": rule}
-            for rule in context.nova_details.get("matched_rules", [])
-        )
-
-        if math.isnan(context.final_score):
-            recommendation = "block"
-        else:
-            recommendation = "allow"
-            if context.final_score >= context.block_threshold:
-                recommendation = "block"
-            elif context.final_score >= context.warn_threshold:
-                recommendation = "warn"
-
-        return {
-            "scan_method": context.scan_method,
-            "recommendation": recommendation,
-            "summary": (
-                f"Detected {len(context.basic_analysis.pattern_matches)} heuristic pattern groups"
-                f" with imperative density {context.basic_analysis.imperative_density:.3f}."
-            ),
-            "triggers": triggers,
-            "hidden_content_detected": context.basic_analysis.hidden_content_detected,
-        }
