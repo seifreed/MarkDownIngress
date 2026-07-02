@@ -6,7 +6,7 @@ import ipaddress
 import logging
 import re
 import socket
-from urllib.parse import SplitResult, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from markdown_ingress.core.ssrf_ip_policy import (
     is_blocked_hostname as is_blocked_hostname,
@@ -28,6 +28,12 @@ from markdown_ingress.core.ssrf_normalization import (
 )
 from markdown_ingress.core.ssrf_normalization import (
     resolve_allow_local_urls as resolve_allow_local_urls,
+)
+from markdown_ingress.core.ssrf_url import (
+    normalize_http_url_text,
+    reconstruct_url_with_pinned_target,
+    split_http_url_for_ssrf,
+    validate_http_url_authority,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,81 +226,6 @@ def validate_hostname_for_ssrf(
     )
 
 
-def _normalize_http_url_text(url: str) -> str:
-    normalized_url = str(url).strip()
-    if not normalized_url:
-        raise ValueError("URL cannot be empty")
-
-    # BUG FIX: Check for CRLF injection characters that could be used for header injection
-    if "\r" in normalized_url or "\n" in normalized_url:
-        raise ValueError(f"URL contains forbidden CRLF characters: {url!r}")
-
-    # BUG FIX: Check for null bytes that could be used to bypass validation
-    if "\x00" in normalized_url:
-        raise ValueError(f"URL contains null byte: {url!r}")
-    return normalized_url
-
-
-def _split_http_url_for_ssrf(normalized_url: str, original_url: str) -> SplitResult:
-    try:
-        return urlsplit(normalized_url)
-    except ValueError as exc:
-        raise ValueError(f"Invalid URL format: {original_url!r}: {exc}") from exc
-
-
-def _validate_http_url_authority(parsed: SplitResult, original_url: str) -> int | None:
-    # BUG FIX: Validate that URL has a network location (netloc)
-    # URLs like "http:///example.com" (triple slash) have empty netloc
-    if not parsed.netloc:
-        raise ValueError(f"URL must have a valid network location: {original_url!r}")
-
-    scheme = parsed.scheme.lower()
-    if scheme not in ("http", "https"):
-        raise ValueError(
-            f"Invalid URL scheme: {scheme!r}. Only http and https are allowed. "
-            f"URL: {original_url!r}"
-        )
-
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError(f"Invalid URL port: {original_url!r}: {exc}") from exc
-    if port is not None and (port < 1 or port > 65535):
-        raise ValueError(f"Invalid URL port: {original_url!r}. Port must be between 1 and 65535")
-    return port
-
-
-def _build_pinned_url_netloc(
-    parsed: SplitResult,
-    validated_target: str,
-    port: int | None,
-) -> str:
-    if ":" in validated_target:
-        new_netloc = f"[{validated_target}]"
-    else:
-        new_netloc = validated_target
-
-    if port is not None:
-        new_netloc = f"{new_netloc}:{port}"
-
-    if parsed.username:
-        auth = parsed.username
-        if parsed.password:
-            auth = f"{auth}:{parsed.password}"
-        new_netloc = f"{auth}@{new_netloc}"
-    return new_netloc
-
-
-def _reconstruct_url_with_pinned_target(
-    parsed: SplitResult,
-    *,
-    validated_target: str,
-    port: int | None,
-) -> str:
-    new_netloc = _build_pinned_url_netloc(parsed, validated_target, port)
-    return urlunsplit((parsed.scheme, new_netloc, parsed.path, parsed.query, parsed.fragment))
-
-
 def validate_http_url_no_ssrf(
     url: str,
     *,
@@ -306,9 +237,9 @@ def validate_http_url_no_ssrf(
     BUG FIX: Also validates URL for CRLF injection and null bytes to prevent
     header injection attacks via malformed URLs.
     """
-    normalized_url = _normalize_http_url_text(url)
-    parsed = _split_http_url_for_ssrf(normalized_url, url)
-    port = _validate_http_url_authority(parsed, url)
+    normalized_url = normalize_http_url_text(url)
+    parsed = split_http_url_for_ssrf(normalized_url, url)
+    port = validate_http_url_authority(parsed, url)
     original_hostname = parsed.hostname or ""
     validated_target = validate_hostname_for_ssrf(
         original_hostname,
@@ -320,7 +251,7 @@ def validate_http_url_no_ssrf(
     # IP-pinned target to prevent DNS rebinding attacks. The original hostname
     # is preserved as the Host header hint for the caller.
     if validated_target != original_hostname and resolve_dns:
-        return _reconstruct_url_with_pinned_target(
+        return reconstruct_url_with_pinned_target(
             parsed,
             validated_target=validated_target,
             port=port,
