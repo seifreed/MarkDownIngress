@@ -84,7 +84,7 @@ class SecurityEngine:
                         enable_keywords=True, enable_semantics=True, enable_llm=self.use_llm
                     )
                     logger.info("Nova-tracer initialized successfully")
-                except Exception as e:  # noqa: BLE001 - optional Nova init falls back
+                except (ImportError, OSError, RuntimeError, TypeError, ValueError) as e:
                     self._nova_init_failed = True
                     logger.warning(
                         f"advanced_security=True but Nova-tracer failed to initialize: {e}. "
