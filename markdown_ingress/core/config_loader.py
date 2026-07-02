@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from pathlib import Path
-from typing import cast
-
-import yaml  # type: ignore[import-untyped]
+from typing import Any, cast
 
 from markdown_ingress.core.config import Config
 from markdown_ingress.core.config_env import (
@@ -18,6 +17,8 @@ from markdown_ingress.core.config_env import (
 from markdown_ingress.core.config_env_overrides import (
     apply_env_overrides,
 )
+
+yaml = cast(Any, import_module("yaml"))
 
 
 class ConfigLoader:
