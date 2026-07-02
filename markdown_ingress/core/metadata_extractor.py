@@ -7,6 +7,11 @@ from typing import Any, cast
 
 from selectolax.parser import HTMLParser
 
+from markdown_ingress.core.metadata_basic import (
+    detect_content_type,
+    extract_keywords,
+    first_meta_content,
+)
 from markdown_ingress.core.metadata_jsonld import (
     parse_author_from_jsonld_script,
     parse_date_from_jsonld_script,
@@ -157,22 +162,10 @@ class MetadataExtractor:
 
     def _extract_author(self, parser: HTMLParser) -> str | None:
         """Extract author from meta tags or schema.org"""
-        # Try meta author tag
-        meta_author = parser.css_first('meta[name="author"]')
-        if meta_author:
-            content = (meta_author.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try article:author (Open Graph)
-        og_author = parser.css_first('meta[property="article:author"]')
-        if og_author:
-            content = (og_author.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try schema.org JSON-LD
-        return self._extract_author_from_jsonld(parser)
+        return first_meta_content(
+            parser,
+            ('meta[name="author"]', 'meta[property="article:author"]'),
+        ) or self._extract_author_from_jsonld(parser)
 
     def _extract_author_from_jsonld(self, parser: HTMLParser) -> str | None:
         """Extract author from schema.org JSON-LD scripts"""
@@ -187,13 +180,9 @@ class MetadataExtractor:
         self, parser: HTMLParser, selectors: tuple[str, ...], jsonld_field: str
     ) -> str | None:
         """Return the first non-empty meta content, falling back to schema.org JSON-LD."""
-        for selector in selectors:
-            node = parser.css_first(selector)
-            if node:
-                content = (node.attributes.get("content") or "").strip()
-                if content:
-                    return content
-        return self._extract_date_from_jsonld(parser, jsonld_field)
+        return first_meta_content(parser, selectors) or self._extract_date_from_jsonld(
+            parser, jsonld_field
+        )
 
     def _extract_published_date(self, parser: HTMLParser) -> str | None:
         """Extract published date from meta tags or schema.org"""
@@ -253,108 +242,26 @@ class MetadataExtractor:
 
     def _extract_description(self, parser: HTMLParser) -> str | None:
         """Extract description from meta tags"""
-        # Try meta description
-        meta_desc = parser.css_first('meta[name="description"]')
-        if meta_desc:
-            content = (meta_desc.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try og:description
-        og_desc = parser.css_first('meta[property="og:description"]')
-        if og_desc:
-            content = (og_desc.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try twitter:description
-        twitter_desc = parser.css_first('meta[name="twitter:description"]')
-        if twitter_desc:
-            content = (twitter_desc.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        return None
+        return first_meta_content(
+            parser,
+            (
+                'meta[name="description"]',
+                'meta[property="og:description"]',
+                'meta[name="twitter:description"]',
+            ),
+        )
 
     def _extract_keywords(self, parser: HTMLParser) -> str | None:
         """Extract keywords from meta tags"""
-        # Try meta keywords
-        meta_keywords = parser.css_first('meta[name="keywords"]')
-        if meta_keywords:
-            content = (meta_keywords.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try article:tag (Open Graph)
-        og_tags = parser.css('meta[property="article:tag"]')
-        if og_tags:
-            tags = [(tag.attributes.get("content") or "").strip() for tag in og_tags]
-            tags = [t for t in tags if t]
-            if tags:
-                return ", ".join(tags)
-
-        return None
+        return extract_keywords(parser)
 
     def _extract_site_name(self, parser: HTMLParser) -> str | None:
         """Extract site name from meta tags"""
-        # Try og:site_name
-        og_site = parser.css_first('meta[property="og:site_name"]')
-        if og_site:
-            content = (og_site.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        # Try application-name
-        app_name = parser.css_first('meta[name="application-name"]')
-        if app_name:
-            content = (app_name.attributes.get("content") or "").strip()
-            if content:
-                return content
-
-        return None
+        return first_meta_content(
+            parser,
+            ('meta[property="og:site_name"]', 'meta[name="application-name"]'),
+        )
 
     def _detect_content_type(self, parser: HTMLParser) -> str:
         """Detect content type based on DOM structure heuristics"""
-        # Check for article indicators
-        if (
-            parser.css_first("article")
-            or parser.css_first('meta[property="og:type"][content="article"]')
-            or parser.css_first(".post")
-            or parser.css_first(".article")
-        ):
-            return "article"
-
-        # Check for documentation indicators
-        if (
-            parser.css_first(".documentation")
-            or parser.css_first("#docs")
-            or parser.css_first(".docs")
-            or parser.css_first(".api-doc")
-            or parser.css_first(".api-docs")
-            or parser.css_first(".api-documentation")
-        ):
-            return "documentation"
-
-        # Check for forum/discussion indicators
-        if (
-            parser.css_first(".forum")
-            or parser.css_first(".discussion")
-            or parser.css_first(".thread")
-            or parser.css_first(".comment")
-            or parser.css_first(".comments")
-            or parser.css_first(".comment-list")
-            or parser.css_first(".comment-thread")
-        ):
-            return "forum"
-
-        # Check for e-commerce indicators
-        if (
-            parser.css_first(".product")
-            or parser.css_first('[itemtype*="Product"]')
-            or parser.css_first(".price")
-            or parser.css_first(".add-to-cart")
-        ):
-            return "ecommerce"
-
-        # Default
-        return "webpage"
+        return detect_content_type(parser)
