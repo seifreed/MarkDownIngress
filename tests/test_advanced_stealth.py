@@ -77,7 +77,7 @@ def test_constants():
     print("✓ All constants are valid\n")
 
 
-def test_advanced_stealth_config():
+def test_advanced_stealth_config(monkeypatch):
     """Test AdvancedStealthConfig creation"""
     print("Testing AdvancedStealthConfig...")
 
@@ -95,10 +95,22 @@ def test_advanced_stealth_config():
     assert isinstance(config.browser_args, list)
     print("  ✓ Default config creation works")
 
+    class FakeRng:
+        def __init__(self):
+            self.choice_calls = 0
+
+        def choice(self, values):
+            config_index = self.choice_calls // 3
+            self.choice_calls += 1
+            return values[config_index % len(values)]
+
+        def uniform(self, _minimum, _maximum):
+            return 1.25
+
     # Test randomized config
+    monkeypatch.setattr("markdown_ingress.core.stealth.browser_config._rng", FakeRng())
     config1 = get_advanced_stealth_config(randomize=True)
     config2 = get_advanced_stealth_config(randomize=True)
-    # Should be different (very high probability)
     assert (
         config1.user_agent != config2.user_agent or config1.viewport_width != config2.viewport_width
     ), "Randomized configs should differ"

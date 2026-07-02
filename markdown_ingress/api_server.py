@@ -282,7 +282,7 @@ def _replacement_for_runtime_build_error(expected_queue, exc: RuntimeError):
 def _current_queue_after_superseded_replacement(replacement_queue):
     try:
         replacement_queue.close()
-    except Exception as exc:  # noqa: BLE001 - superseded queue cleanup is best effort
+    except (RuntimeError, SQLiteError, OSError, ValueError) as exc:
         _logger.debug("Failed to close superseded replacement queue: %s", exc, exc_info=True)
     with _JOB_QUEUE_LOCK:
         return JOB_QUEUE
