@@ -209,8 +209,6 @@ class NovaGuard:
         except OSError as exc:
             raise ValueError(f"Cannot read rules file: {exc}") from exc
         except Exception as exc:
-            # BUG FIX: Catch all parsing exceptions, not just UnicodeDecodeError
-            # parser.parse() can raise SyntaxError, ValueError, TypeError, etc.
             raise ValueError(f"Failed to parse rules file: {exc}") from exc
 
     def _is_path_allowed(self, resolved_path: Path) -> bool:
@@ -229,8 +227,6 @@ class NovaGuard:
                     if resolved_path.is_relative_to(allowed_dir):
                         return True
                 except (OSError, ValueError) as e:
-                    # BUG FIX: Use WARNING level for visibility in production logs
-                    # and include both path and allowed_dir for debugging context
                     logger.warning(
                         "Path permission check failed for %s against %s: %s",
                         resolved_path,
