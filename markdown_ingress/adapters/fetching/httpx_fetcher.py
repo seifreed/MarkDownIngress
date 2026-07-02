@@ -25,7 +25,7 @@ from markdown_ingress.adapters.fetching.response_content import ResponseContentM
 from markdown_ingress.adapters.fetching.ssl_bypass_fetch import SslBypassFetchMixin
 from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
-from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
+from markdown_ingress.stealth_browser_profiles import ADVANCED_USER_AGENTS
 
 __all__ = [
     "DomainCircuitOpenError",

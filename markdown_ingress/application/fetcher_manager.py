@@ -11,7 +11,7 @@ from collections.abc import Callable
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.core.inflight import build_request_identity
 from markdown_ingress.core.interfaces import IFetcher
-from markdown_ingress.core.stealth.browser_config import ADVANCED_USER_AGENTS
+from markdown_ingress.stealth_browser_profiles import ADVANCED_USER_AGENTS
 
 _logger = logging.getLogger(__name__)
 

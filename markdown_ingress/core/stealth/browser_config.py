@@ -13,14 +13,14 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from markdown_ingress.core.stealth.browser_profiles import (
+from markdown_ingress.stealth_browser_profiles import (
     ADVANCED_USER_AGENTS,
     ADVANCED_VIEWPORT_SIZES,
     REALISTIC_HEADERS,
     TIMEZONES,
     ULTRA_STEALTH_ARGS,
 )
-from markdown_ingress.core.stealth.browser_profiles import (
+from markdown_ingress.stealth_browser_profiles import (
     build_client_hints as _build_client_hints,
 )
 
