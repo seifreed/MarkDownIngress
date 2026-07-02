@@ -36,9 +36,6 @@ class Scorer:
 
     DEFAULT_BLOCK_THRESHOLD: float = 0.7
 
-    def __init__(self):
-        pass
-
     def get_risk_level(self, score: float) -> str:
         """
         Get risk level name from score.
