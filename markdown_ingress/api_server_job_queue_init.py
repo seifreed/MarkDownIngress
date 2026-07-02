@@ -24,3 +24,18 @@ def close_previous_job_queue_for_init(
             raise
     remember_job_queue(previous_queue)
     return None
+
+
+def fallback_queue_for_init_build_error(
+    previous_queue: Any | None,
+    exc: RuntimeError,
+    *,
+    is_active_owner_error: Callable[[RuntimeError], bool],
+    promote_external_owner_queue: Callable[[Any], Any],
+    external_owner_queue: Callable[[], Any],
+) -> Any | None:
+    if not is_active_owner_error(exc):
+        return None
+    if previous_queue is not None:
+        return promote_external_owner_queue(previous_queue)
+    return external_owner_queue()

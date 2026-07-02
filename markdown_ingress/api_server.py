@@ -51,7 +51,10 @@ from markdown_ingress.api_server_job_history import (
     remember_job_queue,
 )
 from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
-from markdown_ingress.api_server_job_queue_init import close_previous_job_queue_for_init
+from markdown_ingress.api_server_job_queue_init import (
+    close_previous_job_queue_for_init,
+    fallback_queue_for_init_build_error,
+)
 from markdown_ingress.api_server_job_queue_repair import (
     job_queue_repair_finished,
     job_queue_repair_retry_delay,
@@ -485,11 +488,13 @@ def _reset_job_queue_control_thread_refs() -> None:
 
 
 def _fallback_queue_for_init_build_error(previous_queue: Any | None, exc: RuntimeError):
-    if not _is_active_owner_error(exc):
-        return None
-    if previous_queue is not None:
-        return _promote_external_owner_queue(previous_queue)
-    return _ExternalOwnerJobQueue(JOB_DB_PATH)
+    return fallback_queue_for_init_build_error(
+        previous_queue,
+        exc,
+        is_active_owner_error=_is_active_owner_error,
+        promote_external_owner_queue=_promote_external_owner_queue,
+        external_owner_queue=lambda: _ExternalOwnerJobQueue(JOB_DB_PATH),
+    )
 
 
 def _init_job_queue(previous_queue=None):
