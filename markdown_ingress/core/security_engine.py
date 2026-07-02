@@ -14,6 +14,7 @@ from typing import Any
 
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
+from markdown_ingress.core.security_nova_result import NOVA_DISABLED_SCORE, parse_nova_result
 from markdown_ingress.core.security_validation import (
     effective_security_thresholds,
     resolve_exception_fallback_score,
@@ -21,14 +22,8 @@ from markdown_ingress.core.security_validation import (
 from markdown_ingress.core.security_validation import (
     ensure_bool as _ensure_bool,
 )
-from markdown_ingress.core.security_validation import (
-    ensure_numeric_score_input as _ensure_numeric_score_input,
-)
 
 logger = logging.getLogger(__name__)
-
-# Score assigned when Nova is disabled (no rules loaded) — basic analysis dominates.
-_NOVA_DISABLED_SCORE: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -106,10 +101,15 @@ class SecurityEngine:
     def _parse_nova_result(self, markdown: str) -> tuple[float, dict, str]:
         """Run Nova scan and parse the result into (nova_score, nova_details, scan_method)."""
         if self.nova is None:
-            return _NOVA_DISABLED_SCORE, {}, "basic"
+            return NOVA_DISABLED_SCORE, {}, "basic"
         try:
             nova_result = self.nova.scan(markdown)
-            return self._parse_scanned_nova_result(nova_result)
+            return parse_nova_result(
+                nova_result,
+                exception_fallback_score=self.exception_fallback_score,
+                use_llm=self.use_llm,
+                logger=logger,
+            )
         except Exception as e:
             logger.exception("Nova scan failed")
             return (
@@ -117,76 +117,6 @@ class SecurityEngine:
                 {"error": str(e), "scan_incomplete": True},
                 "nova_error",
             )
-
-    def _nova_scan_method(self) -> str:
-        return "nova_llm" if self.use_llm else "nova_semantic"
-
-    def _nova_fallback_result(self, nova_result: dict) -> tuple[float, dict, str]:
-        return self.exception_fallback_score, nova_result, self._nova_scan_method()
-
-    def _parse_scanned_nova_result(self, nova_result: dict | None) -> tuple[float, dict, str]:
-        if nova_result is None:
-            logger.warning(
-                "Nova returned None, using fallback score: %s", self.exception_fallback_score
-            )
-            return (
-                self.exception_fallback_score,
-                {"error": "Nova returned None", "scan_incomplete": True},
-                "nova_failed",
-            )
-
-        nova_score_raw = nova_result.get("score")
-        if nova_score_raw is None:
-            return self._parse_nova_missing_score(nova_result)
-
-        nova_score_raw = self._coerce_nova_score(nova_score_raw)
-        if nova_score_raw is None:
-            return self._nova_fallback_result(nova_result)
-        return self._successful_nova_result(nova_result, nova_score_raw)
-
-    def _parse_nova_missing_score(self, nova_result: dict) -> tuple[float, dict, str]:
-        severity = nova_result.get("severity")
-        if severity == "disabled":
-            logger.debug("Nova scanner disabled (no rules loaded), using basic analysis only")
-            return _NOVA_DISABLED_SCORE, {}, "basic"
-        if severity is not None:
-            logger.warning(
-                "Nova returned severity '%s' without score, using fallback: %s",
-                severity,
-                self.exception_fallback_score,
-            )
-            return self._nova_fallback_result(nova_result)
-        logger.debug("Nova returned None score, falling back to basic analysis")
-        return _NOVA_DISABLED_SCORE, nova_result, "basic"
-
-    def _coerce_nova_score(self, nova_score_raw: object) -> float | None:
-        try:
-            nova_score = _ensure_numeric_score_input("Nova score", nova_score_raw)
-        except (TypeError, ValueError):
-            logger.warning(
-                "Nova returned non-numeric score %r, using fallback: %s",
-                nova_score_raw,
-                self.exception_fallback_score,
-            )
-            return None
-        if math.isnan(nova_score) or math.isinf(nova_score):
-            logger.warning(
-                "Nova returned non-finite score, using fallback: %s",
-                self.exception_fallback_score,
-            )
-            return None
-        return nova_score
-
-    def _successful_nova_result(
-        self, nova_result: dict, nova_score_raw: float
-    ) -> tuple[float, dict, str]:
-        nova_score = max(0.0, min(1.0, nova_score_raw))
-        scan_time = nova_result.get("scan_time_ms")
-        if scan_time is not None:
-            logger.info(f"Nova scan: score={nova_score:.3f}, time={scan_time:.0f}ms")
-        else:
-            logger.info(f"Nova scan: score={nova_score:.3f} (scan incomplete)")
-        return nova_score, nova_result, self._nova_scan_method()
 
     @staticmethod
     def effective_thresholds(
@@ -240,7 +170,7 @@ class SecurityEngine:
         # Lowered threshold from 0.1 to 0.05 to prevent sophisticated attacks that
         # score just below the old threshold from bypassing semantic detection.
         # When advanced_security or strict is enabled, always run Nova.
-        nova_score = _NOVA_DISABLED_SCORE
+        nova_score = NOVA_DISABLED_SCORE
         nova_details: dict[str, Any] = {}
         scan_method = "basic"
 
