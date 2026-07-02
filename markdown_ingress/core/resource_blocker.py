@@ -143,9 +143,7 @@ class ResourceBlocker:
             resource_type = request.resource_type
             url = request.url
 
-            # BUG FIX: Calculate should_block BEFORE acquiring lock to avoid
-            # thread contention. URL parsing and decoding can be slow.
-            # Returns tuple of (should_block, matched_domain) to avoid race condition
+            # Keep URL parsing/decoding outside the stats lock.
             should_block, matched_domain = self._should_block(resource_type, url)
 
             # Update stats atomically
@@ -156,7 +154,6 @@ class ResourceBlocker:
                     self.blocked_by_type[resource_type] = (
                         self.blocked_by_type.get(resource_type, 0) + 1
                     )
-                    # BUG FIX: Update blocked_by_domain under lock to prevent race condition
                     if matched_domain:
                         self.blocked_by_domain[matched_domain] = (
                             self.blocked_by_domain.get(matched_domain, 0) + 1
