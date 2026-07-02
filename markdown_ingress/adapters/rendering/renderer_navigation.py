@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from typing import Any, Literal, cast
 
 WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
@@ -44,13 +45,11 @@ async def wait_for_content(
     if selectors:
         remaining_ms = max(0, max_wait_ms)
         if remaining_ms > 0:
-            try:
+            with suppress(PlaywrightTimeoutError, PlaywrightError):
                 selector_query = ", ".join(selectors)
                 selector_timeout = min(2500, remaining_ms)
                 await page.wait_for_selector(selector_query, timeout=selector_timeout)
                 logger.info("[Smart Wait] Found content selector: %s", selector_query)
-            except (PlaywrightTimeoutError, PlaywrightError):
-                pass
 
     elapsed = time.time() - wait_start
     remaining_ms = max(0, (max_wait - elapsed)) * 1000
