@@ -14,6 +14,7 @@ from markdown_ingress.api_runtime import (
 from markdown_ingress.api_runtime import run_ingest_many_blocking
 from markdown_ingress.application.async_tasks import gather_or_cancel
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
+from markdown_ingress.application.batch_state import PROGRESS_CALLBACK_ERRORS
 from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode
@@ -188,7 +189,7 @@ class BatchProcessor:
             state.completed += 1
             try:
                 self.on_progress(state.completed, state.total, url)
-            except Exception as exc:  # noqa: BLE001 - progress callbacks are optional
+            except PROGRESS_CALLBACK_ERRORS as exc:
                 _logger.warning(
                     "Batch progress callback failed for %s (%d/%d): %s",
                     url,

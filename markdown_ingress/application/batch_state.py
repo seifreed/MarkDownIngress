@@ -15,6 +15,14 @@ from markdown_ingress.shared_results import BatchErrorItem
 
 _logger = logging.getLogger(__name__)
 
+PROGRESS_CALLBACK_ERRORS: tuple[type[Exception], ...] = (
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 @dataclass
 class PreparedBatchRequest:
@@ -82,7 +90,7 @@ class BatchContext:
             current = self.completed
             try:
                 self.on_progress(current, self.total, url)
-            except Exception as exc:  # noqa: BLE001 - progress callbacks are optional
+            except PROGRESS_CALLBACK_ERRORS as exc:
                 _logger.warning(
                     "Batch progress callback failed for %s (%d/%d): %s",
                     url,
