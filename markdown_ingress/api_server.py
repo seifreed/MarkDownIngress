@@ -496,15 +496,19 @@ def _close_previous_job_queue_for_init(previous_queue: Any | None) -> Any | None
     return None
 
 
-def _init_job_queue(previous_queue=None):
+def _reset_job_queue_control_thread_refs() -> None:
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
 
-    _stop_reloaded_job_queue_control_threads()
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
     _JOB_QUEUE_WATCHDOG_STOP = None
     _JOB_QUEUE_WATCHDOG_THREAD = None
+
+
+def _init_job_queue(previous_queue=None):
+    _stop_reloaded_job_queue_control_threads()
+    _reset_job_queue_control_thread_refs()
     reused_queue = _close_previous_job_queue_for_init(previous_queue)
     if reused_queue is not None:
         return reused_queue
