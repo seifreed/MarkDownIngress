@@ -2,8 +2,6 @@
 Security analysis module - Prompt injection detection
 """
 
-import hashlib
-import json
 import logging
 import os
 import re
@@ -47,6 +45,14 @@ from markdown_ingress.core.security_data import (
 )
 from markdown_ingress.core.security_flags import generate_security_flags
 from markdown_ingress.core.security_imperative import calculate_imperative_density
+from markdown_ingress.core.security_pattern_matching import (
+    append_decoding_limit_match,
+    collect_pattern_matches,
+    compile_injection_pattern,
+    compile_injection_patterns,
+    normalized_detection_variants,
+    patterns_hash,
+)
 from markdown_ingress.core.security_rules import (
     DEFAULT_IMPERATIVE_VERBS,
     DEFAULT_INJECTION_PATTERNS,
@@ -183,14 +189,7 @@ class SecurityAnalyzer:
     @classmethod
     def _get_patterns_hash(cls) -> str:
         """Generate hash of patterns content for cache invalidation."""
-        content = json.dumps(
-            [
-                {"pattern": p.pattern, "weight": p.weight, "flags": p.flags}
-                for p in cls.INJECTION_PATTERNS
-            ],
-            sort_keys=True,
-        )
-        return hashlib.sha256(content.encode()).hexdigest()
+        return patterns_hash(cls.INJECTION_PATTERNS)
 
     @classmethod
     def _get_compiled_patterns(cls) -> list[tuple[re.Pattern, float, str]]:
@@ -203,10 +202,7 @@ class SecurityAnalyzer:
             current_hash = cls._get_patterns_hash()
             if cls._COMPILED_PATTERNS is not None and current_hash == cls._PATTERNS_HASH:
                 return cls._COMPILED_PATTERNS
-            result = [
-                (re.compile(p.pattern, p.flags), p.weight, p.description)
-                for p in cls.INJECTION_PATTERNS
-            ]
+            result = compile_injection_patterns(cls.INJECTION_PATTERNS)
             cls._COMPILED_PATTERNS = result
             cls._PATTERNS_HASH = current_hash
             return result
@@ -217,87 +213,38 @@ class SecurityAnalyzer:
         return self._get_compiled_patterns()
 
     def _compile_custom_injection_patterns(self) -> list[tuple[re.Pattern, float, str]]:
-        compiled = []
-        for pattern in self.INJECTION_PATTERNS:
-            compiled_pattern = self._compile_custom_injection_pattern(pattern)
-            if compiled_pattern is not None:
-                compiled.append(compiled_pattern)
-        return compiled
+        return compile_injection_patterns(self.INJECTION_PATTERNS)
 
     @staticmethod
     def _compile_custom_injection_pattern(
         pattern: InjectionPattern,
     ) -> tuple[re.Pattern, float, str] | None:
-        if not pattern.pattern or not pattern.pattern.strip():
-            return None
-        if len(pattern.pattern) > 10000:
-            raise ValueError(f"Pattern too long (max 10000 chars): {pattern.description}")
-        if _detect_redos_pattern(pattern.pattern):
-            raise ValueError(
-                f"Pattern may cause ReDoS (catastrophic backtracking): {pattern.description}"
-            )
-        if not (0.0 <= pattern.weight <= 1.0):
-            raise ValueError(f"Invalid weight {pattern.weight} for pattern: {pattern.description}")
-        try:
-            return re.compile(pattern.pattern, pattern.flags), pattern.weight, pattern.description
-        except re.error as e:
-            raise ValueError(f"Invalid regex pattern '{pattern.description}': {e}") from e
+        return compile_injection_pattern(pattern)
 
     @staticmethod
     def _normalized_detection_variants(
         text: str, decoded_text: str, decode_warnings: list[str]
     ) -> list[str]:
-        normalized_variants = [_normalize_security_text(decoded_text)]
-        if "decoding_iteration_limit_reached" in decode_warnings:
-            original_normalized = _normalize_security_text(text)
-            if original_normalized not in normalized_variants:
-                normalized_variants.append(original_normalized)
-        return normalized_variants
+        return normalized_detection_variants(text, decoded_text, decode_warnings)
 
     @staticmethod
     def _best_pattern_occurrences(
         regex: re.Pattern, normalized_variants: list[str]
     ) -> tuple[int, list]:
-        best_found = []
-        best_occurrences = 0
-        for normalized_text in normalized_variants:
-            found = regex.findall(normalized_text)
-            if len(found) > best_occurrences:
-                best_occurrences = len(found)
-                best_found = found
-        return best_occurrences, best_found
+        from markdown_ingress.core.security_pattern_matching import best_pattern_occurrences
+
+        return best_pattern_occurrences(regex, normalized_variants)
 
     def _collect_pattern_matches(
         self,
         compiled: list[tuple[re.Pattern, float, str]],
         normalized_variants: list[str],
     ) -> list[dict]:
-        matches: list[dict] = []
-        for regex, weight, description in compiled:
-            occurrences, found = self._best_pattern_occurrences(regex, normalized_variants)
-            if occurrences:
-                matches.append(
-                    {
-                        "pattern": description,
-                        "weight": weight,
-                        "occurrences": occurrences,
-                        "samples": found[:3],
-                    }
-                )
-        return matches
+        return collect_pattern_matches(compiled, normalized_variants)
 
     @staticmethod
     def _append_decoding_limit_match(matches: list[dict], decode_warnings: list[str]) -> None:
-        if "decoding_iteration_limit_reached" not in decode_warnings:
-            return
-        matches.append(
-            {
-                "pattern": "Deeply nested encoding",
-                "weight": 0.6,
-                "occurrences": 1,
-                "samples": [],
-            }
-        )
+        append_decoding_limit_match(matches, decode_warnings)
 
     def _detect_patterns(self, text: str) -> tuple[list[dict], list[str]]:
         """
