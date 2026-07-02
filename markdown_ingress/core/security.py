@@ -45,6 +45,8 @@ from markdown_ingress.core.security_data import (
 from markdown_ingress.core.security_data import (
     InjectionPattern,
 )
+from markdown_ingress.core.security_flags import generate_security_flags
+from markdown_ingress.core.security_imperative import calculate_imperative_density
 from markdown_ingress.core.security_rules import (
     DEFAULT_IMPERATIVE_VERBS,
     DEFAULT_INJECTION_PATTERNS,
@@ -154,7 +156,7 @@ class SecurityAnalyzer:
             InjectionAnalysis with score and details
         """
         pattern_matches, decode_warnings = self._detect_patterns(text)
-        imperative_density = self._calculate_imperative_density(text)
+        imperative_density = calculate_imperative_density(text, self.IMPERATIVE_VERBS)
         total_score = calculate_injection_score(
             pattern_matches,
             imperative_density,
@@ -163,8 +165,7 @@ class SecurityAnalyzer:
             count_floor_score=_INJECTION_COUNT_FLOOR_SCORE,
         )
 
-        # Generate flags
-        flags = self._generate_flags(
+        flags = generate_security_flags(
             pattern_matches,
             hidden_content_detected,
             imperative_density,
@@ -317,50 +318,3 @@ class SecurityAnalyzer:
         )
         self._append_decoding_limit_match(matches, decode_warnings)
         return matches, decode_warnings
-
-    def _calculate_imperative_density(self, text: str) -> float:
-        """
-        Calculate density of imperative verbs in text.
-
-        Applies normalization to handle Unicode homoglyphs that could bypass detection.
-
-        Returns ratio of imperative verbs to total words.
-        """
-        # Normalize to handle homoglyphs (for example, Cyrillic U+0456 as 'i')
-        normalized_text = _normalize_security_text(text.lower())
-
-        words = re.findall(r"\b\w+\b", normalized_text)
-
-        if len(words) == 0:
-            return 0.0
-
-        imperative_count = sum(1 for word in words if word in self.IMPERATIVE_VERBS)
-
-        return imperative_count / len(words)
-
-    def _generate_flags(
-        self,
-        pattern_matches: list[dict],
-        hidden_content: bool,
-        imperative_density: float,
-        decode_warnings: list[str],
-    ) -> list[str]:
-        """Generate human-readable warning flags"""
-        flags = []
-
-        if pattern_matches:
-            flags.append(f"injection_patterns_detected:{len(pattern_matches)}")
-
-        if hidden_content:
-            flags.append("hidden_content")
-
-        if imperative_density > 0.05:
-            flags.append(f"high_imperative_density:{imperative_density:.2f}")
-
-        flags.extend(decode_warnings)
-
-        # Severity flags
-        if len(pattern_matches) > 3:
-            flags.append("multiple_injection_attempts")
-
-        return flags
