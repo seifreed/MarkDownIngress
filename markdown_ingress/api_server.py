@@ -52,6 +52,7 @@ from markdown_ingress.api_server_job_history import (
     prune_job_queue_history,
     remember_job_queue,
 )
+from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
@@ -196,7 +197,8 @@ _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
 
 
 def _build_job_queue() -> PersistentJobQueue:
-    return PersistentJobQueue(
+    return build_persistent_job_queue(
+        queue_class=PersistentJobQueue,
         db_path=JOB_DB_PATH,
         worker_count=JOB_WORKERS,
         ttl_seconds=JOB_TTL_SECONDS,
