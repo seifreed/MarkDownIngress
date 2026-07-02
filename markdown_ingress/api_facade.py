@@ -313,10 +313,7 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
                     wait_time = min(2**attempt, 60)
                     logger.warning("%s on attempt %d: %s", error_type, attempt + 1, exc)
                     logger.info("Waiting %ds before retry...", wait_time)
-                    try:
-                        time.sleep(wait_time)
-                    except (OSError, ValueError):
-                        pass
+                    time.sleep(wait_time)
                 else:
                     logger.exception("Non-retryable error %s", error_type)
                     raise
