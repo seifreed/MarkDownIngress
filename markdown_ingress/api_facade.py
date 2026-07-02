@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
+_REPORT_PERSIST_ERRORS = (OSError, TypeError, ValueError)
 _LAZY_EXPORTS = {
     "BatchIngestUseCase": (
         "markdown_ingress.application.batch_ingest_use_case",
@@ -81,7 +82,7 @@ def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> 
         return
     try:
         _persist_report_for_document(doc, config.reports_dir)
-    except Exception as exc:  # noqa: BLE001 - report persistence is optional
+    except _REPORT_PERSIST_ERRORS as exc:
         logger.warning("Failed to persist security report for %s: %s", url, exc)
 
 
@@ -185,7 +186,7 @@ async def ingest_many_async_impl(
                         doc,
                         runtime_config.reports_dir,
                     )
-                except Exception as exc:  # noqa: BLE001 - report persistence is optional
+                except _REPORT_PERSIST_ERRORS as exc:
                     target_url = url_list[index] if index < len(url_list) else "<unknown>"
                     logger.warning(
                         "Failed to persist security report for %s: %s",
@@ -349,6 +350,6 @@ def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     if config.save_reports:
         try:
             _persist_security_report(report, config.reports_dir)
-        except Exception as exc:  # noqa: BLE001 - report persistence is optional
+        except _REPORT_PERSIST_ERRORS as exc:
             logger.warning("Failed to persist security report for %s: %s", url, exc)
     return report
