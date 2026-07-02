@@ -66,6 +66,24 @@ def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
     return _purge_corrupt_cache_entry_impl(cache_backend, cache_key)
 
 
+def _ensure_factories_registered() -> None:
+    global _FACTORIES_REGISTERED
+    if not _FACTORIES_REGISTERED:
+        _register_all_factories()
+        _FACTORIES_REGISTERED = True
+
+
+def _select_orchestrator(
+    orchestrator: IIngestOrchestrator | None,
+) -> tuple[IIngestOrchestrator, bool]:
+    if orchestrator is not None:
+        return orchestrator, False
+
+    from markdown_ingress.core.orchestrator import IngestOrchestrator
+
+    return cast(IIngestOrchestrator, IngestOrchestrator()), True
+
+
 class IngestUseCase:
     """Coordinate runtime policy, infrastructure selection, cache, and inflight dedup."""
 
@@ -77,19 +95,8 @@ class IngestUseCase:
         *,
         playwright_available: bool | None = None,
     ) -> None:
-        global _FACTORIES_REGISTERED
-        if not _FACTORIES_REGISTERED:
-            _register_all_factories()
-            _FACTORIES_REGISTERED = True
-        _used_default_orchestrator = orchestrator is None
-        if _used_default_orchestrator:
-            from markdown_ingress.core.orchestrator import IngestOrchestrator
-
-            selected_orchestrator = cast(IIngestOrchestrator, IngestOrchestrator())
-        else:
-            if orchestrator is None:
-                raise RuntimeError("orchestrator unexpectedly missing")
-            selected_orchestrator = orchestrator
+        _ensure_factories_registered()
+        selected_orchestrator, _used_default_orchestrator = _select_orchestrator(orchestrator)
         self.orchestrator: IIngestOrchestrator = selected_orchestrator
         self._used_default_orchestrator = _used_default_orchestrator
         self.fetcher_factory = fetcher_factory or self._default_fetcher_factory
