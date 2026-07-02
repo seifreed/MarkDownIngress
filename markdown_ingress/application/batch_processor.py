@@ -81,6 +81,22 @@ class _BatchUrlProcessor:
                 (time.perf_counter() - started_at) * 1000.0,
             )
 
+    def _record_item_result(
+        self,
+        prepared: _PreparedBatchRequest,
+        *,
+        success: bool,
+        started_at: float | None = None,
+    ) -> None:
+        if self._ctx.batch_tracks_metrics:
+            record_mode_result(prepared.requested_mode, success=success)
+            return
+        self._record_shortcut_request_for_local_strategy(
+            prepared,
+            success=success,
+            started_at=started_at,
+        )
+
     async def _try_cache(self, prepared: _PreparedBatchRequest, started_at: float) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
@@ -91,14 +107,7 @@ class _BatchUrlProcessor:
         if cached_copy is None:
             return False
         ctx.set_document(prepared.index, cached_copy)
-        if ctx.batch_tracks_metrics:
-            record_mode_result(prepared.requested_mode, success=True)
-        else:
-            self._record_shortcut_request_for_local_strategy(
-                prepared,
-                success=True,
-                started_at=started_at,
-            )
+        self._record_item_result(prepared, success=True, started_at=started_at)
         await self._report_completion(prepared.url)
         return True
 
@@ -129,14 +138,7 @@ class _BatchUrlProcessor:
             raise
         except Exception as exc:  # noqa: BLE001 - follower records leader failure as item
             await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
-            if ctx.batch_tracks_metrics:
-                record_mode_result(prepared.requested_mode, success=False)
-            else:
-                self._record_shortcut_request_for_local_strategy(
-                    prepared,
-                    success=False,
-                    started_at=started_at,
-                )
+            self._record_item_result(prepared, success=False, started_at=started_at)
             await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             await self._report_completion(prepared.url)
             return False
@@ -148,14 +150,7 @@ class _BatchUrlProcessor:
             shared_count=shared_count,
         )
         ctx.set_document(prepared.index, shared)
-        if ctx.batch_tracks_metrics:
-            record_mode_result(prepared.requested_mode, success=True)
-        else:
-            self._record_shortcut_request_for_local_strategy(
-                prepared,
-                success=True,
-                started_at=started_at,
-            )
+        self._record_item_result(prepared, success=True, started_at=started_at)
         await self._report_completion(prepared.url)
         return True
 
@@ -205,12 +200,7 @@ class _BatchUrlProcessor:
             shared_count=0,
         )
         ctx.set_document(prepared.index, document)
-        if ctx.batch_tracks_metrics:
-            record_mode_result(prepared.requested_mode, success=True)
-        else:
-            self._record_shortcut_request_for_local_strategy(
-                prepared, success=True, started_at=started_at
-            )
+        self._record_item_result(prepared, success=True, started_at=started_at)
         await self._report_completion(prepared.url)
         return True
 
