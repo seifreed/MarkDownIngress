@@ -12,7 +12,7 @@ This module provides:
 
 import random
 
-from markdown_ingress.core.stealth.js_payloads import (
+from markdown_ingress.stealth_js_payloads import (
     STEALTH_JS_INJECTION,
     STEALTH_JS_POST_LOAD,
     WEBGL_FINGERPRINTS,
