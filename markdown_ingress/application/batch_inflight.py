@@ -16,6 +16,11 @@ from markdown_ingress.models import SafeDocument
 _logger = logging.getLogger(__name__)
 
 
+def _remove_if_current(ctx: _BatchContext, request_key: str, record: _BatchInFlightRecord) -> None:
+    if ctx.batch_inflight.get(request_key) is record:
+        ctx.batch_inflight.pop(request_key, None)
+
+
 async def register_batch_inflight(
     ctx: _BatchContext, request_key: str
 ) -> tuple[_BatchInFlightRecord, bool]:
@@ -38,9 +43,8 @@ async def remove_finished_batch_inflight(
 ) -> None:
     """Remove a completed in-flight record if it still belongs to the request."""
     async with ctx.batch_inflight_lock:
-        current = ctx.batch_inflight.get(request_key)
-        if current is record and record.future.done():
-            ctx.batch_inflight.pop(request_key, None)
+        if record.future.done():
+            _remove_if_current(ctx, request_key, record)
 
 
 async def cancel_batch_inflight(
@@ -50,8 +54,7 @@ async def cancel_batch_inflight(
     async with ctx.batch_inflight_lock:
         if not record.future.done():
             record.future.cancel()
-        if ctx.batch_inflight.get(request_key) is record:
-            ctx.batch_inflight.pop(request_key, None)
+        _remove_if_current(ctx, request_key, record)
 
 
 async def publish_batch_inflight_result(
@@ -80,8 +83,7 @@ async def publish_batch_inflight_result(
                     state_exc,
                     exc_info=True,
                 )
-            if ctx.batch_inflight.get(request_key) is record:
-                ctx.batch_inflight.pop(request_key, None)
+            _remove_if_current(ctx, request_key, record)
             raise
         shared_count = record.followers
         try:
