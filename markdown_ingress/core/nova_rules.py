@@ -6,6 +6,7 @@ import os
 import re
 import urllib.parse
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -39,6 +40,28 @@ class RuleParseFailure:
 
     preview: str
     error: str
+
+
+def _nova_parser_error_type() -> type[Exception]:
+    try:
+        parser_module = import_module("nova.core.parser")
+    except ImportError:
+        return ValueError
+    parser_error = getattr(parser_module, "NovaParserError", ValueError)
+    if isinstance(parser_error, type) and issubclass(parser_error, Exception):
+        return parser_error
+    return ValueError
+
+
+RULE_PARSE_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    LookupError,
+    _nova_parser_error_type(),
+    RuntimeError,
+    SyntaxError,
+    TypeError,
+    ValueError,
+)
 
 
 def reject_unsafe_rules_path(rules_path: str) -> None:
@@ -102,7 +125,7 @@ def parse_bundled_rule_content(
     for block in extract_rule_blocks(content):
         try:
             rules.append(parser.parse(block.strip()))
-        except Exception as exc:  # noqa: BLE001 - bundled rule failures are per-block
+        except RULE_PARSE_ERRORS as exc:
             failures.append(RuleParseFailure(block[:50], str(exc)))
     return rules, failures
 

@@ -1831,6 +1831,25 @@ def test_nova_guard_bundled_rules_parse_error(monkeypatch, tmp_path):
     assert isinstance(guard.matchers, list)
 
 
+def test_parse_bundled_rule_content_preserves_per_block_failures():
+    from markdown_ingress.core.nova_rules import parse_bundled_rule_content
+
+    class Parser:
+        def parse(self, content):
+            if "BadRule" in content:
+                raise ValueError("bad rule")
+            return content
+
+    content = "rule GoodRule { condition: true }\nrule BadRule { condition: broken }"
+    rules, failures = parse_bundled_rule_content(content, Parser())
+
+    assert len(rules) == 1
+    assert "GoodRule" in rules[0]
+    assert len(failures) == 1
+    assert "BadRule" in failures[0].preview
+    assert failures[0].error == "bad rule"
+
+
 def test_nova_guard_path_traversal_protection():
     """nova_guard.py: path traversal protection for rules_path"""
     from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
