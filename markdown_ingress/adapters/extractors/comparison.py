@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from typing import Any
-
-from readability import Document  # type: ignore[import-untyped]
+from importlib import import_module
+from typing import Any, cast
 
 from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 from markdown_ingress.core.security import SecurityAnalyzer
+
+Document = cast(Any, import_module("readability").Document)
 
 
 @dataclass

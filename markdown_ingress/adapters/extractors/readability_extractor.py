@@ -2,8 +2,9 @@
 
 import logging
 import re
+from importlib import import_module
+from typing import Any, cast
 
-from readability import Document  # type: ignore[import-untyped]
 from selectolax.parser import HTMLParser
 
 from markdown_ingress.adapters.extractors.readability_sanitization import (
@@ -14,6 +15,7 @@ from markdown_ingress.core.interfaces import IExtractor
 from markdown_ingress.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
+Document = cast(Any, import_module("readability").Document)
 
 
 def _is_empty_body(html: str) -> bool:
