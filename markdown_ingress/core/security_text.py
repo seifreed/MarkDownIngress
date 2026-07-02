@@ -86,8 +86,7 @@ def _detect_redos_pattern(pattern: str) -> bool:
     if _NESTED_QUANTIFIER_RE.search(pattern):
         return True
 
-    # BUG FIX: Check for deeply nested quantifiers (e.g., ((a+)+), ((.?)*))
-    # These have groups inside groups with quantifiers, causing exponential backtracking
+    # Groups inside groups with quantifiers can cause exponential backtracking.
     if _DEEPLY_NESTED_QUANTIFIER_RE.search(pattern):
         return True
 
@@ -162,8 +161,7 @@ def _decode_html_entities(text: str) -> tuple[str, list[str]]:
     Security note: Decodes iteratively until stable to prevent
     double-encoding bypass attacks.
     """
-    # Iteratively decode until stable (handles double-encoding)
-    # BUG FIX: Increased from 5 to 10 iterations to handle deeply nested encoding attacks
+    # Iteratively decode until stable, including deeply nested encoding attacks.
     max_iterations = 10
     warnings: list[str] = []
     prev = None
