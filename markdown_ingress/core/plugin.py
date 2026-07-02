@@ -16,6 +16,15 @@ from typing import Any
 
 _logger = logging.getLogger(__name__)
 
+PLUGIN_HOOK_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 @dataclass
 class PluginInfo:
@@ -111,7 +120,7 @@ class PluginLoader:
             removed += 1
             try:
                 plugin.on_unload()
-            except Exception as exc:  # noqa: BLE001 - rollback must remove partial plugin state
+            except PLUGIN_HOOK_ERRORS as exc:
                 _logger.warning(
                     "Failed to unload partially loaded plugin %s from %s: %s",
                     plugin_name,

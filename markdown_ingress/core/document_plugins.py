@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from markdown_ingress.core.plugin import PluginLoader
+from markdown_ingress.core.plugin import PLUGIN_HOOK_ERRORS, PluginLoader
 from markdown_ingress.models import FetchResult, SafeDocument
 
 _logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ def unload_document_plugins(
             plugin_loader.unload_plugin(plugin_name)
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception as exc:  # noqa: BLE001 - plugin unload errors become warnings
+        except PLUGIN_HOOK_ERRORS as exc:
             unload_errors.append(f"{plugin_name}: {type(exc).__name__}: {exc}")
     if unload_errors:
         for message in unload_errors:
