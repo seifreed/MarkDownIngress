@@ -8,6 +8,15 @@ import re
 import socket
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from markdown_ingress.core.ssrf_ip_policy import (
+    is_blocked_hostname as is_blocked_hostname,
+)
+from markdown_ingress.core.ssrf_ip_policy import (
+    is_blocked_ip_address as is_blocked_ip_address,
+)
+from markdown_ingress.core.ssrf_ip_policy import (
+    normalize_ip_for_ssrf as normalize_ip_for_ssrf,
+)
 from markdown_ingress.core.ssrf_normalization import (
     normalize_domain_pattern as normalize_domain_pattern,
 )
@@ -23,72 +32,7 @@ from markdown_ingress.core.ssrf_normalization import (
 
 logger = logging.getLogger(__name__)
 
-_UNSPECIFIED_IPV4_HOST = ".".join(("0", "0", "0", "0"))
 _NUMERIC_IP_LITERAL_RE = re.compile(r"0x[0-9a-fA-F]+|0[0-7]+|\d+")
-
-_EXTRA_BLOCKED_NETWORKS = (
-    ipaddress.ip_network("100.64.0.0/10"),
-    ipaddress.ip_network("192.0.0.0/24"),
-    ipaddress.ip_network("192.0.2.0/24"),
-    ipaddress.ip_network("198.18.0.0/15"),
-    ipaddress.ip_network("198.51.100.0/24"),
-    ipaddress.ip_network("203.0.113.0/24"),
-    ipaddress.ip_network("fec0::/10"),
-)
-
-_BLOCKED_HOSTNAMES = frozenset(
-    {
-        "localhost",
-        "localhost.localdomain",
-        "ip6-localhost",
-        "ip6-loopback",
-        "metadata.google.internal",
-        "metadata.azure.internal",
-        "metadata.azure.net",
-        "metadata.oracle.internal",
-        "instance-data.ec2.internal",
-        "metadata.packet.net",
-        "metadata.scaleway.internal",
-        "metadata.aliyun.internal",
-        "169.254.169.254",
-        _UNSPECIFIED_IPV4_HOST,
-        "::1",  # IPv6 loopback
-        "0:0:0:0:0:0:0:1",  # IPv6 loopback (long form)
-    }
-)
-
-
-def normalize_ip_for_ssrf(
-    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
-) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Collapse IPv4-mapped IPv6 addresses to IPv4 for network checks."""
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        return ip.ipv4_mapped
-    return ip
-
-
-def is_blocked_hostname(hostname: str) -> bool:
-    """Return whether a hostname is explicitly blocked."""
-    return normalize_hostname(hostname) in _BLOCKED_HOSTNAMES
-
-
-def is_blocked_ip_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Return whether an IP belongs to a non-routable or internal range."""
-    normalized = normalize_ip_for_ssrf(ip)
-    if (
-        normalized.is_private
-        or normalized.is_loopback
-        or normalized.is_link_local
-        or normalized.is_multicast
-        or normalized.is_reserved
-        or normalized.is_unspecified
-    ):
-        return True
-    return any(
-        normalized in network
-        for network in _EXTRA_BLOCKED_NETWORKS
-        if network.version == normalized.version
-    )
 
 
 def _resolve_hostname_ips_for_ssrf(
@@ -208,7 +152,7 @@ def _validate_compressed_ipv4_hostname(hostname: str) -> str | None:
 
 
 def _validate_unresolved_hostname_for_ssrf(hostname: str) -> str:
-    if hostname.lower() in _BLOCKED_HOSTNAMES:
+    if is_blocked_hostname(hostname):
         raise ValueError(f"URL hostname blocked (SSRF protection): {hostname}") from None
     return hostname
 
