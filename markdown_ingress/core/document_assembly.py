@@ -6,10 +6,14 @@ import copy
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlsplit
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.core.document_output_selection import (
+    DocumentOutputSelection,
+    build_output_selection,
+)
 from markdown_ingress.core.document_security_patterns import (
     PatternSpec,
     _dedupe_preserving_order,
@@ -56,45 +60,6 @@ class _DocumentComputedFields:
     hostname: str
 
 
-@dataclass(frozen=True)
-class _DocumentOutputSelection:
-    output_formats: list[str]
-    security_explanation_payload: dict | None
-    emitted_output_formats: list[str]
-
-
-def _determine_output_formats(
-    config: IngestConfig,
-    structured_blocks: list,
-    chunks: list,
-    enriched_metadata,
-    security_result: dict,
-) -> tuple[list[str], dict | None, list[str]]:
-    """Compute output_formats, security_explanation_payload, and emitted_output_formats."""
-    output_formats = list(config.output_formats)
-    if chunks and "chunks" not in output_formats:
-        output_formats.append("chunks")
-    available_formats = {"markdown"}
-    if structured_blocks:
-        available_formats.add("blocks")
-    if chunks:
-        available_formats.add("chunks")
-    if enriched_metadata is not None:
-        available_formats.add("metadata")
-    security_explanation_payload = (
-        cast(dict | None, security_result.get("explanation"))
-        if config.include_security_explanation
-        else None
-    )
-    if security_explanation_payload is not None:
-        available_formats.add("security")
-    emitted_output_formats: list[str] = []
-    for fmt in [*output_formats, "markdown", "blocks", "chunks", "metadata", "security"]:
-        if fmt in available_formats and fmt not in emitted_output_formats:
-            emitted_output_formats.append(fmt)
-    return output_formats, security_explanation_payload, emitted_output_formats
-
-
 def _build_fetch_metadata(
     fetch_result: FetchResult,
     extraction_result,
@@ -139,7 +104,7 @@ def _build_content_analysis_metadata(
 
 def _build_pipeline_config_metadata(
     context: _SafeDocumentAssemblyContext,
-    output_selection: _DocumentOutputSelection,
+    output_selection: DocumentOutputSelection,
 ) -> dict:
     """Build pipeline-configuration fields: output formats, costs, and operational flags."""
     config = context.config
@@ -186,7 +151,7 @@ def _apply_domain_policy_metadata(
 def _assemble_document_metadata(
     context: _SafeDocumentAssemblyContext,
     computed: _DocumentComputedFields,
-    output_selection: _DocumentOutputSelection,
+    output_selection: DocumentOutputSelection,
 ) -> dict:
     """Build the metadata dict that accompanies the SafeDocument."""
     metadata: dict = {
@@ -322,20 +287,13 @@ def _compute_document_fields(
 
 def _build_output_selection(
     context: _SafeDocumentAssemblyContext,
-) -> _DocumentOutputSelection:
-    output_formats, security_explanation_payload, emitted_output_formats = (
-        _determine_output_formats(
-            context.config,
-            context.structured_blocks,
-            context.chunks,
-            context.enriched_metadata,
-            context.security_result,
-        )
-    )
-    return _DocumentOutputSelection(
-        output_formats=output_formats,
-        security_explanation_payload=security_explanation_payload,
-        emitted_output_formats=emitted_output_formats,
+) -> DocumentOutputSelection:
+    return build_output_selection(
+        context.config,
+        context.structured_blocks,
+        context.chunks,
+        context.enriched_metadata,
+        context.security_result,
     )
 
 
