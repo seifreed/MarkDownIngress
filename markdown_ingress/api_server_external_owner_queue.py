@@ -50,7 +50,7 @@ class _ExternalOwnerJobQueue:
         del cleanup_expired
         row = None
         try:
-            with closing(sqlite3.connect(self._db_uri(), timeout=0.0, uri=True)) as conn:
+            with closing(self._connect()) as conn:
                 row = conn.execute(
                     "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
                 ).fetchone()
