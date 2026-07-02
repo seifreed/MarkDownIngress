@@ -150,6 +150,10 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
     def _coerce_expires_at(value: object) -> float | None:
         return coerce_expires_at(value)
 
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("Cannot use closed SQLiteCache instance")
+
     def get(self, key: str) -> SafeDocument | None:
         """Get document from cache.
 
@@ -159,8 +163,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             a new object, so no additional copy is needed for thread-safety.
         """
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             cursor = self.conn.execute(
                 "SELECT document, expires_at FROM cache WHERE key = ?", (key,)
             )
@@ -224,8 +227,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         document_json = self._serialize_document(document)
 
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             self.conn.execute(
                 "INSERT OR REPLACE INTO cache "
                 "(key, document, created_at, expires_at) VALUES (?, ?, ?, ?)",
@@ -262,24 +264,21 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
     def delete(self, key: str) -> None:
         """Delete entry from cache."""
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             self.conn.execute("DELETE FROM cache WHERE key = ?", (key,))
             self.conn.commit()
 
     def clear(self) -> None:
         """Clear all cache entries."""
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             self.conn.execute("DELETE FROM cache")
             self.conn.commit()
 
     def exists(self, key: str) -> bool:
         """Check if key exists and is not expired without deserializing the document."""
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             now = time.time()
             cursor = self.conn.execute(
                 "SELECT expires_at FROM cache WHERE key = ?",
@@ -306,8 +305,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
             Number of entries removed
         """
         with self._db_lock:
-            if self._closed:
-                raise RuntimeError("Cannot use closed SQLiteCache instance")
+            self._ensure_open()
             rowcount = delete_expired_entries(self.conn)
             self.conn.commit()
             return rowcount
