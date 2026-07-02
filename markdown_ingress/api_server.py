@@ -463,28 +463,28 @@ def _start_job_queue_watchdog() -> None:
         _JOB_QUEUE_WATCHDOG_THREAD.start()
 
 
+def _stop_reloaded_job_queue_control_threads() -> None:
+    for name, prefix in (
+        ("job queue repair thread", "JOB_QUEUE_REPAIR"),
+        ("job queue watchdog thread", "JOB_QUEUE_WATCHDOG"),
+    ):
+        stop_reloaded_control_thread_pair(
+            module_globals=globals(),
+            name=name,
+            previous_thread_key=f"_PREVIOUS_{prefix}_THREAD",
+            current_thread_key=f"_{prefix}_THREAD",
+            previous_stop_key=f"_PREVIOUS_{prefix}_STOP",
+            current_stop_key=f"_{prefix}_STOP",
+        )
+
+
 def _init_job_queue(previous_queue=None):
     global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
     global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
 
-    stop_reloaded_control_thread_pair(
-        module_globals=globals(),
-        name="job queue repair thread",
-        previous_thread_key="_PREVIOUS_JOB_QUEUE_REPAIR_THREAD",
-        current_thread_key="_JOB_QUEUE_REPAIR_THREAD",
-        previous_stop_key="_PREVIOUS_JOB_QUEUE_REPAIR_STOP",
-        current_stop_key="_JOB_QUEUE_REPAIR_STOP",
-    )
+    _stop_reloaded_job_queue_control_threads()
     _JOB_QUEUE_REPAIR_STOP = None
     _JOB_QUEUE_REPAIR_THREAD = None
-    stop_reloaded_control_thread_pair(
-        module_globals=globals(),
-        name="job queue watchdog thread",
-        previous_thread_key="_PREVIOUS_JOB_QUEUE_WATCHDOG_THREAD",
-        current_thread_key="_JOB_QUEUE_WATCHDOG_THREAD",
-        previous_stop_key="_PREVIOUS_JOB_QUEUE_WATCHDOG_STOP",
-        current_stop_key="_JOB_QUEUE_WATCHDOG_STOP",
-    )
     _JOB_QUEUE_WATCHDOG_STOP = None
     _JOB_QUEUE_WATCHDOG_THREAD = None
     if previous_queue is not None:
