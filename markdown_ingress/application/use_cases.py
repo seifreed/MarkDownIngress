@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from importlib.util import find_spec
 from typing import cast
 
@@ -224,10 +225,8 @@ class IngestUseCase:
             )
         except Exception as exc:
             if request_key is not None and leader_slot_acquired:
-                try:
+                with suppress(KeyError):
                     self.orchestrator.release_inflight(request_key, error=exc)
-                except KeyError:
-                    pass
             record_mode_result(requested_mode, success=False)
             raise
         finally:
