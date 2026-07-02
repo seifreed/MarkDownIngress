@@ -58,11 +58,10 @@ from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
     _close_queue_for_repair,
     _ExternalOwnerJobQueue,
+    _find_job_record_in_queues,
     _is_active_owner_error,
     _is_stale_heartbeat,
-    _job_record_within_api_ttl,
     _queue_still_has_visible_jobs,
-    _read_job_from_queue,
     _TransientLegacyQueueReadError,
 )
 from markdown_ingress.api_server_rate_limit import (
@@ -586,27 +585,10 @@ def _get_job_queue():
 
 def _get_job_record(job_id: str):
     queue = _get_job_queue()
-    unavailable_error: RuntimeError | None = None
-    try:
-        job = _read_job_from_queue(queue, job_id)
-    except RuntimeError as exc:
-        unavailable_error = exc
-    else:
-        if job is not None and _job_record_within_api_ttl(job):
-            return job
     with _JOB_QUEUE_LOCK:
         _prune_job_queue_history()
         history = list(_JOB_QUEUE_HISTORY)
-    for legacy_queue in reversed(history):
-        try:
-            job = _read_job_from_queue(legacy_queue, job_id)
-        except RuntimeError:
-            continue
-        if job is not None and _job_record_within_api_ttl(job):
-            return job
-    if unavailable_error is not None:
-        raise unavailable_error
-    return None
+    return _find_job_record_in_queues(job_id, queue, history)
 
 
 def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapshot:

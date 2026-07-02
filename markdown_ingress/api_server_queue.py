@@ -86,6 +86,27 @@ def _read_job_from_queue(queue, job_id: str):
         raise RuntimeError(f"Job queue backend read failed: {exc}") from exc
 
 
+def _find_job_record_in_queues(job_id: str, current_queue, legacy_queues: list):
+    unavailable_error: RuntimeError | None = None
+    try:
+        job = _read_job_from_queue(current_queue, job_id)
+    except RuntimeError as exc:
+        unavailable_error = exc
+    else:
+        if job is not None and _job_record_within_api_ttl(job):
+            return job
+    for legacy_queue in reversed(legacy_queues):
+        try:
+            job = _read_job_from_queue(legacy_queue, job_id)
+        except RuntimeError:
+            continue
+        if job is not None and _job_record_within_api_ttl(job):
+            return job
+    if unavailable_error is not None:
+        raise unavailable_error
+    return None
+
+
 def _queue_still_has_visible_jobs(queue) -> bool:
     connect = getattr(queue, "_connect", None)
     if not callable(connect):
