@@ -9,6 +9,7 @@ import os
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -194,6 +195,13 @@ _RECOVERABLE_QUEUE_STATES = {"closing", "lease_lost", "external_owner", "backend
 _REPAIRABLE_QUEUE_STATES = _RECOVERABLE_QUEUE_STATES | {"closed"}
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class _JobQueueSelection:
+    queue_to_return: Any | None
+    queue_to_repair: Any | None
+    start_repair: bool = False
 
 
 def _build_job_queue() -> PersistentJobQueue:
@@ -547,23 +555,33 @@ def _ensure_job_queue_initialized():
             _logger.exception("Failed to initialize job queue")
 
 
-def _get_job_queue():
-    _ensure_job_queue_initialized()
+def _select_job_queue_for_use() -> _JobQueueSelection:
     with _JOB_QUEUE_LOCK:
         queue = JOB_QUEUE
         if queue is None:
             raise RuntimeError("Job queue is unavailable")
-        if getattr(queue, "state", None) not in _REPAIRABLE_QUEUE_STATES:
-            return queue
-        if getattr(queue, "state", None) == "external_owner":
-            queue_to_return = queue
-        else:
-            queue_to_repair = queue
-            queue_to_return = None
+        state = getattr(queue, "state", None)
+        if state not in _REPAIRABLE_QUEUE_STATES:
+            return _JobQueueSelection(queue_to_return=queue, queue_to_repair=None)
+        if state == "external_owner":
+            return _JobQueueSelection(
+                queue_to_return=queue,
+                queue_to_repair=None,
+                start_repair=True,
+            )
+        return _JobQueueSelection(queue_to_return=None, queue_to_repair=queue)
 
-    if queue_to_return is not None:
-        _maybe_start_job_queue_repair()
-        return queue_to_return
+
+def _get_job_queue():
+    _ensure_job_queue_initialized()
+    selection = _select_job_queue_for_use()
+    if selection.queue_to_return is not None:
+        if selection.start_repair:
+            _maybe_start_job_queue_repair()
+        return selection.queue_to_return
+    queue_to_repair = selection.queue_to_repair
+    if queue_to_repair is None:
+        raise RuntimeError("Job queue is unavailable")
 
     try:
         _close_queue_for_repair(queue_to_repair)
