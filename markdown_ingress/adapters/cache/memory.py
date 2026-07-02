@@ -55,13 +55,12 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
         might modify the cached document reference. This ensures thread-safety
         even when the returned document is modified by the caller.
 
-        BUG FIX: Performs deepcopy outside the lock to avoid blocking other threads
-        during expensive copy operations on large documents.
+        Deepcopy is performed outside the lock to avoid blocking other threads
+        during copy operations on large documents.
 
         Returns:
             A copy of the SafeDocument if found and not expired, None otherwise.
         """
-        # BUG FIX: Shallow copy of entry dict to hold lock for minimal time
         entry_copy: dict[str, Any] | None = None
         with self._lock:
             entry = self._cache.get(key)
@@ -76,14 +75,12 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
             # Update last access time for LRU
             entry["last_access"] = time.time()
 
-            # BUG FIX: Shallow copy the entry dict while holding lock
-            # Then do expensive deepcopy outside lock
+            # Hold the lock only while copying the entry metadata.
             entry_copy = entry.copy()
 
         if entry_copy is None:
             return None
 
-        # Perform expensive deepcopy outside the lock
         doc = entry_copy["document"]
         if isinstance(doc, SafeDocument):
             return copy.deepcopy(doc)
@@ -148,11 +145,7 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
                 self._cache.items(),
                 key=lambda kv: kv[1].get("last_access", kv[1].get("created_at", 0)),
             )
-            # Runtime fix (L8): at the exact max_entries boundary, evict only
-            # the single LRU entry. The previous "10% or at least 1" rule
-            # could prune up to 10 entries when exceeding the limit by just
-            # one insert, surprising callers that relied on a steady cache.
-            # Evict exactly the minimum needed (1 slot for the incoming insert).
+            # Evict only the minimum needed for the incoming insert.
             overshoot = len(self._cache) - self.max_entries + 1
             to_remove = max(1, overshoot)
             for key, _ in items[:to_remove]:
@@ -171,8 +164,7 @@ class MemoryCache(Cache):  # implements ICacheBackend protocol
     def exists(self, key: str) -> bool:
         """Check if key exists and is not expired without copying.
 
-        BUG FIX: Previously called get() which performed expensive deepcopy.
-        This implementation checks existence directly without copying.
+        Checks existence directly without copying the cached document.
 
         NOTE: Does NOT update last_access to avoid TOCTOU issues. If you need
         to update LRU order, call get() instead. This prevents exists() from
