@@ -15,7 +15,9 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
+from pathlib import Path
 
+from markdown_ingress.adapters.jobs.sqlite_job_queue import check_external_owner_still_owns
 from markdown_ingress.api_server_env import _parse_iso_datetime_utc
 from markdown_ingress.api_server_external_owner_queue import (
     _ExternalOwnerJobQueue as _ExternalOwnerJobQueue,
@@ -123,3 +125,12 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         raise _TransientLegacyQueueReadError(f"legacy queue inspection failed: {exc}") from exc
     now = datetime.now(UTC)
     return any(_job_row_is_visible(row, now) for row in rows)
+
+
+def _external_owner_backend_still_owned(queue, default_db_path: str) -> bool:
+    db_path = Path(getattr(queue, "db_path", default_db_path))
+
+    def _set_backend_error(_state: str) -> None:
+        queue.state = _state
+
+    return check_external_owner_still_owns(db_path, _is_stale_heartbeat, _set_backend_error)

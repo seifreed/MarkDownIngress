@@ -9,7 +9,6 @@ import os
 import sqlite3
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI
@@ -18,7 +17,6 @@ from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     LEGACY_UNKNOWN_TTL_SECONDS,
     PersistentJobQueue,
     SQLiteError,
-    check_external_owner_still_owns,
 )
 from markdown_ingress.api import generate_security_report, ingest, ingest_many, retry_ingest
 from markdown_ingress.api_server_auth import (
@@ -72,9 +70,11 @@ from markdown_ingress.api_server_queue import (
     _ExternalOwnerJobQueue,
     _find_job_record_in_queues,
     _is_active_owner_error,
-    _is_stale_heartbeat,
     _queue_still_has_visible_jobs,
     _TransientLegacyQueueReadError,
+)
+from markdown_ingress.api_server_queue import (
+    _external_owner_backend_still_owned as _queue_external_owner_backend_still_owned,
 )
 from markdown_ingress.api_server_rate_limit import (
     MemoryRateLimitPolicy,
@@ -310,12 +310,7 @@ def _build_replacement_queue_or_current(expected_queue):
 
 
 def _external_owner_backend_still_owned(queue) -> bool:
-    db_path = Path(getattr(queue, "db_path", JOB_DB_PATH))
-
-    def _set_backend_error(_state: str) -> None:
-        queue.state = _state
-
-    return check_external_owner_still_owns(db_path, _is_stale_heartbeat, _set_backend_error)
+    return _queue_external_owner_backend_still_owned(queue, JOB_DB_PATH)
 
 
 def _clear_job_queue_repair_state_locked(
