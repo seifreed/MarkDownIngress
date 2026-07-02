@@ -12,6 +12,12 @@ import weakref
 from collections import OrderedDict
 
 from markdown_ingress.core.exception_copy import copy_exception_for_transfer
+from markdown_ingress.core.inflight_cleanup import (
+    INFLIGHT_MAX_SIZE,
+    cleanup_orphaned_entries,
+    evict_lru_entries,
+    format_request_key_for_log,
+)
 from markdown_ingress.core.inflight_entry import (
     InFlightEntry,
     notify_entries_inactive,
@@ -26,18 +32,10 @@ from markdown_ingress.models import SafeDocument
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of in-flight requests before LRU eviction kicks in.
-_INFLIGHT_MAX_SIZE = 1000
-
-# TTL (time-to-live) for in-flight entries in seconds.
-_INFLIGHT_TTL_SECONDS = 900  # 15 minutes
-
 _INFLIGHT_WAIT_TIMEOUT = 600  # seconds — prevents infinite hang if leader crashes
 
-_INFLIGHT_COMPLETING_GRACE_MULTIPLIER = 2
 _INFLIGHT_CLEANUP_INTERVAL_SECONDS = 30.0
 _INFLIGHT_THREAD_JOIN_TIMEOUT_SECONDS = 5.0
-_REQUEST_KEY_LOG_TRUNCATE_LENGTH = 16
 
 _ALL_INFLIGHT_REGISTRIES: weakref.WeakSet[InFlightRegistry] = weakref.WeakSet()
 _ALL_INFLIGHT_REGISTRIES_LOCK = threading.Lock()
@@ -121,61 +119,11 @@ class InFlightRegistry:
 
     def _cleanup_orphaned_entries_locked(self) -> list[InFlightEntry]:
         """Pop orphaned entries from the registry. Caller must notify them after releasing _lock."""
-        now = time.monotonic()
-        keys_to_remove = []
-
-        completing_grace = _INFLIGHT_TTL_SECONDS * _INFLIGHT_COMPLETING_GRACE_MULTIPLIER
-        for key, entry in self._requests.items():
-            age = now - entry.created_at
-            if age > _INFLIGHT_TTL_SECONDS and not entry.completing:
-                keys_to_remove.append(key)
-            elif age > completing_grace and entry.completing and not entry.done:
-                keys_to_remove.append(key)
-
-        orphaned: list[InFlightEntry] = []
-        for key in keys_to_remove:
-            entry = self._requests.pop(key)
-            logger.warning(
-                "Cleaned up orphaned in-flight entry (key=%s, age=%.1fs, followers=%d)",
-                key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
-                now - entry.created_at,
-                entry.followers,
-            )
-            orphaned.append(entry)
-
-        return orphaned
+        return cleanup_orphaned_entries(self._requests, logger)
 
     def _evict_lru_entries_locked(self) -> list[InFlightEntry]:
         """Evict done/inactive entries with no followers."""
-        evicted: list[InFlightEntry] = []
-        while len(self._requests) >= _INFLIGHT_MAX_SIZE:
-            evictable_key = None
-            evictable_entry = None
-            for key, entry in self._requests.items():
-                # Bug fix: never evict entries that still have followers waiting
-                if (entry.done or not entry.leader_active) and entry.followers == 0:
-                    evictable_key = key
-                    evictable_entry = entry
-                    break
-
-            if evictable_key is None or evictable_entry is None:
-                logger.warning(
-                    "In-flight registry at max size (%d) with no evictable entries "
-                    "(all have followers)",
-                    _INFLIGHT_MAX_SIZE,
-                )
-                break
-
-            key, entry = evictable_key, evictable_entry
-            self._requests.pop(key)
-            logger.warning(
-                "Evicted in-flight entry due to max size (key=%s, followers=%d, age=%.1fs)",
-                key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
-                entry.followers,
-                time.monotonic() - entry.created_at,
-            )
-            evicted.append(entry)
-        return evicted
+        return evict_lru_entries(self._requests, logger)
 
     def active_count(self) -> int:
         to_notify: list[InFlightEntry] = []
@@ -231,10 +179,10 @@ class InFlightRegistry:
 
             if not skip_new_leader:
                 to_notify.extend(self._evict_lru_entries_locked())
-                if len(self._requests) >= _INFLIGHT_MAX_SIZE:
+                if len(self._requests) >= INFLIGHT_MAX_SIZE:
                     logger.warning(
                         "In-flight registry saturated; skipping dedup registration for key=%s",
-                        request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
+                        format_request_key_for_log(request_key),
                     )
                 else:
                     self._requests[request_key] = InFlightEntry(request_key=request_key)
@@ -259,7 +207,7 @@ class InFlightRegistry:
                         logger.error(
                             "Marked in-flight entry as inactive after timeout "
                             "(key=%s, followers=%d)",
-                            request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
+                            format_request_key_for_log(request_key),
                             entry.followers,
                         )
                         entry.condition.notify_all()
@@ -292,7 +240,7 @@ class InFlightRegistry:
                 return False, 0
             logger.warning(
                 "Double-release detected for request_key=%s, returning followers=%d",
-                request_key[:_REQUEST_KEY_LOG_TRUNCATE_LENGTH] + "...",
+                format_request_key_for_log(request_key),
                 entry.followers,
             )
             followers = entry.followers
