@@ -8,6 +8,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from markdown_ingress.application.batch_cache import read_batch_cached_document, write_batch_cache
 from markdown_ingress.application.batch_document_metadata import mark_batch_document
 from markdown_ingress.application.batch_inflight import (
     cancel_batch_inflight,
@@ -22,7 +23,6 @@ from markdown_ingress.application.batch_state import (
     _CostBudget,
     _PreparedBatchRequest,
 )
-from markdown_ingress.application.cache_resolution import _purge_corrupt_cache_entry
 from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.core.ingest_stats import (
     bump_ingest_stat,
@@ -30,7 +30,6 @@ from markdown_ingress.core.ingest_stats import (
     record_mode_result,
     record_mode_timing,
 )
-from markdown_ingress.core.metadata_keys import REQUESTED_MODE
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.reporting import persist_report_for_document
 from markdown_ingress.shared_results import BatchErrorItem
@@ -85,47 +84,23 @@ class _BatchUrlProcessor:
     async def _try_cache(self, prepared: _PreparedBatchRequest, started_at: float) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
-        if prepared.cache_backend is None or prepared.cache_key is None:
+        cached_copy = read_batch_cached_document(
+            prepared,
+            self._use_case.ingest_use_case.orchestrator.clone_cached_document,
+        )
+        if cached_copy is None:
             return False
-        try:
-            cached = prepared.cache_backend.get(prepared.cache_key)
-        except Exception as exc:  # noqa: BLE001 - cache backends fail open as misses
-            _logger.warning(
-                "Batch cache lookup failed for %s; continuing without cache: %s",
-                prepared.cache_key,
-                exc,
-                exc_info=True,
+        ctx.set_document(prepared.index, cached_copy)
+        if ctx.batch_tracks_metrics:
+            record_mode_result(prepared.requested_mode, success=True)
+        else:
+            self._record_shortcut_request_for_local_strategy(
+                prepared,
+                success=True,
+                started_at=started_at,
             )
-            cached = None
-        if cached is not None:
-            try:
-                cached_copy = self._use_case.ingest_use_case.orchestrator.clone_cached_document(
-                    cached
-                )
-                bump_ingest_stat("cache_hits")
-                cached_copy.metadata[REQUESTED_MODE] = prepared.requested_mode
-                ctx.set_document(prepared.index, cached_copy)
-                if ctx.batch_tracks_metrics:
-                    record_mode_result(prepared.requested_mode, success=True)
-                else:
-                    self._record_shortcut_request_for_local_strategy(
-                        prepared,
-                        success=True,
-                        started_at=started_at,
-                    )
-                await self._report_completion(prepared.url)
-            except Exception as exc:  # noqa: BLE001 - corrupt cached values are purged
-                _logger.warning(
-                    "Failed to clone cached batch document for %s, cache entry may be corrupt: %s",
-                    prepared.cache_key,
-                    exc,
-                    exc_info=True,
-                )
-                _purge_corrupt_cache_entry(prepared.cache_backend, prepared.cache_key)
-            else:
-                return True
-        bump_ingest_stat("cache_misses")
-        return False
+        await self._report_completion(prepared.url)
+        return True
 
     async def _register_inflight(
         self, prepared: _PreparedBatchRequest
@@ -198,25 +173,7 @@ class _BatchUrlProcessor:
         """Handle leader path: execute ingestion, cache result, resolve future."""
         ctx = self._ctx
         document = await self._execute_item(prepared)
-        should_write_cache = not screenshot_requires_fresh_capture(prepared.resolved_config)
-        if (
-            should_write_cache
-            and prepared.cache_backend is not None
-            and prepared.cache_key is not None
-        ):
-            try:
-                prepared.cache_backend.set(
-                    prepared.cache_key,
-                    document,
-                    ttl=prepared.resolved_config.cache_ttl,
-                )
-            except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
-                _logger.warning(
-                    "Batch cache write failed for %s; continuing without cache: %s",
-                    prepared.cache_key,
-                    exc,
-                    exc_info=True,
-                )
+        write_batch_cache(prepared, document)
         shared_count = await publish_batch_inflight_result(
             ctx,
             prepared.request_key,
