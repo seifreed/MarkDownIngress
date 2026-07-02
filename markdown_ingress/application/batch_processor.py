@@ -43,13 +43,13 @@ _logger = logging.getLogger(__name__)
 __all__ = [
     "BatchContext",
     "BatchInFlightRecord",
-    "_BatchUrlProcessor",
+    "BatchUrlProcessor",
     "CostBudget",
     "PreparedBatchRequest",
 ]
 
 
-class _BatchUrlProcessor:
+class BatchUrlProcessor:
     """Processes a single URL within a batch, encapsulating the leader/follower logic."""
 
     def __init__(self, ctx: BatchContext, use_case: BatchIngestUseCase) -> None:

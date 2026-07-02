@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from typing import Protocol, cast
 
 from markdown_ingress.application.async_tasks import gather_or_cancel
-from markdown_ingress.application.batch_processor import _BatchUrlProcessor
+from markdown_ingress.application.batch_processor import BatchUrlProcessor
 from markdown_ingress.application.batch_state import (
     BatchContext,
     PreparedBatchRequest,
@@ -180,7 +180,7 @@ class BatchIngestUseCase:
             on_progress=on_progress,
             batch_tracks_metrics=execution_strategy != "local",
         )
-        processor = _BatchUrlProcessor(ctx, self)
+        processor = BatchUrlProcessor(ctx, self)
         tasks = [asyncio.create_task(processor.process(prepared)) for prepared in prepared_requests]
         results = await gather_or_cancel(tasks)
         successful = sum(1 for r in results if r)
