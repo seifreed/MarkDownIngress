@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -12,6 +11,7 @@ from markdown_ingress.core.document_assembly import (
     _build_safe_document,
     _SafeDocumentAssemblyContext,
 )
+from markdown_ingress.core.document_cleanup import cleanup_screenshot_on_failure
 from markdown_ingress.core.document_dependencies import (
     register_document_builder_factories as _register_document_builder_factories,
 )
@@ -231,20 +231,6 @@ def _run_security_analysis(
     return security_engine, policy_engine, security_result
 
 
-def _cleanup_screenshot_on_failure(
-    document: SafeDocument | None,
-    fetch_result: FetchResult,
-) -> None:
-    """Remove a temporary screenshot file when document creation failed."""
-    if document is None and fetch_result.metadata.get("screenshot_temp"):
-        path = fetch_result.metadata.get("screenshot_path")
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
-
 def process_fetched_content(
     orchestrator,
     fetch_result: FetchResult,
@@ -346,4 +332,4 @@ def process_fetched_content(
     finally:
         plugin_loader = plugin_context.loader if plugin_context is not None else None
         unload_document_plugins(plugin_loader, document, fetch_result)
-        _cleanup_screenshot_on_failure(document, fetch_result)
+        cleanup_screenshot_on_failure(document, fetch_result)

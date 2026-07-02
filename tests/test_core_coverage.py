@@ -143,6 +143,74 @@ def test_fetch_result_rejects_invalid_structure(kwargs: dict[str, Any], message:
         FetchResult(**cast(Any, payload))
 
 
+def test_cleanup_screenshot_on_failure_removes_orphaned_temp_file(tmp_path: Path):
+    from markdown_ingress.core.document_cleanup import cleanup_screenshot_on_failure
+    from markdown_ingress.models import FetchResult
+
+    screenshot_path = tmp_path / "orphaned.png"
+    screenshot_path.write_bytes(b"png")
+    fetch_result = FetchResult(
+        html="<html></html>",
+        url="https://example.com",
+        status_code=200,
+        final_url="https://example.com",
+        headers={},
+        timing_ms=1.0,
+        metadata={"screenshot_temp": True, "screenshot_path": str(screenshot_path)},
+    )
+
+    cleanup_screenshot_on_failure(None, fetch_result)
+
+    assert not screenshot_path.exists()
+
+
+def test_cleanup_screenshot_on_failure_keeps_successful_document_file(tmp_path: Path):
+    from markdown_ingress.core.document_cleanup import cleanup_screenshot_on_failure
+    from markdown_ingress.models import FetchResult, SafeDocument
+
+    screenshot_path = tmp_path / "kept.png"
+    screenshot_path.write_bytes(b"png")
+    fetch_result = FetchResult(
+        html="<html></html>",
+        url="https://example.com",
+        status_code=200,
+        final_url="https://example.com",
+        headers={},
+        timing_ms=1.0,
+        metadata={"screenshot_temp": True, "screenshot_path": str(screenshot_path)},
+    )
+    document = SafeDocument(
+        markdown="ok",
+        metadata={},
+        token_estimate=1,
+        content_hash="hash",
+        injection_score=0.0,
+        flags=[],
+        removed_elements={},
+    )
+
+    cleanup_screenshot_on_failure(document, fetch_result)
+
+    assert screenshot_path.exists()
+
+
+def test_cleanup_screenshot_on_failure_ignores_missing_temp_file(tmp_path: Path):
+    from markdown_ingress.core.document_cleanup import cleanup_screenshot_on_failure
+    from markdown_ingress.models import FetchResult
+
+    fetch_result = FetchResult(
+        html="<html></html>",
+        url="https://example.com",
+        status_code=200,
+        final_url="https://example.com",
+        headers={},
+        timing_ms=1.0,
+        metadata={"screenshot_temp": True, "screenshot_path": str(tmp_path / "missing.png")},
+    )
+
+    cleanup_screenshot_on_failure(None, fetch_result)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
