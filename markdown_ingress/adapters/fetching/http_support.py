@@ -1,6 +1,7 @@
 """Shared HTTP fetcher policy and response helpers."""
 
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import NamedTuple
@@ -106,10 +107,8 @@ def parse_retry_after(value: str | None) -> float | None:
     raw = value.strip()
     if not raw:
         return None
-    try:
+    with suppress(ValueError):
         return max(0.25, float(raw))
-    except ValueError:
-        pass
     try:
         retry_at = parsedate_to_datetime(raw)
         if retry_at.tzinfo is None:
