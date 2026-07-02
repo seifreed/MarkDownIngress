@@ -49,6 +49,7 @@ from markdown_ingress.core.security_rules import (
     DEFAULT_IMPERATIVE_VERBS,
     DEFAULT_INJECTION_PATTERNS,
 )
+from markdown_ingress.core.security_scoring import calculate_injection_score
 from markdown_ingress.core.security_text import (
     _decode_css_escapes as _decode_css_escapes,
 )
@@ -154,38 +155,13 @@ class SecurityAnalyzer:
         """
         pattern_matches, decode_warnings = self._detect_patterns(text)
         imperative_density = self._calculate_imperative_density(text)
-
-        # Calculate base score from patterns.
-        # Scale by occurrence count with diminishing returns, so repeated matches
-        # contribute proportionally, but with a softened growth curve.
-        import math
-
-        pattern_score = 0.0
-        for match in pattern_matches:
-            weight = match["weight"]
-            occurrences = match["occurrences"]
-            occurrence_multiplier = 1.0 + 0.15 * math.log2(max(1, occurrences))
-            pattern_score += weight * occurrence_multiplier
-        pattern_score = min(pattern_score, 1.0)  # Cap at 1.0
-
-        # Add hidden content weight
-        hidden_weight = 0.3 if hidden_content_detected else 0.0
-
-        # Add imperative density contribution
-        imperative_weight = min(imperative_density * 0.5, 0.3)
-
-        # Combined score
-        total_score = min(pattern_score + hidden_weight + imperative_weight, 1.0)
-
-        # Security fix (S6): if any single pattern fires more than the configured
-        # count floor, raise the score to at least the floor-score. This catches
-        # payloads that stack many low-weight matches (e.g. twenty "act as if"
-        # phrases) which would otherwise slip just under the warn threshold.
-        high_count_hit = any(
-            match.get("occurrences", 0) >= _INJECTION_COUNT_FLOOR for match in pattern_matches
+        total_score = calculate_injection_score(
+            pattern_matches,
+            imperative_density,
+            hidden_content_detected=hidden_content_detected,
+            count_floor=_INJECTION_COUNT_FLOOR,
+            count_floor_score=_INJECTION_COUNT_FLOOR_SCORE,
         )
-        if high_count_hit and total_score < _INJECTION_COUNT_FLOOR_SCORE:
-            total_score = _INJECTION_COUNT_FLOOR_SCORE
 
         # Generate flags
         flags = self._generate_flags(
