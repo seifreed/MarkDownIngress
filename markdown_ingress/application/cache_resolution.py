@@ -47,6 +47,28 @@ def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
         )
 
 
+def write_cache_entry(
+    cache_backend: Cache | None,
+    cache_key: str | None,
+    document: SafeDocument,
+    *,
+    ttl: int | None,
+    label: str = "Cache",
+) -> None:
+    if cache_backend is None or cache_key is None:
+        return
+    try:
+        cache_backend.set(cache_key, document, ttl=ttl)
+    except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
+        _logger.warning(
+            "%s write failed for %s; continuing without cache: %s",
+            label,
+            cache_key,
+            exc,
+            exc_info=True,
+        )
+
+
 class _CacheResolutionHelper:
     """Handles cache lookup and in-flight deduplication for ingestion requests."""
 

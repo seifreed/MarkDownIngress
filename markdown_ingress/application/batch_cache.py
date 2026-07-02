@@ -6,7 +6,10 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from markdown_ingress.application.cache_resolution import _purge_corrupt_cache_entry
+from markdown_ingress.application.cache_resolution import (
+    _purge_corrupt_cache_entry,
+    write_cache_entry,
+)
 from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.core.ingest_stats import bump_ingest_stat
 from markdown_ingress.core.metadata_keys import REQUESTED_MODE
@@ -57,18 +60,10 @@ def read_batch_cached_document(
 def write_batch_cache(prepared: _PreparedBatchRequest, document: SafeDocument) -> None:
     if screenshot_requires_fresh_capture(prepared.resolved_config):
         return
-    if prepared.cache_backend is None or prepared.cache_key is None:
-        return
-    try:
-        prepared.cache_backend.set(
-            prepared.cache_key,
-            document,
-            ttl=prepared.resolved_config.cache_ttl,
-        )
-    except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
-        _logger.warning(
-            "Batch cache write failed for %s; continuing without cache: %s",
-            prepared.cache_key,
-            exc,
-            exc_info=True,
-        )
+    write_cache_entry(
+        prepared.cache_backend,
+        prepared.cache_key,
+        document,
+        ttl=prepared.resolved_config.cache_ttl,
+        label="Batch cache",
+    )

@@ -18,6 +18,7 @@ from markdown_ingress.application.bootstrap import (
 from markdown_ingress.application.cache_resolution import (
     CacheResolutionRequest,
     _CacheResolutionHelper,
+    write_cache_entry,
 )
 from markdown_ingress.application.cache_resolution import (
     _purge_corrupt_cache_entry as _purge_corrupt_cache_entry_impl,
@@ -255,17 +256,8 @@ class IngestUseCase:
         else:
             document = pipeline.execute_mode(url, config, matched_domain_policy, budget)
 
-        should_write_cache = not screenshot_requires_fresh_capture(config)
-        if should_write_cache and cache_backend is not None and cache_key is not None:
-            try:
-                cache_backend.set(cache_key, document, ttl=config.cache_ttl)
-            except Exception as exc:  # noqa: BLE001 - cache writes are optional side effects
-                _logger.warning(
-                    "Cache write failed for %s; continuing without cache: %s",
-                    cache_key,
-                    exc,
-                    exc_info=True,
-                )
+        if not screenshot_requires_fresh_capture(config):
+            write_cache_entry(cache_backend, cache_key, document, ttl=config.cache_ttl)
         document.metadata[CACHE_HIT] = False
         document.metadata[INFLIGHT_DEDUPLICATED] = False
         document.metadata[INFLIGHT_SHARED_COUNT] = 0
