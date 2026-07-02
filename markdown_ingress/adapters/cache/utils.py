@@ -3,6 +3,7 @@ Utility helpers for cache backend identity and TTL validation.
 """
 
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -55,12 +56,10 @@ def _collect_public_identity_attrs(cache_backend: object) -> dict[str, Any]:
 
 def _collect_dict_identity_attrs(cache_backend: object) -> dict[str, Any]:
     attrs: dict[str, Any] = {}
-    try:
+    with suppress(TypeError):
         for name, value in vars(cache_backend).items():
             if _is_public_dict_identity_attr(name, value):
                 attrs[name] = _normalize_identity_value(value)
-    except TypeError:
-        pass
     return attrs
 
 
