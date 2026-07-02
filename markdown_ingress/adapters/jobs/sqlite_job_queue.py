@@ -321,6 +321,21 @@ class PersistentJobQueue(
             return None
         return result
 
+    @staticmethod
+    def _record_from_row(row: sqlite3.Row) -> JobRecord:
+        return JobRecord(
+            job_id=row["job_id"],
+            status=row["status"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            result=PersistentJobQueue._safe_json_loads(row["result_json"]),
+            error=row["error"],
+            webhook_url=row["webhook_url"],
+            ttl_seconds=row["ttl_seconds"],
+            legacy_expires_at=row["legacy_expires_at"],
+        )
+
     def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
         if cleanup_expired:
             self.cleanup_expired()
@@ -328,18 +343,7 @@ class PersistentJobQueue(
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         if row is None:
             return None
-        return JobRecord(
-            job_id=row["job_id"],
-            status=row["status"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            result=self._safe_json_loads(row["result_json"]),
-            error=row["error"],
-            webhook_url=row["webhook_url"],
-            ttl_seconds=row["ttl_seconds"],
-            legacy_expires_at=row["legacy_expires_at"],
-        )
+        return self._record_from_row(row)
 
 
 def check_external_owner_still_owns(

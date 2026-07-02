@@ -83,18 +83,7 @@ class _ExternalOwnerJobQueue:
             return None
         if cleanup_expired and self._row_is_expired(row):
             return None
-        return JobRecord(
-            job_id=row["job_id"],
-            status=row["status"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            completed_at=row["completed_at"],
-            result=PersistentJobQueue._safe_json_loads(row["result_json"]),
-            error=row["error"],
-            webhook_url=row["webhook_url"],
-            ttl_seconds=row["ttl_seconds"],
-            legacy_expires_at=row["legacy_expires_at"],
-        )
+        return PersistentJobQueue._record_from_row(row)
 
     def close(self, *_args, **_kwargs) -> None:
         return None
