@@ -130,11 +130,7 @@ def validate_http_url_no_ssrf(
     allow_local: bool = False,
     resolve_dns: bool = True,
 ) -> str:
-    """Validate an HTTP(S) URL against common SSRF destinations.
-
-    BUG FIX: Also validates URL for CRLF injection and null bytes to prevent
-    header injection attacks via malformed URLs.
-    """
+    """Validate an HTTP(S) URL against SSRF and header-injection inputs."""
     normalized_url = normalize_http_url_text(url)
     parsed = split_http_url_for_ssrf(normalized_url, url)
     port = validate_http_url_authority(parsed, url)
