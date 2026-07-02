@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import re
 import socket
 from urllib.parse import urlsplit
 
+from markdown_ingress.core.ssrf_hostname import (
+    validate_hostname_literal_for_ssrf,
+    validate_non_ip_hostname_for_ssrf,
+)
 from markdown_ingress.core.ssrf_ip_policy import (
     is_blocked_hostname as is_blocked_hostname,
 )
@@ -37,8 +40,6 @@ from markdown_ingress.core.ssrf_url import (
 )
 
 logger = logging.getLogger(__name__)
-
-_NUMERIC_IP_LITERAL_RE = re.compile(r"0x[0-9a-fA-F]+|0[0-7]+|\d+")
 
 
 def _resolve_hostname_ips_for_ssrf(
@@ -114,82 +115,12 @@ def dns_pin_matches_hostname(
     )
 
 
-def _parse_ip_literal_for_ssrf(
-    hostname: str,
-) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    try:
-        return normalize_ip_for_ssrf(ipaddress.ip_address(hostname))
-    except ValueError:
-        return None
-
-
-def _validate_ip_literal_for_ssrf(
-    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
-) -> str:
-    if is_blocked_ip_address(ip):
-        raise ValueError(f"URL IP in blocked range (SSRF protection): {ip}")
-    return str(ip)
-
-
-def _raise_for_numeric_ip_literal_hostname(hostname: str) -> None:
-    if _NUMERIC_IP_LITERAL_RE.fullmatch(hostname):
-        raise ValueError(
-            "URL hostname looks like a numeric IP literal and is blocked "
-            f"(SSRF protection): {hostname}"
-        )
-
-
-def _validate_compressed_ipv4_hostname(hostname: str) -> str | None:
-    if "." not in hostname or hostname.endswith("."):
-        return None
-
-    try:
-        raw = socket.inet_aton(hostname)
-    except OSError:
-        return None
-
-    packed_ip = normalize_ip_for_ssrf(ipaddress.ip_address(int.from_bytes(raw, "big")))
-    if is_blocked_ip_address(packed_ip):
-        raise ValueError(
-            f"URL hostname is a compressed IPv4 blocked by SSRF protection: "
-            f"{hostname} -> {packed_ip}"
-        )
-    return str(packed_ip)
-
-
-def _validate_unresolved_hostname_for_ssrf(hostname: str) -> str:
-    if is_blocked_hostname(hostname):
-        raise ValueError(f"URL hostname blocked (SSRF protection): {hostname}") from None
-    return hostname
-
-
 def _validate_dns_hostname_for_ssrf(hostname: str, *, allow_local: bool) -> str:
     resolved_ips = validate_hostname_dns_ips_for_ssrf(hostname, allow_local=allow_local)
     # Return the first resolved IP to pin DNS and prevent rebinding
     if resolved_ips:
         return resolved_ips[0]
     return hostname
-
-
-def _validate_non_ip_hostname_for_ssrf(
-    hostname: str,
-    *,
-    allow_local: bool,
-    resolve_dns: bool,
-) -> str:
-    # Reject numeric-looking hostnames that some HTTP clients resolve as IPs
-    # (decimal IPv4 like 2130706433, hex like 0x7f000001, octal like 017700000001)
-    _raise_for_numeric_ip_literal_hostname(hostname)
-
-    # Catch compressed IPv4 like "127.1" or "10.0.1" that inet_aton accepts
-    # but ipaddress.ip_address() rejects (2- or 3-part dotted decimal).
-    compressed_ip = _validate_compressed_ipv4_hostname(hostname)
-    if compressed_ip is not None:
-        return compressed_ip
-
-    if not resolve_dns:
-        return _validate_unresolved_hostname_for_ssrf(hostname)
-    return _validate_dns_hostname_for_ssrf(hostname, allow_local=allow_local)
 
 
 def validate_hostname_for_ssrf(
@@ -216,13 +147,17 @@ def validate_hostname_for_ssrf(
     if is_blocked_hostname(normalized):
         raise ValueError(f"URL hostname blocked (SSRF protection): {normalized}")
 
-    ip = _parse_ip_literal_for_ssrf(normalized)
-    if ip is not None:
-        return _validate_ip_literal_for_ssrf(ip)
-    return _validate_non_ip_hostname_for_ssrf(
+    literal = validate_hostname_literal_for_ssrf(normalized)
+    if literal is not None:
+        return literal
+    return validate_non_ip_hostname_for_ssrf(
         normalized,
         allow_local=allow_local,
         resolve_dns=resolve_dns,
+        validate_dns_hostname=lambda host: _validate_dns_hostname_for_ssrf(
+            host,
+            allow_local=allow_local,
+        ),
     )
 
 
