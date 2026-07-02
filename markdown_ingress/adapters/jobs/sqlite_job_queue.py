@@ -51,6 +51,23 @@ SQLiteError = sqlite3.Error
 _STOP_WORKER = STOP_WORKER
 
 
+def _job_queue_notifier(
+    notifier: IWebhookNotifier | None,
+    *,
+    webhook_max_retries: int,
+    webhook_retry_delay_seconds: float,
+    allow_local_webhooks: bool,
+) -> IWebhookNotifier:
+    resolved = notifier or HTTPWebhookNotifier(
+        max_retries=webhook_max_retries,
+        retry_delay_seconds=webhook_retry_delay_seconds,
+        allow_local_webhooks=allow_local_webhooks,
+    )
+    if hasattr(resolved, "allow_local_webhooks"):
+        resolved.allow_local_webhooks = allow_local_webhooks
+    return resolved
+
+
 class PersistentJobQueue(
     JobQueueLifecycleMixin,
     JobCleanupMixin,
@@ -83,16 +100,13 @@ class PersistentJobQueue(
         self.lease_acquire_max_retries = 5
         self.lease_acquire_base_delay = 0.1
         self.lease_acquire_max_delay = 5.0
-        self.notifier = notifier or HTTPWebhookNotifier(
-            max_retries=webhook_max_retries,
-            retry_delay_seconds=webhook_retry_delay_seconds,
+        self.notifier = _job_queue_notifier(
+            notifier,
+            webhook_max_retries=webhook_max_retries,
+            webhook_retry_delay_seconds=webhook_retry_delay_seconds,
             allow_local_webhooks=allow_local_webhooks,
         )
         self.allow_local_webhooks = allow_local_webhooks
-        # Apply allow_local_webhooks to an injected notifier too so the
-        # defense-in-depth SSRF check respects the queue's policy.
-        if hasattr(self.notifier, "allow_local_webhooks"):
-            self.notifier.allow_local_webhooks = allow_local_webhooks
         self.job_timeout_seconds = _validate_optional_positive_finite_float(
             "job_timeout_seconds", job_timeout_seconds
         )
