@@ -18,10 +18,10 @@ from markdown_ingress.application.batch_inflight import (
     remove_finished_batch_inflight,
 )
 from markdown_ingress.application.batch_state import (
-    _BatchContext,
-    _BatchInFlightRecord,
-    _CostBudget,
-    _PreparedBatchRequest,
+    BatchContext,
+    BatchInFlightRecord,
+    CostBudget,
+    PreparedBatchRequest,
 )
 from markdown_ingress.application.screenshot_policy import screenshot_requires_fresh_capture
 from markdown_ingress.core.ingest_stats import (
@@ -41,18 +41,18 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 __all__ = [
-    "_BatchContext",
-    "_BatchInFlightRecord",
+    "BatchContext",
+    "BatchInFlightRecord",
     "_BatchUrlProcessor",
-    "_CostBudget",
-    "_PreparedBatchRequest",
+    "CostBudget",
+    "PreparedBatchRequest",
 ]
 
 
 class _BatchUrlProcessor:
     """Processes a single URL within a batch, encapsulating the leader/follower logic."""
 
-    def __init__(self, ctx: _BatchContext, use_case: BatchIngestUseCase) -> None:
+    def __init__(self, ctx: BatchContext, use_case: BatchIngestUseCase) -> None:
         self._ctx = ctx
         self._use_case = use_case
 
@@ -60,12 +60,12 @@ class _BatchUrlProcessor:
         await self._ctx.report_progress(url)
 
     @staticmethod
-    def _uses_uncacheable_screenshot(prepared: _PreparedBatchRequest) -> bool:
+    def _uses_uncacheable_screenshot(prepared: PreparedBatchRequest) -> bool:
         return screenshot_requires_fresh_capture(prepared.resolved_config)
 
     def _record_shortcut_request_for_local_strategy(
         self,
-        prepared: _PreparedBatchRequest,
+        prepared: PreparedBatchRequest,
         *,
         success: bool,
         started_at: float | None = None,
@@ -83,7 +83,7 @@ class _BatchUrlProcessor:
 
     def _record_item_result(
         self,
-        prepared: _PreparedBatchRequest,
+        prepared: PreparedBatchRequest,
         *,
         success: bool,
         started_at: float | None = None,
@@ -97,7 +97,7 @@ class _BatchUrlProcessor:
             started_at=started_at,
         )
 
-    def _record_process_start(self, prepared: _PreparedBatchRequest) -> None:
+    def _record_process_start(self, prepared: PreparedBatchRequest) -> None:
         if not self._ctx.batch_tracks_metrics:
             return
         bump_ingest_stat("requests_total")
@@ -105,7 +105,7 @@ class _BatchUrlProcessor:
 
     def _record_process_timing(
         self,
-        prepared: _PreparedBatchRequest,
+        prepared: PreparedBatchRequest,
         *,
         started_at: float,
         cache_hit: bool,
@@ -117,7 +117,7 @@ class _BatchUrlProcessor:
             (time.perf_counter() - started_at) * 1000.0,
         )
 
-    async def _try_cache(self, prepared: _PreparedBatchRequest, started_at: float) -> bool:
+    async def _try_cache(self, prepared: PreparedBatchRequest, started_at: float) -> bool:
         """Check cache. Returns True and handles all completion if hit, False on miss."""
         ctx = self._ctx
         cached_copy = read_batch_cached_document(
@@ -132,13 +132,13 @@ class _BatchUrlProcessor:
         return True
 
     async def _register_inflight(
-        self, prepared: _PreparedBatchRequest
-    ) -> tuple[_BatchInFlightRecord, bool]:
+        self, prepared: PreparedBatchRequest
+    ) -> tuple[BatchInFlightRecord, bool]:
         """Register in-flight tracking. Returns (record, is_leader)."""
         return await register_batch_inflight(self._ctx, prepared.request_key)
 
     async def _append_error_for_exception(
-        self, prepared: _PreparedBatchRequest, exc: Exception
+        self, prepared: PreparedBatchRequest, exc: Exception
     ) -> None:
         await self._ctx.append_error(
             BatchErrorItem.from_exception(prepared.index, prepared.url, exc)
@@ -146,8 +146,8 @@ class _BatchUrlProcessor:
 
     async def _handle_follower_exception(
         self,
-        prepared: _PreparedBatchRequest,
-        record: _BatchInFlightRecord,
+        prepared: PreparedBatchRequest,
+        record: BatchInFlightRecord,
         started_at: float,
         exc: Exception,
     ) -> bool:
@@ -159,8 +159,8 @@ class _BatchUrlProcessor:
 
     async def _handle_follower(
         self,
-        prepared: _PreparedBatchRequest,
-        record: _BatchInFlightRecord,
+        prepared: PreparedBatchRequest,
+        record: BatchInFlightRecord,
         started_at: float,
     ) -> bool:
         """Handle follower path: await leader's future and propagate result."""
@@ -190,7 +190,7 @@ class _BatchUrlProcessor:
         await self._report_completion(prepared.url)
         return True
 
-    async def _execute_item(self, prepared: _PreparedBatchRequest) -> SafeDocument:
+    async def _execute_item(self, prepared: PreparedBatchRequest) -> SafeDocument:
         """Run a single item via the configured strategy, recording the leader metric."""
         if self._ctx.batch_tracks_metrics:
             bump_ingest_stat("leader_executions")
@@ -199,7 +199,7 @@ class _BatchUrlProcessor:
         return await self._use_case._execute_item_in_process(prepared)
 
     async def _execute_leader(
-        self, prepared: _PreparedBatchRequest, record: _BatchInFlightRecord
+        self, prepared: PreparedBatchRequest, record: BatchInFlightRecord
     ) -> bool:
         """Handle leader path: execute ingestion, cache result, resolve future."""
         ctx = self._ctx
@@ -224,7 +224,7 @@ class _BatchUrlProcessor:
         return True
 
     async def _execute_direct(
-        self, prepared: _PreparedBatchRequest, started_at: float | None = None
+        self, prepared: PreparedBatchRequest, started_at: float | None = None
     ) -> bool:
         """Execute an item without batch in-flight sharing."""
         ctx = self._ctx
@@ -241,7 +241,7 @@ class _BatchUrlProcessor:
         return True
 
     async def _handle_cancelled(
-        self, record: _BatchInFlightRecord | None, prepared: _PreparedBatchRequest
+        self, record: BatchInFlightRecord | None, prepared: PreparedBatchRequest
     ) -> None:
         """Cancel in-flight future and clean up registry on task cancellation."""
         if record is None:
@@ -250,7 +250,7 @@ class _BatchUrlProcessor:
 
     async def _persist_blocked_policy_report(
         self,
-        prepared: _PreparedBatchRequest,
+        prepared: PreparedBatchRequest,
         exc: Exception,
     ) -> None:
         if not (
@@ -274,8 +274,8 @@ class _BatchUrlProcessor:
 
     async def _handle_process_exception(
         self,
-        prepared: _PreparedBatchRequest,
-        record: _BatchInFlightRecord | None,
+        prepared: PreparedBatchRequest,
+        record: BatchInFlightRecord | None,
         exc: Exception,
     ) -> bool:
         """Resolve in-flight future with error, record error item, and report progress."""
@@ -289,12 +289,12 @@ class _BatchUrlProcessor:
         await self._report_completion(prepared.url)
         return False
 
-    async def process(self, prepared: _PreparedBatchRequest) -> bool:
+    async def process(self, prepared: PreparedBatchRequest) -> bool:
         """Process a single URL: cache check, inflight dedup, then leader or follower path."""
         ctx = self._ctx
         started_at = time.perf_counter()
         self._record_process_start(prepared)
-        record: _BatchInFlightRecord | None = None
+        record: BatchInFlightRecord | None = None
         semaphore_held = False
         cache_hit = False
         try:

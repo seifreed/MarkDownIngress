@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
-from markdown_ingress.application.batch_state import _CostBudget
+from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.fetch_auto_mode import _AutoModeSelector as _AutoModeSelector
 from markdown_ingress.application.heuristics import (
     _looks_like_non_html_resource,
@@ -51,7 +51,7 @@ class _RenderAttemptContext:
     render_config: RenderConfig
     screenshot_temp_path: str | None
     screenshot_was_temp: bool
-    budget: _CostBudget
+    budget: CostBudget
     timed_stage: Callable[[str, Callable[[], Any]], Any]
     operational_flags: list[str]
 
@@ -88,7 +88,7 @@ class _FetchPipeline:
         url: str,
         config: IngestConfig,
         matched_domain_policy: DomainPolicy | None,
-        budget: _CostBudget,
+        budget: CostBudget,
     ) -> SafeDocument:
         fetch_result, operational_flags = self._fetch_result(url, config, budget)
         return cast(
@@ -102,7 +102,7 @@ class _FetchPipeline:
         )
 
     def _fetch_result(
-        self, url: str, config: IngestConfig, budget: _CostBudget
+        self, url: str, config: IngestConfig, budget: CostBudget
     ) -> tuple[FetchResult, list[str]]:
         operational_flags: list[str] = []
         stage_timings: dict[str, float] = {}
@@ -229,7 +229,7 @@ class _FetchPipeline:
         self,
         url: str,
         config: IngestConfig,
-        budget: _CostBudget,
+        budget: CostBudget,
         timed_stage: Callable[[str, Callable[[], Any]], Any],
         operational_flags: list[str],
     ) -> FetchResult:
@@ -271,7 +271,7 @@ class _FetchPipeline:
         self,
         url: str,
         config: IngestConfig,
-        budget: _CostBudget,
+        budget: CostBudget,
         timed_stage: Callable[[str, Callable[[], Any]], Any],
     ) -> FetchResult:
         budget.consume(1, "fetch mode")

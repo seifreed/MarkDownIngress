@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from markdown_ingress.application.batch_state import _CostBudget
+from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.heuristics import (
     _looks_like_auth_interstitial,
     _looks_like_non_html_resource,
@@ -36,7 +36,7 @@ class _IngestPipeline(Protocol):
         url: str,
         config: IngestConfig,
         matched_domain_policy: DomainPolicy | None,
-        budget: _CostBudget,
+        budget: CostBudget,
     ) -> SafeDocument: ...
 
 
@@ -52,7 +52,7 @@ class _AutoModeSelector:
         url: str,
         config: IngestConfig,
         matched_domain_policy: DomainPolicy | None,
-        budget: _CostBudget,
+        budget: CostBudget,
     ) -> SafeDocument:
         fast_config = config.clone()
         fast_config.mode = "fast"
@@ -74,7 +74,7 @@ class _AutoModeSelector:
         url: str,
         config: IngestConfig,
         matched_domain_policy: DomainPolicy | None,
-        budget: _CostBudget,
+        budget: CostBudget,
         exc: Exception,
     ) -> SafeDocument:
         """Try render mode after fast mode failed; re-raises if render is not applicable."""
@@ -112,7 +112,7 @@ class _AutoModeSelector:
         url: str,
         config: IngestConfig,
         matched_domain_policy: DomainPolicy | None,
-        budget: _CostBudget,
+        budget: CostBudget,
         fast_doc: SafeDocument,
     ) -> SafeDocument:
         """Attempt render and fall back to the already-fetched fast result on retryable failure."""

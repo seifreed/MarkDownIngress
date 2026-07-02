@@ -10,8 +10,8 @@ from typing import Protocol, cast
 from markdown_ingress.application.async_tasks import gather_or_cancel
 from markdown_ingress.application.batch_processor import _BatchUrlProcessor
 from markdown_ingress.application.batch_state import (
-    _BatchContext,
-    _PreparedBatchRequest,
+    BatchContext,
+    PreparedBatchRequest,
 )
 from markdown_ingress.application.fetcher_manager import (
     _ensure_fetcher_user_agent,
@@ -64,7 +64,7 @@ class BatchIngestUseCase:
         index: int,
         url: str,
         config: IngestConfig,
-    ) -> _PreparedBatchRequest:
+    ) -> PreparedBatchRequest:
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
         _ensure_fetcher_user_agent(
             url,
@@ -91,7 +91,7 @@ class BatchIngestUseCase:
                 strict=resolved_config.strict,
                 extra=request_identity,
             )
-        return _PreparedBatchRequest(
+        return PreparedBatchRequest(
             index=index,
             url=url,
             requested_mode=config.mode,
@@ -101,7 +101,7 @@ class BatchIngestUseCase:
             cache_key=cache_key,
         )
 
-    async def _execute_item_isolated(self, prepared: _PreparedBatchRequest) -> SafeDocument:
+    async def _execute_item_isolated(self, prepared: PreparedBatchRequest) -> SafeDocument:
         ctx = _batch_process_context()
         if ctx is None:
             raise RuntimeError("Batch subprocess isolation requires an importable __main__ module")
@@ -132,7 +132,7 @@ class BatchIngestUseCase:
             queue.close()
             queue.join_thread()
 
-    async def _execute_item_in_process(self, prepared: _PreparedBatchRequest) -> SafeDocument:
+    async def _execute_item_in_process(self, prepared: PreparedBatchRequest) -> SafeDocument:
         """Execute a batch item locally while preserving injected dependencies."""
         worker_config = prepared.resolved_config.clone()
         worker_config.cache = None
@@ -166,7 +166,7 @@ class BatchIngestUseCase:
             self._prepare_request(index, url, config_builder())
             for index, url in enumerate(url_list)
         ]
-        ctx = _BatchContext(
+        ctx = BatchContext(
             total=total,
             documents=documents,
             errors=errors,

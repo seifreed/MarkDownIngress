@@ -17,7 +17,7 @@ _logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _PreparedBatchRequest:
+class PreparedBatchRequest:
     index: int
     url: str
     requested_mode: str
@@ -28,13 +28,13 @@ class _PreparedBatchRequest:
 
 
 @dataclass
-class _BatchInFlightRecord:
+class BatchInFlightRecord:
     future: asyncio.Future[tuple[SafeDocument, int]]
     followers: int = 0
 
 
 @dataclass
-class _CostBudget:
+class CostBudget:
     limit: int | None
     used: int = 0
 
@@ -51,7 +51,7 @@ class _CostBudget:
 
 
 @dataclass
-class _BatchContext:
+class BatchContext:
     """Shared mutable state for a single batch execution."""
 
     total: int
@@ -59,7 +59,7 @@ class _BatchContext:
     errors: list[BatchErrorItem]
     semaphore: asyncio.Semaphore
     errors_lock: asyncio.Lock
-    batch_inflight: dict[str, _BatchInFlightRecord]
+    batch_inflight: dict[str, BatchInFlightRecord]
     batch_inflight_lock: asyncio.Lock
     progress_lock: asyncio.Lock
     completed: int

@@ -7,8 +7,8 @@ import copy
 import logging
 
 from markdown_ingress.application.batch_state import (
-    _BatchContext,
-    _BatchInFlightRecord,
+    BatchContext,
+    BatchInFlightRecord,
 )
 from markdown_ingress.application.exceptions import _copy_batch_exception
 from markdown_ingress.models import SafeDocument
@@ -16,14 +16,14 @@ from markdown_ingress.models import SafeDocument
 _logger = logging.getLogger(__name__)
 
 
-def _remove_if_current(ctx: _BatchContext, request_key: str, record: _BatchInFlightRecord) -> None:
+def _remove_if_current(ctx: BatchContext, request_key: str, record: BatchInFlightRecord) -> None:
     if ctx.batch_inflight.get(request_key) is record:
         ctx.batch_inflight.pop(request_key, None)
 
 
 async def register_batch_inflight(
-    ctx: _BatchContext, request_key: str
-) -> tuple[_BatchInFlightRecord, bool]:
+    ctx: BatchContext, request_key: str
+) -> tuple[BatchInFlightRecord, bool]:
     """Register a batch request as in-flight and return (record, is_leader)."""
     async with ctx.batch_inflight_lock:
         record = ctx.batch_inflight.get(request_key)
@@ -31,7 +31,7 @@ async def register_batch_inflight(
             ctx.batch_inflight.pop(request_key, None)
             record = None
         if record is None:
-            record = _BatchInFlightRecord(future=asyncio.get_running_loop().create_future())
+            record = BatchInFlightRecord(future=asyncio.get_running_loop().create_future())
             ctx.batch_inflight[request_key] = record
             return record, True
         record.followers += 1
@@ -39,7 +39,7 @@ async def register_batch_inflight(
 
 
 async def remove_finished_batch_inflight(
-    ctx: _BatchContext, request_key: str, record: _BatchInFlightRecord
+    ctx: BatchContext, request_key: str, record: BatchInFlightRecord
 ) -> None:
     """Remove a completed in-flight record if it still belongs to the request."""
     async with ctx.batch_inflight_lock:
@@ -48,7 +48,7 @@ async def remove_finished_batch_inflight(
 
 
 async def cancel_batch_inflight(
-    ctx: _BatchContext, request_key: str, record: _BatchInFlightRecord
+    ctx: BatchContext, request_key: str, record: BatchInFlightRecord
 ) -> None:
     """Cancel an in-flight future and remove it from the registry."""
     async with ctx.batch_inflight_lock:
@@ -58,9 +58,9 @@ async def cancel_batch_inflight(
 
 
 async def publish_batch_inflight_result(
-    ctx: _BatchContext,
+    ctx: BatchContext,
     request_key: str,
-    record: _BatchInFlightRecord,
+    record: BatchInFlightRecord,
     document: SafeDocument,
 ) -> int:
     """Publish the leader document copy to followers and return follower count."""
@@ -99,9 +99,9 @@ async def publish_batch_inflight_result(
 
 
 async def publish_batch_inflight_exception(
-    ctx: _BatchContext,
+    ctx: BatchContext,
     request_key: str,
-    record: _BatchInFlightRecord,
+    record: BatchInFlightRecord,
     exc: Exception,
 ) -> None:
     """Publish an execution failure to current and queued in-flight followers."""

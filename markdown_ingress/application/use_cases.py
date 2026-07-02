@@ -12,7 +12,7 @@ from typing import cast
 from markdown_ingress.application.batch_ingest_use_case import (
     BatchIngestUseCase as BatchIngestUseCase,
 )
-from markdown_ingress.application.batch_state import _CostBudget
+from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.bootstrap import (
     register_all_factories as _register_all_factories,
 )
@@ -248,7 +248,7 @@ class IngestUseCase:
         cache_backend: Cache | None,
         cache_key: str | None,
     ) -> SafeDocument:
-        budget = _CostBudget(limit=config.render_cost_budget)
+        budget = CostBudget(limit=config.render_cost_budget)
         pipeline = _FetchPipeline(
             orchestrator=self.orchestrator,
             renderer_factory=self.renderer_factory,
