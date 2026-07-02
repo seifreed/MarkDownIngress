@@ -137,6 +137,13 @@ class _BatchUrlProcessor:
         """Register in-flight tracking. Returns (record, is_leader)."""
         return await register_batch_inflight(self._ctx, prepared.request_key)
 
+    async def _append_error_for_exception(
+        self, prepared: _PreparedBatchRequest, exc: Exception
+    ) -> None:
+        await self._ctx.append_error(
+            BatchErrorItem.from_exception(prepared.index, prepared.url, exc)
+        )
+
     async def _handle_follower_exception(
         self,
         prepared: _PreparedBatchRequest,
@@ -144,9 +151,7 @@ class _BatchUrlProcessor:
         started_at: float,
         exc: Exception,
     ) -> bool:
-        await self._ctx.append_error(
-            BatchErrorItem.from_exception(prepared.index, prepared.url, exc)
-        )
+        await self._append_error_for_exception(prepared, exc)
         self._record_item_result(prepared, success=False, started_at=started_at)
         await remove_finished_batch_inflight(self._ctx, prepared.request_key, record)
         await self._report_completion(prepared.url)
@@ -278,7 +283,7 @@ class _BatchUrlProcessor:
         await self._persist_blocked_policy_report(prepared, exc)
         if record is not None:
             await publish_batch_inflight_exception(ctx, prepared.request_key, record, exc)
-        await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
+        await self._append_error_for_exception(prepared, exc)
         if ctx.batch_tracks_metrics:
             record_mode_result(prepared.requested_mode, success=False)
         await self._report_completion(prepared.url)
