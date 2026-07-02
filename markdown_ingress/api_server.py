@@ -86,6 +86,7 @@ from markdown_ingress.api_server_snapshot import (
 )
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.api_server_threads import (
+    start_control_thread,
     stop_reloaded_control_thread_pair,
 )
 from markdown_ingress.application.use_cases import CompareExtractorsUseCase
@@ -411,22 +412,17 @@ def _job_queue_repair_loop(stop_event: threading.Event) -> None:
 
 
 def _start_job_queue_repair_loop() -> None:
-    global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-
-    # Assign stop_event BEFORE defining repair_loop so the closure captures
-    # a fully initialised Event — eliminates the race where the thread starts
-    # before the variable is bound.
-    stop_event = threading.Event()
-
-    def repair_loop() -> None:
-        _job_queue_repair_loop(stop_event)
+    def remember_thread(thread: threading.Thread, stop_event: threading.Event) -> None:
+        global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
+        _JOB_QUEUE_REPAIR_STOP = stop_event
+        _JOB_QUEUE_REPAIR_THREAD = thread
 
     with _JOB_QUEUE_LOCK:
-        if _JOB_QUEUE_REPAIR_THREAD is not None and _JOB_QUEUE_REPAIR_THREAD.is_alive():
-            return
-        _JOB_QUEUE_REPAIR_STOP = stop_event
-        _JOB_QUEUE_REPAIR_THREAD = threading.Thread(target=repair_loop, daemon=True)
-        _JOB_QUEUE_REPAIR_THREAD.start()
+        start_control_thread(
+            current_thread=_JOB_QUEUE_REPAIR_THREAD,
+            target=_job_queue_repair_loop,
+            remember=remember_thread,
+        )
 
 
 def _maybe_start_job_queue_repair() -> None:
@@ -445,22 +441,21 @@ def _job_queue_watchdog_tick() -> None:
 
 
 def _start_job_queue_watchdog() -> None:
-    global _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
-
-    def watchdog_loop() -> None:
-        if stop_event is None:
-            return
+    def run_watchdog(stop_event: threading.Event) -> None:
         while not stop_event.wait(0.5):
             _job_queue_watchdog_tick()
 
-    stop_event = threading.Event()
+    def remember_thread(thread: threading.Thread, stop_event: threading.Event) -> None:
+        global _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
+        _JOB_QUEUE_WATCHDOG_STOP = stop_event
+        _JOB_QUEUE_WATCHDOG_THREAD = thread
 
     with _JOB_QUEUE_LOCK:
-        if _JOB_QUEUE_WATCHDOG_THREAD is not None and _JOB_QUEUE_WATCHDOG_THREAD.is_alive():
-            return
-        _JOB_QUEUE_WATCHDOG_STOP = stop_event
-        _JOB_QUEUE_WATCHDOG_THREAD = threading.Thread(target=watchdog_loop, daemon=True)
-        _JOB_QUEUE_WATCHDOG_THREAD.start()
+        start_control_thread(
+            current_thread=_JOB_QUEUE_WATCHDOG_THREAD,
+            target=run_watchdog,
+            remember=remember_thread,
+        )
 
 
 def _stop_reloaded_job_queue_control_threads() -> None:

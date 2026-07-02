@@ -3,7 +3,23 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+
+
+def start_control_thread(
+    *,
+    current_thread: threading.Thread | None,
+    target: Callable[[threading.Event], None],
+    remember: Callable[[threading.Thread, threading.Event], None],
+) -> bool:
+    """Start a daemon control thread, recording its stop event before start."""
+    if current_thread is not None and current_thread.is_alive():
+        return False
+    stop_event = threading.Event()
+    thread = threading.Thread(target=lambda: target(stop_event), daemon=True)
+    remember(thread, stop_event)
+    thread.start()
+    return True
 
 
 def stop_control_thread(
