@@ -26,3 +26,15 @@ def select_job_queue_for_use(queue: Any | None, repairable_states: set[str]) -> 
             start_repair=True,
         )
     return JobQueueSelection(queue_to_return=None, queue_to_repair=queue)
+
+
+def current_queue_after_repair_close_failure(
+    queue_to_repair: Any,
+    current_queue: Any | None,
+    repairable_states: set[str],
+) -> Any | None:
+    if getattr(queue_to_repair, "state", None) not in repairable_states:
+        return None
+    if current_queue is None:
+        raise RuntimeError("Job queue is unavailable")
+    return current_queue

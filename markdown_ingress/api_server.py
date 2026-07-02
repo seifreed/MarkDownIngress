@@ -60,6 +60,7 @@ from markdown_ingress.api_server_job_queue_repair import (
 )
 from markdown_ingress.api_server_job_queue_selection import (
     JobQueueSelection,
+    current_queue_after_repair_close_failure,
     select_job_queue_for_use,
 )
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
@@ -569,12 +570,11 @@ def _select_job_queue_for_use() -> JobQueueSelection:
 
 def _current_queue_after_repair_close_failure(queue_to_repair: Any) -> Any | None:
     with _JOB_QUEUE_LOCK:
-        if getattr(queue_to_repair, "state", None) not in _REPAIRABLE_QUEUE_STATES:
-            return None
-        current = JOB_QUEUE
-        if current is None:
-            raise RuntimeError("Job queue is unavailable")
-        return current
+        return current_queue_after_repair_close_failure(
+            queue_to_repair,
+            JOB_QUEUE,
+            _REPAIRABLE_QUEUE_STATES,
+        )
 
 
 def _get_job_queue():
