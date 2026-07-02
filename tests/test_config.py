@@ -10,8 +10,14 @@ from typing import Any, cast
 
 import pytest
 
+from markdown_ingress.application.bootstrap import register_all_factories
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, RenderConfig
 from markdown_ingress.core.config import Config, ConfigLoader, load_config
+
+
+@pytest.fixture(autouse=True)
+def _register_cache_factories() -> None:
+    register_all_factories()
 
 
 class TestConfig:

@@ -13,7 +13,7 @@ def _default_cache_factory(cache_type: str, sqlite_path: str | None, ttl: int) -
     from markdown_ingress.adapters.cache.sqlite import SQLiteCache
 
     if cache_type == "sqlite":
-        return SQLiteCache(db_path=sqlite_path or ".cache/markdowningress.db", default_ttl=ttl)
+        return SQLiteCache(db_path=sqlite_path or ".cache/markdown_ingress.db", default_ttl=ttl)
     return MemoryCache(default_ttl=ttl)
 
 
