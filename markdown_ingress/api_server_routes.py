@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from markdown_ingress.api_server_handlers import _is_queue_unavailable_error
+from markdown_ingress.api_server_handler_errors import is_queue_unavailable_error
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     BatchIngestResponse,
@@ -98,7 +98,7 @@ def _resolve_batch_job_queue(providers: ApiRouteProviders):
     try:
         return providers.get_job_queue()()
     except (RuntimeError, OSError, ValueError) as exc:
-        if _is_queue_unavailable_error(exc):
+        if is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise
 
