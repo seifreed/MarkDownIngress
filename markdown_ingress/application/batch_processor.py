@@ -232,6 +232,30 @@ class _BatchUrlProcessor:
             return
         await cancel_batch_inflight(self._ctx, prepared.request_key, record)
 
+    async def _persist_blocked_policy_report(
+        self,
+        prepared: _PreparedBatchRequest,
+        exc: Exception,
+    ) -> None:
+        if not (
+            isinstance(exc, PolicyBlockedError)
+            and exc.document is not None
+            and prepared.resolved_config.save_reports
+        ):
+            return
+        try:
+            await asyncio.to_thread(
+                persist_report_for_document,
+                exc.document,
+                prepared.resolved_config.reports_dir,
+            )
+        except Exception as persist_exc:  # noqa: BLE001 - report persistence is optional
+            _logger.warning(
+                "Failed to persist security report for %s: %s",
+                prepared.url,
+                persist_exc,
+            )
+
     async def _handle_process_exception(
         self,
         prepared: _PreparedBatchRequest,
@@ -240,23 +264,7 @@ class _BatchUrlProcessor:
     ) -> bool:
         """Resolve in-flight future with error, record error item, and report progress."""
         ctx = self._ctx
-        if (
-            isinstance(exc, PolicyBlockedError)
-            and exc.document is not None
-            and prepared.resolved_config.save_reports
-        ):
-            try:
-                await asyncio.to_thread(
-                    persist_report_for_document,
-                    exc.document,
-                    prepared.resolved_config.reports_dir,
-                )
-            except Exception as persist_exc:  # noqa: BLE001 - report persistence is optional
-                _logger.warning(
-                    "Failed to persist security report for %s: %s",
-                    prepared.url,
-                    persist_exc,
-                )
+        await self._persist_blocked_policy_report(prepared, exc)
         if record is not None:
             await publish_batch_inflight_exception(ctx, prepared.request_key, record, exc)
         await ctx.append_error(BatchErrorItem.from_exception(prepared.index, prepared.url, exc))
