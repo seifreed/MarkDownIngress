@@ -407,7 +407,7 @@ async def test_fetcher_async_does_not_open_circuit_for_client_errors():
     assert result.status_code == 200
 
 
-def test_fetcher_applies_extra_backoff_for_known_host_suffix():
+def test_fetcher_applies_extra_backoff_for_known_host_suffix(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     delayed = []
@@ -419,11 +419,8 @@ def test_fetcher_applies_extra_backoff_for_known_host_suffix():
         delayed.append((host, delay_seconds))
         return original_defer(self, host, delay_seconds)
 
-    Fetcher._defer_host = track_defer  # type: ignore[method-assign]
-    try:
-        fetcher._record_soft_throttle("www.facebook.com", 0.5)
-    finally:
-        Fetcher._defer_host = original_defer  # type: ignore[method-assign]
+    monkeypatch.setattr(Fetcher, "_defer_host", track_defer)
+    fetcher._record_soft_throttle("www.facebook.com", 0.5)
 
     assert delayed
     assert delayed[0][0] == "www.facebook.com"
@@ -1210,7 +1207,7 @@ def test_fetcher_rejects_invalid_ports(url: str):
         Fetcher._validate_url(url)
 
 
-def test_fetcher_applies_soft_throttle_to_final_redirect_host():
+def test_fetcher_applies_soft_throttle_to_final_redirect_host(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     class FinalHandler(BaseHTTPRequestHandler):
@@ -1242,13 +1239,12 @@ def test_fetcher_applies_soft_throttle_to_final_redirect_host():
         throttled_hosts.append(host)
         return original(self, host, delay_seconds)
 
-    Fetcher._record_soft_throttle = track  # type: ignore[method-assign]
+    monkeypatch.setattr(Fetcher, "_record_soft_throttle", track)
     try:
         fetcher = Fetcher(timeout=2.0, domain_request_interval=0.0)
         with pytest.raises(Exception):
             fetcher.fetch_sync(redirect_url)
     finally:
-        Fetcher._record_soft_throttle = original  # type: ignore[method-assign]
         redirect_server.shutdown()
         redirect_server.server_close()
         final_server.shutdown()
@@ -1258,7 +1254,7 @@ def test_fetcher_applies_soft_throttle_to_final_redirect_host():
     assert all(host == final_host for host in throttled_hosts)
 
 
-def test_fetcher_records_success_on_final_redirect_host_async():
+def test_fetcher_records_success_on_final_redirect_host_async(monkeypatch):
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
     class FinalHandler(BaseHTTPRequestHandler):
@@ -1293,7 +1289,7 @@ def test_fetcher_records_success_on_final_redirect_host_async():
         success_hosts.append(host)
         return original(self, host)
 
-    Fetcher._record_success = track  # type: ignore[method-assign]
+    monkeypatch.setattr(Fetcher, "_record_success", track)
     try:
 
         async def run():
@@ -1305,7 +1301,6 @@ def test_fetcher_records_success_on_final_redirect_host_async():
 
         result = asyncio.run(run())
     finally:
-        Fetcher._record_success = original  # type: ignore[method-assign]
         redirect_server.shutdown()
         redirect_server.server_close()
         final_server.shutdown()
