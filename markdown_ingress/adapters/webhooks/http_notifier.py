@@ -144,6 +144,13 @@ def _raise_delivery_failed_after_attempts(
     ) from last_error
 
 
+def _json_webhook_headers(host_header: str | None = None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if host_header is not None:
+        headers["Host"] = host_header
+    return headers
+
+
 class HTTPWebhookNotifier:
     """Deliver JSON webhook payloads with bounded retries.
 
@@ -267,7 +274,7 @@ class HTTPWebhookNotifier:
             return client.post(
                 webhook_url,
                 content=data,
-                headers={"Content-Type": "application/json"},
+                headers=_json_webhook_headers(),
             )
 
     def _standard_delivery_attempt(self, webhook_url: str, data: bytes) -> _WebhookAttemptOutcome:
@@ -352,11 +359,7 @@ class HTTPWebhookNotifier:
         self, conn: HTTPConnection, target: _PinnedWebhookTarget, data: bytes
     ) -> int:
         host_header = format_host_header(target.hostname, target.port, target.scheme)
-        headers = {
-            "Content-Type": "application/json",
-            "Host": host_header,
-        }
-        conn.request("POST", target.path, body=data, headers=headers)
+        conn.request("POST", target.path, body=data, headers=_json_webhook_headers(host_header))
         response = conn.getresponse()
         return response.status
 
