@@ -280,6 +280,9 @@ def generate_security_report(
 
 def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
     """Public API for extractor comparison benchmark inputs."""
+    from markdown_ingress.adapters.extractors.comparison import (
+        compare_extractors as _compare_extractors,
+    )
     from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 
-    return CompareExtractorsUseCase().execute(html, model=model)
+    return CompareExtractorsUseCase(_compare_extractors).execute(html, model=model)

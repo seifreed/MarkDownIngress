@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 from markdown_ingress.application.batch_ingest_use_case import (
     BatchIngestUseCase as BatchIngestUseCase,
@@ -343,10 +343,15 @@ class GenerateSecurityReportUseCase:
         return security_report_from_document(doc)
 
 
+class CompareExtractorsFn(Protocol):
+    def __call__(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]: ...
+
+
 class CompareExtractorsUseCase:
     """Evaluate alternative extractors behind an application-level boundary."""
 
-    def execute(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
-        from markdown_ingress.adapters.extractors.comparison import compare_extractors
+    def __init__(self, compare_fn: CompareExtractorsFn) -> None:
+        self._compare_fn = compare_fn
 
-        return compare_extractors(html, model=model)
+    def execute(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
+        return self._compare_fn(html, model=model)

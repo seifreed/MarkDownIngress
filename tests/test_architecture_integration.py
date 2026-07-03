@@ -95,3 +95,19 @@ def test_compare_extractors_use_case_runs_without_mocking():
     results = compare_extractors(html)
     assert "readability" in results
     assert "available" in results["readability"]
+
+
+def test_compare_extractors_use_case_injected_adapter_is_used():
+    calls: list[tuple[str, str]] = []
+
+    def fake_compare(html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
+        calls.append((html, model))
+        return {"fake": {"available": True, "model": model, "html": html}}
+
+    from markdown_ingress.application.use_cases import CompareExtractorsUseCase
+
+    use_case = CompareExtractorsUseCase(fake_compare)
+    result = use_case.execute("<p>x</p>", model="gpt-4")
+
+    assert calls == [("<p>x</p>", "gpt-4")]
+    assert result == {"fake": {"available": True, "model": "gpt-4", "html": "<p>x</p>"}}
