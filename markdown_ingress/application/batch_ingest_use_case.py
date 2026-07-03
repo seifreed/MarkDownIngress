@@ -43,6 +43,12 @@ class _IngestUseCaseLike(Protocol):
 
     def uses_default_runtime_dependencies(self) -> bool: ...
 
+    def close(self) -> None: ...
+
+    def has_active_cleanup_thread(self) -> bool: ...
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool: ...
+
 
 class BatchIngestUseCase:
     """Concurrent batch ingestion on top of the single-item ingestion use case."""
@@ -69,10 +75,21 @@ class BatchIngestUseCase:
         exc: object | None,
         tb: object | None,
     ) -> None:
+        self.close()
+
+    def close(self) -> None:
         if self._owns_ingest_use_case:
-            close = getattr(self.ingest_use_case, "close", None)
-            if callable(close):
-                close()
+            self.ingest_use_case.close()
+
+    @property
+    def owns_ingest_use_case(self) -> bool:
+        return self._owns_ingest_use_case
+
+    def has_active_cleanup_thread(self) -> bool:
+        return self.ingest_use_case.has_active_cleanup_thread()
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool:
+        return self.ingest_use_case.wait_for_cleanup_thread_stop(timeout=timeout)
 
     def _prepare_request(
         self,

@@ -135,13 +135,15 @@ class BatchProcessor:
         self.close()
 
     def close(self) -> None:
-        owns_ingest_use_case = getattr(self._batch_use_case, "_owns_ingest_use_case", False)
-        if callable(close := getattr(self._batch_use_case, "close", None)):
-            close()
-        if not owns_ingest_use_case:
-            close_ingest = getattr(self._batch_use_case.ingest_use_case, "close", None)
-            if callable(close_ingest):
-                close_ingest()
+        self._batch_use_case.close()
+
+    def is_cleanup_thread_running(self) -> bool:
+        """Return whether the active background cleanup thread is alive."""
+        return self._batch_use_case.has_active_cleanup_thread()
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool:
+        """Close and wait for cleanup thread shutdown."""
+        return self._batch_use_case.wait_for_cleanup_thread_stop(timeout=timeout)
 
     def _build_config(self) -> IngestConfig:
         if self._base_config is None:

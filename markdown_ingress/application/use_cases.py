@@ -160,6 +160,14 @@ class IngestUseCase:
         self._fetcher_mgr.close()
         self.orchestrator.close()
 
+    def has_active_cleanup_thread(self) -> bool:
+        """Return whether orchestration cleanup background thread is alive."""
+        return self.orchestrator.has_active_cleanup_thread()
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool:
+        """Stop orchestration cleanup thread and wait until it terminates."""
+        return self.orchestrator.wait_for_cleanup_thread_stop(timeout=timeout)
+
     @staticmethod
     def _matches_default_factory(
         factory: object,

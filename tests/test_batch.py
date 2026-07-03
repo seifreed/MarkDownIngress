@@ -63,13 +63,8 @@ async def test_batch_processor_basic(local_servers):
 async def test_batch_processor_context_manager_closes_default_ingest_resources(local_servers):
     with BatchProcessor(mode="fast", timeout=10.0) as processor:
         await processor.process_batch_async([local_servers[0]])
-        thread = (
-            processor._batch_use_case.ingest_use_case.orchestrator.inflight_registry._cleanup_thread
-        )
-        assert thread is not None and thread.is_alive()
-    thread.join(timeout=2.0)
-
-    assert not thread.is_alive()
+        assert processor.is_cleanup_thread_running()
+    assert processor.wait_for_cleanup_thread_stop(timeout=2.0)
 
 
 def test_batch_processor_defaults_to_auto_mode():

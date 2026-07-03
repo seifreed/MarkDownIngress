@@ -309,3 +309,7 @@ class IIngestOrchestrator(Protocol):
     ) -> Any: ...  # pragma: no cover
 
     def close(self) -> None: ...  # pragma: no cover
+
+    def has_active_cleanup_thread(self) -> bool: ...  # pragma: no cover
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool: ...  # pragma: no cover

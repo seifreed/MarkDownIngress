@@ -166,6 +166,14 @@ class IngestOrchestrator:
             self._default_inflight_registry.stop_periodic_cleanup()
             self._default_inflight_registry = None
 
+    def has_active_cleanup_thread(self) -> bool:
+        """Return whether the owned inflight cleanup thread is alive."""
+        return self.inflight_registry.has_active_cleanup_thread()
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool:
+        """Stop cleanup resources and wait for the thread to stop."""
+        return self.inflight_registry.wait_for_cleanup_thread_stop(timeout=timeout)
+
     def timed_stage(self, stage: str, fn):
         """Execute a stage and record aggregate timing."""
         started = time.perf_counter()

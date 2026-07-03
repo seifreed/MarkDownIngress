@@ -112,6 +112,20 @@ class InFlightRegistry:
             if self._cleanup_thread is thread and not thread.is_alive():
                 self._cleanup_thread = None
 
+    def has_active_cleanup_thread(self) -> bool:
+        """Return whether the periodic cleanup thread is alive."""
+        thread = self._cleanup_thread
+        return thread is not None and thread.is_alive()
+
+    def wait_for_cleanup_thread_stop(self, timeout: float = 5.0) -> bool:
+        """Stop and wait briefly for the periodic cleanup thread to terminate."""
+        self.stop_periodic_cleanup()
+        thread = self._cleanup_thread
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
+
     def _cleanup_orphaned_entries_locked(self) -> list[InFlightEntry]:
         """Pop orphaned entries from the registry. Caller must notify them after releasing _lock."""
         return cleanup_orphaned_entries(self._requests, logger)
