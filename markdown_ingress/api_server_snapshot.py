@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import dataclass
@@ -33,6 +34,13 @@ class JobSubsystemSnapshot(TypedDict):
 
 class RepairThread(Protocol):
     def is_alive(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class JobQueueStateSnapshot:
+    current_queue: object | None
+    history: list[object]
+    repair_thread: threading.Thread | None
 
 
 @dataclass(frozen=True)
