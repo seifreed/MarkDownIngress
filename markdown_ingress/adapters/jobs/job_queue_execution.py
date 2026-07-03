@@ -37,7 +37,7 @@ JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
-JOB_QUEUE_THREAD_BRIDGE_FAILURES = (BaseException,)
+JOB_QUEUE_THREAD_BRIDGE_FAILURES = (Exception,)
 
 
 class JobQueueExecutionMixin:
