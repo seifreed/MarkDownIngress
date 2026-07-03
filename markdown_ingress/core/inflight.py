@@ -11,7 +11,7 @@ import time
 import weakref
 from collections import OrderedDict
 
-from markdown_ingress.core.exception_copy import copy_exception_for_transfer
+from markdown_ingress.core.exception_copy import EXCEPTION_COPY_ERRORS, copy_exception_for_transfer
 from markdown_ingress.core.inflight_cleanup import (
     INFLIGHT_MAX_SIZE,
     cleanup_orphaned_entries,
@@ -275,7 +275,7 @@ class InFlightRegistry:
                     entry.document.metadata["inflight_shared_count"] = shared_count
                 if error is not None:
                     entry.error = copy_exception_for_transfer(error)
-            except Exception as exc:  # noqa: BLE001 - release must notify waiters on copy failure
+            except EXCEPTION_COPY_ERRORS as exc:
                 entry.error = exc
             finally:
                 entry.completing = True
