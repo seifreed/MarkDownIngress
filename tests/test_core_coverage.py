@@ -1511,7 +1511,7 @@ async def test_resource_blocker_route_continue_exception():
     mock_route = MagicMock()
     mock_route.request.resource_type = "script"
     mock_route.request.url = "http://example.com/script.js"
-    mock_route.continue_ = AsyncMock(side_effect=Exception("already handled"))
+    mock_route.continue_ = AsyncMock(side_effect=RuntimeError("already handled"))
     mock_route.abort = AsyncMock()
 
     call_count = [0]
@@ -1537,7 +1537,7 @@ async def test_resource_blocker_stats_compensated_when_continue_raises():
     mock_route = MagicMock()
     mock_route.request.resource_type = "script"
     mock_route.request.url = "http://example.com/script.js"
-    mock_route.continue_ = AsyncMock(side_effect=Exception("connection reset"))
+    mock_route.continue_ = AsyncMock(side_effect=RuntimeError("connection reset"))
     mock_route.abort = AsyncMock()
 
     await blocker._handle_route(mock_route)

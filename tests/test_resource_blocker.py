@@ -587,7 +587,7 @@ class TestResourceBlocker:
         # Mock route that raises an error on request access
         mock_route = AsyncMock()
         mock_route.request = Mock()
-        mock_route.request.resource_type = Mock(side_effect=Exception("Test error"))
+        mock_route.request.resource_type = Mock(side_effect=RuntimeError("Test error"))
 
         # Should not raise exception
         await blocker._handle_route(mock_route)

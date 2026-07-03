@@ -50,6 +50,13 @@ from markdown_ingress.core.ssrf import (
 logger = logging.getLogger(__name__)
 _BROWSER_INTERNAL_SCHEMES = frozenset({"about", "blob", "data"})
 _SSRF_BLOCK_REASON = "ssrf_protection"
+RESOURCE_ROUTE_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class ResourceBlocker:
@@ -165,7 +172,7 @@ class ResourceBlocker:
             else:
                 await route.continue_()
 
-        except Exception as e:  # noqa: BLE001 - route handler fails closed on any error
+        except RESOURCE_ROUTE_ERRORS as e:
             # Security: On exception, default to blocking to prevent bypass attacks
             # where attacker crafts malformed URL to trigger exception and bypass blocking
             logger.warning(f"Error in route handler (defaulting to block): {e}")
@@ -176,7 +183,7 @@ class ResourceBlocker:
                     self.blocked_count += 1
             try:
                 await route.abort()
-            except Exception as exc:  # noqa: BLE001 - abort may race with handled route
+            except RESOURCE_ROUTE_ERRORS as exc:
                 # Route may already be handled
                 logger.debug("Route abort already handled: %s", exc)
 
