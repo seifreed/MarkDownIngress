@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import importlib.util
 import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+
+from markdown_ingress.runtime_helpers import is_dependency_available
 
 
 def test_bundled_nova_rules_are_declared_as_package_data() -> None:
@@ -63,7 +64,7 @@ def test_mcp_docs_and_template_use_installed_console_script() -> None:
 
 
 def test_mcp_server_import_does_not_load_ingest_stack() -> None:
-    if importlib.util.find_spec("mcp") is None:
+    if not is_dependency_available("mcp"):
         return
 
     result = subprocess.run(

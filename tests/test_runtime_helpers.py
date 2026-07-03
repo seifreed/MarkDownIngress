@@ -47,5 +47,22 @@ def test_is_dependency_available_true_for_stdlib_module() -> None:
 
 
 def test_is_dependency_available_returns_false_when_missing(monkeypatch) -> None:
+    runtime_helpers.is_dependency_available.cache_clear()
     monkeypatch.setattr(runtime_helpers, "find_spec", lambda name: None)
     assert is_dependency_available("does_not_exist_module_xyz") is False
+
+
+def test_is_dependency_available_uses_cached_result(monkeypatch) -> None:
+    calls = 0
+
+    def fake_find_spec(name: str):
+        nonlocal calls
+        calls += 1
+        return None
+
+    runtime_helpers.is_dependency_available.cache_clear()
+    monkeypatch.setattr(runtime_helpers, "find_spec", fake_find_spec)
+
+    assert is_dependency_available("does_not_exist_module_xyz") is False
+    assert is_dependency_available("does_not_exist_module_xyz") is False
+    assert calls == 1

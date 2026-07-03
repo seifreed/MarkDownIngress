@@ -27,17 +27,17 @@ def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T
     raise RuntimeError(_INGEST_MANY_IN_LOOP_ERROR)
 
 
-def is_dependency_available(module_name: str) -> bool:
-    """Check if an optional dependency can be imported by module name."""
-    return find_spec(module_name) is not None
-
-
 def validate_batch_max_concurrent(value: object) -> int:
     """Validate and coerce `max_concurrent`."""
     return validate_positive_int("max_concurrent", value)
 
 
 @lru_cache(maxsize=128)
+def is_dependency_available(module_name: str) -> bool:
+    """Check if an optional dependency can be imported by module name."""
+    return find_spec(module_name) is not None
+
+
 def load_optional_module(
     module_name: str,
     *,
@@ -45,7 +45,7 @@ def load_optional_module(
     purpose: str | None = None,
 ) -> Any:
     """Import an optional dependency with a clear error when missing."""
-    if find_spec(module_name) is None:
+    if not is_dependency_available(module_name):
         package = pip_name or module_name.split(".")[0]
         feature = f" for {purpose}" if purpose else ""
         raise ImportError(
