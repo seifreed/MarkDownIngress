@@ -237,6 +237,52 @@ def _is_retryable_error(exc: Exception) -> bool:
     return is_retryable_runtime_exception(exc)
 
 
+def _enrich_document_with_retry_metadata(
+    doc: SafeDocument,
+    attempt: int,
+    use_stealth: bool,
+    use_extreme: bool,
+    timeout: float,
+) -> None:
+    """Annotate document metadata with retry execution details."""
+    doc.metadata = {
+        **doc.metadata,
+        "retry_attempts": attempt + 1,
+        "retry_enabled": use_stealth,
+        "extreme_mode_enabled": use_extreme,
+        "final_timeout": timeout,
+    }
+
+
+def _handle_retry_failure(
+    exc: Exception,
+    attempt: int,
+    max_retries: int,
+    request_url: str,
+    is_retryable: bool,
+) -> float | None:
+    """Handle failed retry attempt and return wait seconds when a retry should continue."""
+    error_type = type(exc).__name__
+    is_last_attempt = attempt >= max_retries - 1
+    if is_last_attempt:
+        logger.exception(
+            "All %d attempts failed for %s; final error: %s",
+            max_retries,
+            request_url,
+            error_type,
+        )
+        return None
+
+    if not is_retryable:
+        logger.exception("Non-retryable error %s", error_type)
+        return None
+
+    wait_time = min(2**attempt, 60)
+    logger.warning("%s on attempt %d: %s", error_type, attempt + 1, exc)
+    logger.info("Waiting %ds before retry...", wait_time)
+    return float(wait_time)
+
+
 def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
     """Implementation for retrying ingestion with escalating timeout and stealth."""
     validated_max_retries = validate_positive_int("max_retries", request.max_retries)
@@ -282,36 +328,28 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
                 stealth=use_stealth,
                 extreme_mode=use_extreme,
             )
-            doc.metadata = {
-                **doc.metadata,
-                "retry_attempts": attempt + 1,
-                "retry_enabled": use_stealth,
-                "extreme_mode_enabled": use_extreme,
-                "final_timeout": timeout,
-            }
+            _enrich_document_with_retry_metadata(
+                doc,
+                attempt,
+                use_stealth,
+                use_extreme,
+                timeout,
+            )
             if attempt > 0:
                 logger.info("Success on attempt %d", attempt + 1)
         except Exception as exc:
             last_exception = exc
-            error_type = type(exc).__name__
             is_retryable = _is_retryable_error(exc)
-            if attempt < validated_max_retries - 1:
-                if is_retryable:
-                    wait_time = min(2**attempt, 60)
-                    logger.warning("%s on attempt %d: %s", error_type, attempt + 1, exc)
-                    logger.info("Waiting %ds before retry...", wait_time)
-                    time.sleep(wait_time)
-                else:
-                    logger.exception("Non-retryable error %s", error_type)
-                    raise
-            else:
-                logger.exception(
-                    "All %d attempts failed for %s; final error: %s",
-                    validated_max_retries,
-                    request.url,
-                    error_type,
-                )
+            wait_time = _handle_retry_failure(
+                exc,
+                attempt,
+                validated_max_retries,
+                request.url,
+                is_retryable,
+            )
+            if wait_time is None:
                 raise
+            time.sleep(wait_time)
         else:
             return doc
 
