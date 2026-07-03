@@ -85,7 +85,7 @@ def _normalize_nova_guard_options(
 
 def _load_nova_api() -> tuple[Any, Any]:
     """Load Nova's heavy optional API only when advanced scanning is requested."""
-    global NOVA_AVAILABLE, NovaMatcher, NovaParser
+    global NovaMatcher, NovaParser
 
     if NovaMatcher is not None and NovaParser is not None:
         return NovaMatcher, NovaParser
@@ -93,12 +93,10 @@ def _load_nova_api() -> tuple[Any, Any]:
     try:
         nova_module = load_optional_module("nova", purpose="nova-hunting integration")
     except ImportError as exc:
-        NOVA_AVAILABLE = False
         raise ImportError("nova-hunting not installed") from exc
 
     NovaMatcher = getattr(nova_module, "NovaMatcher")
     NovaParser = getattr(nova_module, "NovaParser")
-    NOVA_AVAILABLE = True
     return NovaMatcher, NovaParser
 
 
