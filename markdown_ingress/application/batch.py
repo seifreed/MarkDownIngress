@@ -25,6 +25,7 @@ from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 _logger = logging.getLogger(__name__)
 
 RENDERER_AVAILABLE = find_spec("playwright") is not None
+_CUSTOM_BATCH_ITEM_FAILURES = (Exception,)
 
 
 @dataclass
@@ -222,7 +223,7 @@ class BatchProcessor:
                 await self._report_custom_batch_completion(state, url)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - per-URL batch errors are collected
+            except _CUSTOM_BATCH_ITEM_FAILURES as exc:
                 await _record_custom_batch_error(state, index, url, exc)
                 await self._report_custom_batch_completion(state, url)
                 return False
