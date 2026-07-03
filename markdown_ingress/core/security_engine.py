@@ -26,6 +26,7 @@ from markdown_ingress.core.security_validation import (
 )
 
 logger = logging.getLogger(__name__)
+NOVA_SCAN_FAILURE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -126,7 +127,7 @@ class SecurityEngine:
                 use_llm=self.use_llm,
                 logger=logger,
             )
-        except Exception as e:
+        except NOVA_SCAN_FAILURE_ERRORS as e:
             logger.exception("Nova scan failed")
             return (
                 self.exception_fallback_score,
