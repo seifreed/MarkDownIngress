@@ -81,16 +81,18 @@ def detect_content_language_info(
     *,
     normalize_multilingual: bool,
 ) -> dict[str, Any] | None:
+    langdetect_exception_type: type[BaseException] = Exception
     try:
         langdetect = cast(Any, load_optional_module("langdetect", purpose="language detection"))
         langdetect_exceptions = cast(
             Any,
             load_optional_object(
-                "langdetect.lang_detect_exception",
+                "langdetect",
                 "LangDetectException",
                 purpose="language detection",
             ),
         )
+        langdetect_exception_type = cast(type[BaseException], langdetect_exceptions)
 
         # langdetect seeds its detector randomly per process, so the same text
         # can resolve to different languages across runs. Pin the seed for
@@ -111,7 +113,7 @@ def detect_content_language_info(
         return None
     except (
         AttributeError,
-        langdetect_exceptions.LangDetectException,
+        langdetect_exception_type,
         TypeError,
         ValueError,
     ) as exc:
