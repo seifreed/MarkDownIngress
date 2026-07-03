@@ -36,6 +36,13 @@ _BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection
 # Default severity thresholds (can be overridden via constructor)
 DEFAULT_HIGH_THRESHOLD = 0.7
 DEFAULT_MEDIUM_THRESHOLD = 0.3
+_PATH_PERMISSION_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 def _load_nova_api() -> tuple[Any, Any]:
@@ -234,7 +241,7 @@ class NovaGuard:
                         e,
                     )
                     continue
-        except Exception as e:  # noqa: BLE001 - permission checks fail closed
+        except _PATH_PERMISSION_ERRORS as e:
             logger.warning("Unexpected error checking path permissions: %s", e)
         return False  # Default to deny on error
 
