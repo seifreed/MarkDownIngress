@@ -9,7 +9,6 @@ Implements progressive security scanning:
 
 import logging
 import math
-from typing import Any
 
 from markdown_ingress.core import security as security_module
 from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
@@ -91,6 +90,30 @@ class SecurityEngine:
                         "Falling back to basic pattern detection only."
                     )
 
+    @staticmethod
+    def _hidden_content_detected(metadata: dict) -> bool:
+        hidden_count = metadata.get("hidden_elements_count")
+        return isinstance(hidden_count, (int, float)) and hidden_count > 0
+
+    @staticmethod
+    def _nova_required(advanced_security: bool, strict: bool, basic_score: float) -> bool:
+        return advanced_security or strict or math.isnan(basic_score) or basic_score >= 0.05
+
+    @staticmethod
+    def _compute_final_score(scan_method: str, basic_score: float, nova_score: float) -> float:
+        return basic_score if scan_method == "basic" else max(basic_score, nova_score)
+
+    def _scan_with_nova_if_applicable(
+        self, markdown: str, basic_score: float
+    ) -> tuple[float, dict, str]:
+        if not self.nova:
+            return NOVA_DISABLED_SCORE, {}, "basic"
+
+        if not self._nova_required(self.advanced_security, self.strict, basic_score):
+            return NOVA_DISABLED_SCORE, {}, "basic"
+
+        return self._parse_nova_result(markdown)
+
     def _parse_nova_result(self, markdown: str) -> tuple[float, dict, str]:
         """Run Nova scan and parse the result into (nova_score, nova_details, scan_method)."""
         if self.nova is None:
@@ -146,38 +169,17 @@ class SecurityEngine:
         - scan_method: Which methods were used
         """
 
-        # Tier 1: Basic pattern detection (ALWAYS)
-        # Validate metadata before trusting it
-        hidden_detected = False
-        if isinstance(metadata, dict):
-            hidden_count = metadata.get("hidden_elements_count")
-            if isinstance(hidden_count, (int, float)) and hidden_count > 0:
-                hidden_detected = True
+        hidden_detected = self._hidden_content_detected(
+            metadata if isinstance(metadata, dict) else {}
+        )
         basic_analysis = self.basic_analyzer.analyze(
             markdown, hidden_content_detected=hidden_detected
         )
         basic_score = basic_analysis.score
-
-        # Tier 2+3: Nova Framework (CONDITIONAL)
-        # Run Nova when available and basic score is non-zero (indicating potential risk).
-        # Lowered threshold from 0.1 to 0.05 to prevent sophisticated attacks that
-        # score just below the old threshold from bypassing semantic detection.
-        # When advanced_security or strict is enabled, always run Nova.
-        nova_score = NOVA_DISABLED_SCORE
-        nova_details: dict[str, Any] = {}
-        scan_method = "basic"
-
-        if self.nova and (
-            math.isnan(basic_score) or basic_score >= 0.05 or self.advanced_security or self.strict
-        ):
-            nova_score, nova_details, scan_method = self._parse_nova_result(markdown)
-
-        # Combine scores: when Nova was never invoked, use basic score directly.
-        # When both signals exist, never allow combination to reduce the highest signal.
-        if scan_method == "basic":
-            final_score = basic_score
-        else:
-            final_score = max(basic_score, nova_score)
+        nova_score, nova_details, scan_method = self._scan_with_nova_if_applicable(
+            markdown, basic_score
+        )
+        final_score = self._compute_final_score(scan_method, basic_score, nova_score)
 
         block_threshold, warn_threshold = self.effective_thresholds(
             block_threshold,
