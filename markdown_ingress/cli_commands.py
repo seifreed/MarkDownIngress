@@ -12,7 +12,8 @@ from pathlib import Path
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 
-from markdown_ingress import __version__, compare_extractors, ingest, ingest_many_async
+import markdown_ingress._version as _version
+import markdown_ingress.api as _api
 from markdown_ingress.cli_parsing import (
     _extract_cli_feature_flags,
     determine_mode,
@@ -38,6 +39,7 @@ from markdown_ingress.core.benchmark import Benchmark
 from markdown_ingress.runtime_helpers import UNSET
 
 _logger = logging.getLogger(__name__)
+__version__ = _version.VERSION
 
 
 def build_json_output(doc, args):
@@ -126,6 +128,9 @@ def _build_batch_json_output(
 
 async def ingest_many_with_progress(args, urls, *, show_progress: bool = True):
     """Run batch ingestion through the public API with progress updates."""
+    from markdown_ingress.application.bootstrap import register_all_factories
+
+    register_all_factories()
     runtime_config = load_runtime_config(args)
     runtime_ingest_config = (
         runtime_config.to_ingest_config() if runtime_config is not None else None
@@ -252,6 +257,11 @@ def cmd_compare(args):
             f"{data['injection_score']:.3f}",
         )
     console.print(table)
+
+
+ingest = _api.ingest
+ingest_many_async = _api.ingest_many_async
+compare_extractors = _api.compare_extractors
 
 
 def cmd_benchmark(args):

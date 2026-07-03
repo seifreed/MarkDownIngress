@@ -7,7 +7,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-__version__ = "1.0.0"
+import markdown_ingress._version as _version
 
 _EXPORTS = {
     "BatchProcessor": "markdown_ingress.application.batch",
@@ -41,6 +41,7 @@ _EXPORTS = {
 }
 
 __all__ = sorted([*_EXPORTS, "__version__"])
+__version__ = _version.VERSION
 
 
 def __getattr__(name: str) -> Any:

@@ -7,7 +7,7 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.interfaces import IFetcher
@@ -58,10 +58,10 @@ class BenchmarkResult:
     extractor_comparison: dict[str, dict] | None = None
 
 
-def ingest(url: str, **kwargs: object) -> SafeDocument:
+def ingest(url: str, **kwargs: Any) -> SafeDocument:
     """Default benchmark ingest bridge kept for backward-compatible monkeypatching."""
     # ponytail: keep compatibility with existing tests that monkeypatch benchmark.ingest
-    from markdown_ingress import ingest as public_ingest
+    from markdown_ingress.api import ingest as public_ingest
 
     return cast(SafeDocument, public_ingest(url, **kwargs))
 

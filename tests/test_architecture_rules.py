@@ -180,3 +180,16 @@ object().import_module("markdown_ingress.runtime")
         "markdown_ingress.cli",
         "markdown_ingress.api_server",
     }
+
+
+def test_package_facade_is_not_an_internal_import_target() -> None:
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "markdown_ingress":
+                raise AssertionError(
+                    f"{path}: avoid importing from package facade; import from "
+                    f"specific modules instead."
+                )

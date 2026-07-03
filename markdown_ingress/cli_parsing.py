@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from markdown_ingress import __version__
+import markdown_ingress._version as _version
 from markdown_ingress.cli_ingest_args import MAX_CHUNK_OVERLAP_CLI as MAX_CHUNK_OVERLAP_CLI
 from markdown_ingress.cli_ingest_args import MAX_CHUNK_SIZE_CLI as MAX_CHUNK_SIZE_CLI
 from markdown_ingress.cli_ingest_args import (
@@ -34,6 +34,9 @@ from markdown_ingress.runtime_helpers import UNSET
 
 if TYPE_CHECKING:
     from markdown_ingress.core.config import Config
+
+
+__version__ = _version.VERSION
 
 
 @dataclass
