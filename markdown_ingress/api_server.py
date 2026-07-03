@@ -602,27 +602,24 @@ def _get_job_queue():
 
 def _get_job_record(job_id: str):
     queue = _get_job_queue()
+    _, history, _ = _snapshot_job_queue_state()
+    return _find_job_record_in_queues(job_id, queue, history)
+
+
+def _snapshot_job_queue_state() -> tuple[Any, list[PersistentJobQueue], threading.Thread | None]:
     with _JOB_QUEUE_LOCK:
         _prune_job_queue_history()
-        history = list(_JOB_QUEUE_HISTORY)
-    return _find_job_record_in_queues(job_id, queue, history)
+        return JOB_QUEUE, list(_JOB_QUEUE_HISTORY), _JOB_QUEUE_REPAIR_THREAD
 
 
 def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapshot:
     if start_repair:
         _maybe_start_job_queue_repair()
 
-    with _JOB_QUEUE_LOCK:
-        _prune_job_queue_history()
-        current_queue = JOB_QUEUE
-        history = list(_JOB_QUEUE_HISTORY)
-        repair_thread = _JOB_QUEUE_REPAIR_THREAD
+    current_queue, history, repair_thread = _snapshot_job_queue_state()
     if current_queue is None and not history:
         _ensure_job_queue_initialized()
-        with _JOB_QUEUE_LOCK:
-            current_queue = JOB_QUEUE
-            history = list(_JOB_QUEUE_HISTORY)
-            repair_thread = _JOB_QUEUE_REPAIR_THREAD
+        current_queue, history, repair_thread = _snapshot_job_queue_state()
     return build_job_subsystem_snapshot(
         JobSubsystemSnapshotInputs(
             current_queue=current_queue,
