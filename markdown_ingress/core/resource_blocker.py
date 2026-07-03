@@ -8,7 +8,7 @@ to speed up rendering and reduce bandwidth usage.
 import logging
 import threading
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, TypedDict, Unpack
 from urllib.parse import urlsplit
 
 from markdown_ingress.core.resource_block_patterns import (
@@ -59,6 +59,23 @@ RESOURCE_ROUTE_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
+class ResourceBlockerOptions(TypedDict, total=False):
+    block_images: bool
+    block_fonts: bool
+    block_media: bool
+    block_css: bool
+    block_ads: bool
+    block_trackers: bool
+    custom_blocked_domains: list[str] | None
+    allow_local_urls: bool | None
+    validate_ssrf: bool
+    dns_pins: Mapping[str, str] | None
+    enforce_dns_pinning: bool
+
+
+_RESOURCE_BLOCKER_OPTION_NAMES = frozenset(ResourceBlockerOptions.__annotations__)
+
+
 class ResourceBlocker:
     """
     Blocks unnecessary resources during page load to speed up rendering.
@@ -67,21 +84,7 @@ class ResourceBlocker:
     resource type (images, fonts, media) and domain patterns (ads, trackers).
     """
 
-    # Policy constructor keeps resource and SSRF controls explicit for callers.
-    def __init__(  # noqa: PLR0913
-        self,
-        block_images: bool = True,
-        block_fonts: bool = True,
-        block_media: bool = True,
-        block_css: bool = False,
-        block_ads: bool = True,
-        block_trackers: bool = True,
-        custom_blocked_domains: list[str] | None = None,
-        allow_local_urls: bool | None = None,
-        validate_ssrf: bool = True,
-        dns_pins: Mapping[str, str] | None = None,
-        enforce_dns_pinning: bool = True,
-    ):
+    def __init__(self, **options: Unpack[ResourceBlockerOptions]) -> None:
         """
         Initialize the resource blocker.
 
@@ -98,6 +101,23 @@ class ResourceBlocker:
             dns_pins: Browser DNS pins already installed for this page
             enforce_dns_pinning: Block DNS-backed requests that cannot use an installed pin
         """
+        unexpected = set(options) - _RESOURCE_BLOCKER_OPTION_NAMES
+        if unexpected:
+            name = sorted(unexpected)[0]
+            raise TypeError(f"ResourceBlocker() got an unexpected keyword argument '{name}'")
+
+        block_images = options.get("block_images", True)
+        block_fonts = options.get("block_fonts", True)
+        block_media = options.get("block_media", True)
+        block_css = options.get("block_css", False)
+        block_ads = options.get("block_ads", True)
+        block_trackers = options.get("block_trackers", True)
+        custom_blocked_domains = options.get("custom_blocked_domains")
+        allow_local_urls = options.get("allow_local_urls")
+        validate_ssrf = options.get("validate_ssrf", True)
+        dns_pins = options.get("dns_pins")
+        enforce_dns_pinning = options.get("enforce_dns_pinning", True)
+
         self.block_images = block_images
         self.block_fonts = block_fonts
         self.block_media = block_media

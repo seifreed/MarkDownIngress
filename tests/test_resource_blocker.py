@@ -49,6 +49,11 @@ class TestResourceBlocker:
         assert blocker.block_ads is False
         assert blocker.block_trackers is False
 
+    def test_init_rejects_unknown_settings(self):
+        """Test initialization rejects misspelled settings."""
+        with pytest.raises(TypeError, match="unexpected keyword argument 'block_image'"):
+            ResourceBlocker(block_image=False)
+
     def test_custom_blocked_domains(self):
         """Test adding custom blocked domains"""
         custom_domains = ["custom-tracker.com", "another-ad.net"]
