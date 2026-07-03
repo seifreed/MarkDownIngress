@@ -5,17 +5,13 @@ FastAPI server for MarkDownIngress.
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
-import time
-from typing import Any
 
 from fastapi import Depends, FastAPI
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     LEGACY_UNKNOWN_TTL_SECONDS,
     PersistentJobQueue,
-    SQLiteError,
 )
 from markdown_ingress.api import (
     compare_extractors,
@@ -53,44 +49,15 @@ from markdown_ingress.api_server_handlers import (
     handle_security_report,
     handle_sync_batch,
 )
-from markdown_ingress.api_server_job_history import (
-    prune_job_queue_history,
-    remember_job_queue,
-)
-from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
-from markdown_ingress.api_server_job_queue_init import (
-    close_previous_job_queue_for_init,
-    fallback_queue_for_init_build_error,
-)
-from markdown_ingress.api_server_job_queue_repair import (
-    job_queue_repair_finished,
-    job_queue_repair_retry_delay,
-)
-from markdown_ingress.api_server_job_queue_selection import (
-    JobQueueSelection,
-    current_queue_after_repair_close_failure,
-    current_queue_if_expected_changed,
-    queue_if_expected_state,
-    select_job_queue_for_use,
-)
 from markdown_ingress.api_server_job_queue_states import (
     RECOVERABLE_QUEUE_STATES,
     REPAIRABLE_QUEUE_STATES,
-    STATE_BACKEND_ERROR,
-    STATE_EXTERNAL_OWNER,
 )
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import (
-    _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
     _close_queue_for_repair,
     _ExternalOwnerJobQueue,
     _find_job_record_in_queues,
-    _is_active_owner_error,
-    _queue_still_has_visible_jobs,
-    _TransientLegacyQueueReadError,
-)
-from markdown_ingress.api_server_queue import (
-    _external_owner_backend_still_owned as _queue_external_owner_backend_still_owned,
 )
 from markdown_ingress.api_server_rate_limit import (
     MemoryRateLimitPolicy,
@@ -105,20 +72,10 @@ from markdown_ingress.api_server_responses import (
     build_stats_payload,
 )
 from markdown_ingress.api_server_routes import ApiRouteProviders, register_api_routes
-from markdown_ingress.api_server_snapshot import (
-    JobQueueStateSnapshot,
-    JobSubsystemSnapshotInputs,
-    build_job_subsystem_snapshot,
-)
-from markdown_ingress.api_server_snapshot import (
-    JobSubsystemSnapshot as _JobSubsystemSnapshot,
-)
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
-from markdown_ingress.api_server_threads import (
-    start_control_thread,
-    stop_reloaded_control_thread_pair,
-)
 from markdown_ingress.core.orchestrator import get_ingest_stats
+
+from . import api_server_job_queue_runtime as _job_queue_runtime
 
 _logger = logging.getLogger(__name__)
 
@@ -212,399 +169,64 @@ _JOB_QUEUE_REPAIR_STOP: threading.Event | None = None
 _JOB_QUEUE_WATCHDOG_THREAD: threading.Thread | None = None
 _JOB_QUEUE_WATCHDOG_STOP: threading.Event | None = None
 _JOB_QUEUE_HISTORY: list[PersistentJobQueue] = []
+
 _RECOVERABLE_QUEUE_STATES = RECOVERABLE_QUEUE_STATES
 _REPAIRABLE_QUEUE_STATES = REPAIRABLE_QUEUE_STATES
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
 
-
-def _build_job_queue() -> PersistentJobQueue:
-    return build_persistent_job_queue(
-        queue_class=PersistentJobQueue,
-        db_path=JOB_DB_PATH,
-        worker_count=JOB_WORKERS,
-        ttl_seconds=JOB_TTL_SECONDS,
-        max_queued_jobs=MAX_QUEUED_JOBS,
-        webhook_max_retries=JOB_WEBHOOK_MAX_RETRIES,
-        webhook_retry_delay_seconds=JOB_WEBHOOK_RETRY_DELAY_SECONDS,
-        allow_local_webhooks=ALLOW_LOCAL_WEBHOOKS,
-        job_timeout_seconds=JOB_EXECUTION_TIMEOUT_SECONDS,
-    )
+# Compatibility exports for tests and monkeypatching hooks.
+_legacy_unknown_ttl_seconds = LEGACY_UNKNOWN_TTL_SECONDS
+_external_owner_job_queue_impl = _ExternalOwnerJobQueue
+_close_queue_for_repair_impl = _close_queue_for_repair
 
 
-def _remember_job_queue(queue: PersistentJobQueue | None) -> None:
-    """Record a job queue in history for cleanup tracking."""
-    remember_job_queue(_JOB_QUEUE_HISTORY, _JOB_QUEUE_LOCK, queue)
+_build_job_queue = _job_queue_runtime._build_job_queue
+_remember_job_queue = _job_queue_runtime._remember_job_queue
+_prune_job_queue_history = _job_queue_runtime._prune_job_queue_history
+_replace_job_queue_if_current = _job_queue_runtime._replace_job_queue_if_current
+_promote_external_owner_queue = _job_queue_runtime._promote_external_owner_queue
+_current_queue_if_expected_changed = _job_queue_runtime._current_queue_if_expected_changed
+_queue_if_expected_state = _job_queue_runtime._queue_if_expected_state
+_replacement_for_runtime_build_error = _job_queue_runtime._replacement_for_runtime_build_error
+_current_queue_after_superseded_replacement = (
+    _job_queue_runtime._current_queue_after_superseded_replacement
+)
+_build_replacement_queue_or_current = _job_queue_runtime._build_replacement_queue_or_current
+_external_owner_backend_still_owned = _job_queue_runtime._external_owner_backend_still_owned
+_clear_job_queue_repair_state_locked = _job_queue_runtime._clear_job_queue_repair_state_locked
+_clear_job_queue_repair_state = _job_queue_runtime._clear_job_queue_repair_state
+_current_recoverable_job_queue = _job_queue_runtime._current_recoverable_job_queue
+_wait_for_next_job_queue_repair_attempt = _job_queue_runtime._wait_for_next_job_queue_repair_attempt
+_maybe_wait_for_external_owner_backend = _job_queue_runtime._maybe_wait_for_external_owner_backend
+_finish_repair_if_replaced_or_terminal = _job_queue_runtime._finish_repair_if_replaced_or_terminal
+_run_job_queue_repair_attempt = _job_queue_runtime._run_job_queue_repair_attempt
+_job_queue_repair_loop = _job_queue_runtime._job_queue_repair_loop
+_start_job_queue_repair_loop = _job_queue_runtime._start_job_queue_repair_loop
+_maybe_start_job_queue_repair = _job_queue_runtime._maybe_start_job_queue_repair
+_job_queue_watchdog_tick = _job_queue_runtime._job_queue_watchdog_tick
+_start_job_queue_watchdog = _job_queue_runtime._start_job_queue_watchdog
+_stop_reloaded_job_queue_control_threads = (
+    _job_queue_runtime._stop_reloaded_job_queue_control_threads
+)
+_reset_job_queue_control_thread_refs = _job_queue_runtime._reset_job_queue_control_thread_refs
+_fallback_queue_for_init_build_error = _job_queue_runtime._fallback_queue_for_init_build_error
+_init_job_queue = _job_queue_runtime._init_job_queue
 
-
-def _prune_job_queue_history() -> None:
-    """Remove job queues from history that no longer have visible jobs."""
-    prune_job_queue_history(
-        _JOB_QUEUE_HISTORY,
-        _JOB_QUEUE_LOCK,
-        queue_still_has_visible_jobs=_queue_still_has_visible_jobs,
-        transient_read_error=_TransientLegacyQueueReadError,
-        prune_error_threshold=_LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
-    )
-
-
-def _replace_job_queue_if_current(expected_queue, replacement_queue) -> bool:
-    global JOB_QUEUE
-    with _JOB_QUEUE_LOCK:
-        if JOB_QUEUE is not expected_queue:
-            return False
-        _remember_job_queue(JOB_QUEUE)
-        JOB_QUEUE = replacement_queue
-        return True
-
-
-def _promote_external_owner_queue(expected_queue):
-    if getattr(expected_queue, "state", None) == STATE_EXTERNAL_OWNER:
-        return expected_queue
-    replacement_queue = _ExternalOwnerJobQueue(getattr(expected_queue, "db_path", JOB_DB_PATH))
-    if _replace_job_queue_if_current(expected_queue, replacement_queue):
-        return replacement_queue
-    with _JOB_QUEUE_LOCK:
-        return JOB_QUEUE
-
-
-def _current_queue_if_expected_changed(expected_queue):
-    with _JOB_QUEUE_LOCK:
-        return current_queue_if_expected_changed(expected_queue, JOB_QUEUE)
-
-
-def _queue_if_expected_state(expected_queue, states: set[str]):
-    with _JOB_QUEUE_LOCK:
-        return queue_if_expected_state(expected_queue, states)
-
-
-def _replacement_for_runtime_build_error(expected_queue, exc: RuntimeError):
-    if _is_active_owner_error(exc):
-        return _promote_external_owner_queue(expected_queue)
-    if getattr(expected_queue, "state", None) == STATE_BACKEND_ERROR:
-        return expected_queue
-    return None
-
-
-def _current_queue_after_superseded_replacement(replacement_queue):
-    try:
-        replacement_queue.close()
-    except (RuntimeError, SQLiteError, OSError, ValueError) as exc:
-        _logger.debug("Failed to close superseded replacement queue: %s", exc, exc_info=True)
-    with _JOB_QUEUE_LOCK:
-        return JOB_QUEUE
-
-
-def _build_replacement_queue_or_current(expected_queue):
-    with _JOB_QUEUE_BUILD_LOCK:
-        current_queue = _current_queue_if_expected_changed(expected_queue)
-        if current_queue is not None:
-            return current_queue
-        try:
-            replacement_queue = _build_job_queue()
-        except RuntimeError as exc:
-            fallback_queue = _replacement_for_runtime_build_error(expected_queue, exc)
-            if fallback_queue is not None:
-                return fallback_queue
-            raise
-        except (SQLiteError, OSError):
-            fallback_queue = _queue_if_expected_state(
-                expected_queue, {STATE_BACKEND_ERROR, STATE_EXTERNAL_OWNER}
-            )
-            if fallback_queue is not None:
-                return fallback_queue
-            raise
-        if _replace_job_queue_if_current(expected_queue, replacement_queue):
-            return replacement_queue
-        return _current_queue_after_superseded_replacement(replacement_queue)
-
-
-def _external_owner_backend_still_owned(queue) -> bool:
-    return _queue_external_owner_backend_still_owned(queue, JOB_DB_PATH)
-
-
-def _clear_job_queue_repair_state_locked(
-    expected_stop_event: threading.Event | None = None,
-) -> None:
-    global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-    if expected_stop_event is not None and _JOB_QUEUE_REPAIR_STOP is not expected_stop_event:
-        return
-    _JOB_QUEUE_REPAIR_THREAD = None
-    _JOB_QUEUE_REPAIR_STOP = None
-
-
-def _clear_job_queue_repair_state(
-    expected_stop_event: threading.Event | None = None,
-) -> None:
-    with _JOB_QUEUE_LOCK:
-        _clear_job_queue_repair_state_locked(expected_stop_event)
-
-
-def _current_recoverable_job_queue(
-    stop_event: threading.Event,
-) -> tuple[Any, str | None] | None:
-    with _JOB_QUEUE_LOCK:
-        queue = JOB_QUEUE
-        if queue is None:
-            _clear_job_queue_repair_state_locked(stop_event)
-            return None
-        state = getattr(queue, "state", None)
-        if state not in _REPAIRABLE_QUEUE_STATES:
-            _clear_job_queue_repair_state_locked(stop_event)
-            return None
-        return queue, state
-
-
-def _wait_for_next_job_queue_repair_attempt(stop_event: threading.Event, state: str | None) -> None:
-    stop_event.wait(
-        job_queue_repair_retry_delay(
-            state,
-            external_owner_seconds=_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS,
-            backend_error_seconds=_BACKEND_ERROR_REPAIR_RETRY_SECONDS,
-        )
-    )
-
-
-def _maybe_wait_for_external_owner_backend(
-    queue: Any, state: str | None, stop_event: threading.Event
-) -> tuple[str | None, bool]:
-    if state != STATE_EXTERNAL_OWNER:
-        return state, False
-    try:
-        backend_still_owned = _external_owner_backend_still_owned(queue)
-    except RuntimeError:
-        return getattr(queue, "state", None), False
-    if backend_still_owned:
-        stop_event.wait(_EXTERNAL_OWNER_REPAIR_RETRY_SECONDS)
-        return state, True
-    return state, False
-
-
-def _finish_repair_if_replaced_or_terminal(
-    queue: Any,
-    state: str | None,
-    stop_event: threading.Event,
-) -> bool:
-    replacement_queue = _build_replacement_queue_or_current(queue)
-    if job_queue_repair_finished(queue, replacement_queue, state):
-        _clear_job_queue_repair_state(stop_event)
-        return True
-    return False
-
-
-def _run_job_queue_repair_attempt(stop_event: threading.Event) -> bool:
-    candidate = _current_recoverable_job_queue(stop_event)
-    if candidate is None:
-        return False
-    queue, state = candidate
-    try:
-        _close_queue_for_repair(queue)
-    except RuntimeError as e:
-        _logger.debug("Failed to close queue for repair: %s", e)
-    else:
-        state, retry_later = _maybe_wait_for_external_owner_backend(queue, state, stop_event)
-        if retry_later:
-            return True
-        try:
-            repair_finished = _finish_repair_if_replaced_or_terminal(queue, state, stop_event)
-        except (RuntimeError, SQLiteError, OSError) as exc:
-            _logger.debug("Job queue repair rebuild failed: %s", exc, exc_info=True)
-        else:
-            if repair_finished:
-                return False
-    _wait_for_next_job_queue_repair_attempt(stop_event, state)
-    return True
-
-
-def _job_queue_repair_loop(stop_event: threading.Event) -> None:
-    while not stop_event.wait(0.0):
-        if not _run_job_queue_repair_attempt(stop_event):
-            return
-
-
-def _start_job_queue_repair_loop() -> None:
-    def remember_thread(thread: threading.Thread, stop_event: threading.Event) -> None:
-        global _JOB_QUEUE_REPAIR_THREAD, _JOB_QUEUE_REPAIR_STOP
-        _JOB_QUEUE_REPAIR_STOP = stop_event
-        _JOB_QUEUE_REPAIR_THREAD = thread
-
-    with _JOB_QUEUE_LOCK:
-        start_control_thread(
-            current_thread=_JOB_QUEUE_REPAIR_THREAD,
-            target=_job_queue_repair_loop,
-            remember=remember_thread,
-        )
-
-
-def _maybe_start_job_queue_repair() -> None:
-    with _JOB_QUEUE_LOCK:
-        queue = JOB_QUEUE
-        state = getattr(queue, "state", None)
-        repair_thread = _JOB_QUEUE_REPAIR_THREAD
-    if state in _REPAIRABLE_QUEUE_STATES and not (
-        repair_thread is not None and repair_thread.is_alive()
-    ):
-        _start_job_queue_repair_loop()
-
-
-def _job_queue_watchdog_tick() -> None:
-    _maybe_start_job_queue_repair()
-
-
-def _start_job_queue_watchdog() -> None:
-    def run_watchdog(stop_event: threading.Event) -> None:
-        while not stop_event.wait(0.5):
-            _job_queue_watchdog_tick()
-
-    def remember_thread(thread: threading.Thread, stop_event: threading.Event) -> None:
-        global _JOB_QUEUE_WATCHDOG_THREAD, _JOB_QUEUE_WATCHDOG_STOP
-        _JOB_QUEUE_WATCHDOG_STOP = stop_event
-        _JOB_QUEUE_WATCHDOG_THREAD = thread
-
-    with _JOB_QUEUE_LOCK:
-        start_control_thread(
-            current_thread=_JOB_QUEUE_WATCHDOG_THREAD,
-            target=run_watchdog,
-            remember=remember_thread,
-        )
-
-
-def _stop_reloaded_job_queue_control_threads() -> None:
-    for name, prefix in (
-        ("job queue repair thread", "JOB_QUEUE_REPAIR"),
-        ("job queue watchdog thread", "JOB_QUEUE_WATCHDOG"),
-    ):
-        stop_reloaded_control_thread_pair(
-            module_globals=globals(),
-            name=name,
-            previous_thread_key=f"_PREVIOUS_{prefix}_THREAD",
-            current_thread_key=f"_{prefix}_THREAD",
-            previous_stop_key=f"_PREVIOUS_{prefix}_STOP",
-            current_stop_key=f"_{prefix}_STOP",
-        )
-
-
-def _reset_job_queue_control_thread_refs() -> None:
-    global _JOB_QUEUE_WATCHDOG_STOP, _JOB_QUEUE_WATCHDOG_THREAD
-    global _JOB_QUEUE_REPAIR_STOP, _JOB_QUEUE_REPAIR_THREAD
-
-    _JOB_QUEUE_REPAIR_STOP = None
-    _JOB_QUEUE_REPAIR_THREAD = None
-    _JOB_QUEUE_WATCHDOG_STOP = None
-    _JOB_QUEUE_WATCHDOG_THREAD = None
-
-
-def _fallback_queue_for_init_build_error(previous_queue: Any | None, exc: RuntimeError):
-    return fallback_queue_for_init_build_error(
-        previous_queue,
-        exc,
-        is_active_owner_error=_is_active_owner_error,
-        promote_external_owner_queue=_promote_external_owner_queue,
-        external_owner_queue=lambda: _ExternalOwnerJobQueue(JOB_DB_PATH),
-    )
-
-
-def _init_job_queue(previous_queue=None):
-    _stop_reloaded_job_queue_control_threads()
-    _reset_job_queue_control_thread_refs()
-    reused_queue = close_previous_job_queue_for_init(
-        previous_queue,
-        recoverable_states=_RECOVERABLE_QUEUE_STATES,
-        remember_job_queue=_remember_job_queue,
-    )
-    if reused_queue is not None:
-        return reused_queue
-    try:
-        return _build_job_queue()
-    except RuntimeError as exc:
-        fallback_queue = _fallback_queue_for_init_build_error(previous_queue, exc)
-        if fallback_queue is not None:
-            return fallback_queue
-        raise
-
-
-# Lazy initialization defers backend errors until an endpoint needs the queue.
 JOB_QUEUE: PersistentJobQueue | None = None
 _job_queue_initialized = False
 _job_queue_init_failed_at: float | None = None
 _JOB_QUEUE_RETRY_BACKOFF_SECONDS = 10.0
 
-
-def _job_queue_init_backoff_active() -> bool:
-    return (
-        _job_queue_init_failed_at is not None
-        and time.monotonic() - _job_queue_init_failed_at < _JOB_QUEUE_RETRY_BACKOFF_SECONDS
-    )
-
-
-def _ensure_job_queue_initialized():
-    """Initialize job queue lazily to prevent server crash on module import.
-
-    If initialization fails, the error is deferred until first use,
-    allowing the server to start and serve endpoints that don't require the job queue.
-    """
-    global JOB_QUEUE, _job_queue_initialized, _job_queue_init_failed_at
-    if _job_queue_initialized:
-        return
-    if _job_queue_init_backoff_active():
-        return
-    with _JOB_QUEUE_INIT_LOCK:
-        if _job_queue_initialized:
-            return
-        if _job_queue_init_backoff_active():
-            return
-        if JOB_QUEUE is not None:
-            _job_queue_initialized = True
-            _job_queue_init_failed_at = None
-            _start_job_queue_watchdog()
-            return
-        try:
-            JOB_QUEUE = _init_job_queue(globals().get("JOB_QUEUE"))
-            _job_queue_initialized = True
-            _job_queue_init_failed_at = None
-            _start_job_queue_watchdog()
-        except (OSError, ValueError, RuntimeError, ImportError, sqlite3.Error):
-            _job_queue_init_failed_at = time.monotonic()
-            _logger.exception("Failed to initialize job queue")
-
-
-def _select_job_queue_for_use() -> JobQueueSelection:
-    with _JOB_QUEUE_LOCK:
-        return select_job_queue_for_use(JOB_QUEUE, _REPAIRABLE_QUEUE_STATES)
-
-
-def _current_queue_after_repair_close_failure(queue_to_repair: Any) -> Any | None:
-    with _JOB_QUEUE_LOCK:
-        return current_queue_after_repair_close_failure(
-            queue_to_repair,
-            JOB_QUEUE,
-            _REPAIRABLE_QUEUE_STATES,
-        )
-
-
-def _get_job_queue():
-    _ensure_job_queue_initialized()
-    selection = _select_job_queue_for_use()
-    if selection.queue_to_return is not None:
-        if selection.start_repair:
-            _maybe_start_job_queue_repair()
-        return selection.queue_to_return
-    queue_to_repair = selection.queue_to_repair
-    if queue_to_repair is None:
-        raise RuntimeError("Job queue is unavailable")
-
-    try:
-        _close_queue_for_repair(queue_to_repair)
-    except (RuntimeError, TypeError) as exc:
-        try:
-            current = _current_queue_after_repair_close_failure(queue_to_repair)
-        except RuntimeError as unavailable:
-            raise unavailable from exc
-        if current is not None:
-            _maybe_start_job_queue_repair()
-            return current
-        raise
-    return _build_replacement_queue_or_current(queue_to_repair)
+_job_queue_init_backoff_active = _job_queue_runtime._job_queue_init_backoff_active
+_ensure_job_queue_initialized = _job_queue_runtime._ensure_job_queue_initialized
+_select_job_queue_for_use = _job_queue_runtime._select_job_queue_for_use
+_current_queue_after_repair_close_failure = (
+    _job_queue_runtime._current_queue_after_repair_close_failure
+)
+_get_job_queue = _job_queue_runtime._get_job_queue
+_snapshot_job_queue_state = _job_queue_runtime._snapshot_job_queue_state
+_snapshot_job_subsystem = _job_queue_runtime._snapshot_job_subsystem
 
 
 def _get_job_record(job_id: str):
@@ -612,42 +234,6 @@ def _get_job_record(job_id: str):
     snapshot = _snapshot_job_queue_state()
     history = snapshot.history
     return _find_job_record_in_queues(job_id, queue, history)
-
-
-def _snapshot_job_queue_state() -> JobQueueStateSnapshot:
-    with _JOB_QUEUE_LOCK:
-        _prune_job_queue_history()
-        return JobQueueStateSnapshot(
-            current_queue=JOB_QUEUE,
-            history=list(_JOB_QUEUE_HISTORY),
-            repair_thread=_JOB_QUEUE_REPAIR_THREAD,
-        )
-
-
-def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapshot:
-    if start_repair:
-        _maybe_start_job_queue_repair()
-
-    snapshot = _snapshot_job_queue_state()
-    current_queue = snapshot.current_queue
-    history = snapshot.history
-    repair_thread = snapshot.repair_thread
-    if current_queue is None and not history:
-        _ensure_job_queue_initialized()
-        snapshot = _snapshot_job_queue_state()
-        current_queue = snapshot.current_queue
-        history = snapshot.history
-        repair_thread = snapshot.repair_thread
-    return build_job_subsystem_snapshot(
-        JobSubsystemSnapshotInputs(
-            current_queue=current_queue,
-            history=history,
-            repair_thread=repair_thread,
-            job_db_path=JOB_DB_PATH,
-            legacy_unknown_ttl_seconds=LEGACY_UNKNOWN_TTL_SECONDS,
-            logger=_logger,
-        )
-    )
 
 
 def _build_route_providers() -> ApiRouteProviders:

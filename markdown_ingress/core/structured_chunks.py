@@ -136,38 +136,42 @@ class ChunkBuilder:
         chunk_size: int,
     ) -> list[list[StructuredBlock]]:
         if strategy == "heading":
-            groups: list[list[StructuredBlock]] = []
-            current: list[StructuredBlock] = []
-            current_len = 0
-            for block in blocks:
-                block_len = len(block.text) if block.text else len(block.markdown)
-                added_len = block_len + (2 if current else 0)
-                if current and (
-                    block.block_type == "heading" or current_len + added_len > chunk_size
-                ):
-                    groups.append(current)
-                    current = [block]
-                    current_len = block_len
-                else:
-                    current.append(block)
-                    current_len += added_len
-            if current:
-                groups.append(current)
-            return groups
+            return self._group_blocks_by_cutoff(blocks, chunk_size, stop_on_heading=True)
 
-        groups = []
-        current = []
+        return self._group_blocks_by_cutoff(blocks, chunk_size)
+
+    @staticmethod
+    def _block_len(block: StructuredBlock) -> int:
+        if block.text:
+            return len(block.text)
+        return len(block.markdown)
+
+    def _group_blocks_by_cutoff(
+        self,
+        blocks: list[StructuredBlock],
+        chunk_size: int,
+        stop_on_heading: bool = False,
+    ) -> list[list[StructuredBlock]]:
+        groups: list[list[StructuredBlock]] = []
+        current: list[StructuredBlock] = []
         current_len = 0
+
         for block in blocks:
-            block_len = len(block.text) if block.text else len(block.markdown)
+            block_len = self._block_len(block)
             added_len = block_len + (2 if current else 0)
-            if current and current_len + added_len > chunk_size:
+            should_split = bool(current) and (
+                (stop_on_heading and block.block_type == "heading")
+                or current_len + added_len > chunk_size
+            )
+            if should_split:
                 groups.append(current)
                 current = [block]
                 current_len = block_len
-            else:
-                current.append(block)
-                current_len += added_len
+                continue
+
+            current.append(block)
+            current_len += added_len
+
         if current:
             groups.append(current)
         return groups

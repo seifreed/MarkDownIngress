@@ -158,47 +158,27 @@ def _common_ingest_kwargs(request: IngestRequest | BatchIngestRequest) -> dict[s
 
 
 def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[str, Any]:
-    raw_error_items = getattr(result, "error_items", None)
-    if raw_error_items is None:
-        fallback = getattr(result, "errors", [])
-        raw_error_items = fallback if isinstance(fallback, list) else []
-    error_by_index = {
-        item.index: _public_batch_error_detail(item.error, getattr(item, "error_type", None))
-        for item in raw_error_items
-        if hasattr(item, "index") and hasattr(item, "error")
-    }
+    indexed_errors = _build_batch_error_index(result)
     errors_by_url: dict[str, list[str]] = getattr(result, "errors_by_url", {})
-    legacy_errors_raw = getattr(result, "errors", {})
-    legacy_errors = legacy_errors_raw if isinstance(legacy_errors_raw, dict) else {}
+    legacy_errors = getattr(result, "errors", {})
     errors_by_url_offsets: dict[str, int] = {}
-
-    def _fallback_error_for(index: int) -> str | None:
-        url = str(request.urls[index])
-        if errors_by_url:
-            options = errors_by_url.get(url) or []
-            offset = errors_by_url_offsets.get(url, 0)
-            if offset < len(options):
-                errors_by_url_offsets[url] = offset + 1
-                return _public_batch_error_detail(options[offset])
-            return None
-        if isinstance(legacy_errors, dict):
-            return _public_batch_error_detail(legacy_errors.get(url))
-        return None
-
-    rows = []
     documents = list(getattr(result, "documents", []))
-    total_inputs = len(request.urls)
-    for index in range(total_inputs):
+
+    rows: list[dict[str, Any]] = []
+    for index, url in enumerate(request.urls):
         document = documents[index] if index < len(documents) else None
-        if index in error_by_index:
-            error = error_by_index[index]
-        else:
-            error = _fallback_error_for(index)
+        error = indexed_errors.get(index) or _fallback_batch_error(
+            url,
+            errors_by_url,
+            legacy_errors,
+            errors_by_url_offsets,
+        )
         if document is None and error is None:
             error = f"Missing batch result for input index {index}"
+
         rows.append(
             {
-                "url": str(request.urls[index]),
+                "url": str(url),
                 "success": document is not None,
                 "data": (
                     to_document_response(document).model_dump() if document is not None else None
@@ -212,6 +192,44 @@ def _serialize_batch_result(request: BatchIngestRequest, result: Any) -> dict[st
         "success_count": sum(1 for row in rows if row["success"]),
         "failure_count": sum(1 for row in rows if not row["success"]),
     }
+
+
+def _build_batch_error_index(result: Any) -> dict[int, str | None]:
+    raw_error_items = getattr(result, "error_items", None)
+    if raw_error_items is None:
+        fallback = getattr(result, "errors", [])
+        raw_error_items = fallback if isinstance(fallback, list) else []
+
+    errors: dict[int, str | None] = {}
+    for item in raw_error_items:
+        raw_index = getattr(item, "index", None)
+        if not isinstance(raw_index, int) or not hasattr(item, "error"):
+            continue
+        errors[raw_index] = _public_batch_error_detail(
+            getattr(item, "error"),
+            getattr(item, "error_type", None),
+        )
+
+    return errors
+
+
+def _fallback_batch_error(
+    url: str | Any,
+    errors_by_url: dict[str, list[str]],
+    legacy_errors: dict[str, str] | list[str] | Any,
+    errors_by_url_offsets: dict[str, int],
+) -> str | None:
+    if errors_by_url:
+        options = errors_by_url.get(str(url)) or []
+        offset = errors_by_url_offsets.get(str(url), 0)
+        if offset < len(options):
+            errors_by_url_offsets[str(url)] = offset + 1
+            return _public_batch_error_detail(options[offset])
+
+    if isinstance(legacy_errors, dict):
+        return _public_batch_error_detail(legacy_errors.get(str(url)))
+
+    return None
 
 
 async def sync_batch_response(
