@@ -115,6 +115,13 @@ RENDERER_OPTIONAL_OPERATION_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+CHROMIUM_LAUNCH_RETRY_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 # Lazy import for stealth injection
 try:
@@ -156,7 +163,7 @@ async def launch_chromium(chromium: Any, launch_options: dict[str, object], time
     for attempt in range(_CHROMIUM_LAUNCH_RETRIES + 1):
         try:
             return await chromium.launch(**options)
-        except Exception as exc:
+        except CHROMIUM_LAUNCH_RETRY_ERRORS as exc:
             if attempt >= _CHROMIUM_LAUNCH_RETRIES or not _is_launch_timeout(exc):
                 raise
             logger.warning("Chromium launch timed out; retrying once: %s", exc)
