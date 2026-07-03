@@ -48,7 +48,6 @@ from markdown_ingress.core.security_imperative import calculate_imperative_densi
 from markdown_ingress.core.security_pattern_matching import (
     append_decoding_limit_match,
     collect_pattern_matches,
-    compile_injection_pattern,
     compile_injection_patterns,
     normalized_detection_variants,
     patterns_hash,
@@ -184,37 +183,6 @@ class SecurityAnalyzer:
     def _compile_custom_injection_patterns(self) -> list[tuple[re.Pattern, float, str]]:
         return compile_injection_patterns(self.INJECTION_PATTERNS)
 
-    @staticmethod
-    def _compile_custom_injection_pattern(
-        pattern: InjectionPattern,
-    ) -> tuple[re.Pattern, float, str] | None:
-        return compile_injection_pattern(pattern)
-
-    @staticmethod
-    def _normalized_detection_variants(
-        text: str, decoded_text: str, decode_warnings: list[str]
-    ) -> list[str]:
-        return normalized_detection_variants(text, decoded_text, decode_warnings)
-
-    @staticmethod
-    def _best_pattern_occurrences(
-        regex: re.Pattern, normalized_variants: list[str]
-    ) -> tuple[int, list]:
-        from markdown_ingress.core.security_pattern_matching import best_pattern_occurrences
-
-        return best_pattern_occurrences(regex, normalized_variants)
-
-    def _collect_pattern_matches(
-        self,
-        compiled: list[tuple[re.Pattern, float, str]],
-        normalized_variants: list[str],
-    ) -> list[dict]:
-        return collect_pattern_matches(compiled, normalized_variants)
-
-    @staticmethod
-    def _append_decoding_limit_match(matches: list[dict], decode_warnings: list[str]) -> None:
-        append_decoding_limit_match(matches, decode_warnings)
-
     def _detect_patterns(self, text: str) -> tuple[list[dict], list[str]]:
         """
         Detect injection patterns in text.
@@ -225,12 +193,11 @@ class SecurityAnalyzer:
         Returns list of matched patterns with metadata.
         """
         decoded_text, decode_warnings = _decode_html_entities(text)
-        normalized_variants = self._normalized_detection_variants(
+        normalized_variants = normalized_detection_variants(
             text, decoded_text, decode_warnings
         )
-        matches = self._collect_pattern_matches(
-            self._compiled_patterns_for_detection(),
-            normalized_variants,
+        matches = collect_pattern_matches(
+            self._compiled_patterns_for_detection(), normalized_variants
         )
-        self._append_decoding_limit_match(matches, decode_warnings)
+        append_decoding_limit_match(matches, decode_warnings)
         return matches, decode_warnings
