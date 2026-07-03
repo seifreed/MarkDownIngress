@@ -186,13 +186,12 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin, FetchAttemptSharedMixin):
         status_code: int,
         retry_delay: float,
     ) -> None:
-        logger.warning(
-            "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
-            ssl_attempt + 1,
+        self._log_ssl_bypass_retry(
+            state,
+            ssl_attempt,
             remaining_attempts,
-            status_code,
-            state.url,
             retry_delay,
+            status_code=status_code,
         )
         time.sleep(retry_delay)
 
@@ -208,12 +207,11 @@ class SyncSslBypassFetchMixin(SslBypassSharedMixin, FetchAttemptSharedMixin):
             raise exc
 
         retry_delay = ssl_bypass_retry_delay(ssl_attempt)
-        logger.warning(
-            "SSL bypass attempt %d/%d failed for %s: %s, retrying in %.1fs",
-            ssl_attempt + 1,
+        self._log_ssl_bypass_retry(
+            state,
+            ssl_attempt,
             remaining_attempts,
-            state.url,
-            type(exc).__name__,
             retry_delay,
+            exc=exc,
         )
         time.sleep(retry_delay)

@@ -112,6 +112,35 @@ class HttpxFetchSharedMixin:
 class SslBypassSharedMixin:
     """Helpers identical across the sync and async SSL-bypass fetch mixins."""
 
+    def _log_ssl_bypass_retry(
+        self: Any,
+        state: Any,
+        ssl_attempt: int,
+        remaining_attempts: int,
+        retry_delay: float,
+        *,
+        status_code: int | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        if status_code is None:
+            logger.warning(
+                "SSL bypass attempt %d/%d failed for %s: %s, retrying in %.1fs",
+                ssl_attempt + 1,
+                remaining_attempts,
+                state.url,
+                type(exc).__name__,
+                retry_delay,
+            )
+            return
+        logger.warning(
+            "SSL bypass attempt %d/%d failed with %d for %s, retrying in %.1fs",
+            ssl_attempt + 1,
+            remaining_attempts,
+            status_code,
+            state.url,
+            retry_delay,
+        )
+
     def _finish_ssl_bypass_result(
         self: Any,
         response: Any,
