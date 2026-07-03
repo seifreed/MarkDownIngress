@@ -58,12 +58,26 @@ class BenchmarkResult:
     extractor_comparison: dict[str, dict] | None = None
 
 
-def ingest(url: str, **kwargs: Any) -> SafeDocument:
-    """Default benchmark ingest bridge kept for backward-compatible monkeypatching."""
-    # ponytail: keep compatibility with existing tests that monkeypatch benchmark.ingest
+def _resolve_default_benchmark_ingest() -> Callable[..., SafeDocument]:
+    """Resolve the default ingest implementation lazily and cache it."""
     from markdown_ingress.api import ingest as public_ingest
 
-    return cast(SafeDocument, public_ingest(url, **kwargs))
+    return cast(Callable[..., SafeDocument], public_ingest)
+
+
+_default_benchmark_ingest: Callable[..., SafeDocument] | None = None
+
+
+def _get_default_benchmark_ingest() -> Callable[..., SafeDocument]:
+    global _default_benchmark_ingest
+    if _default_benchmark_ingest is None:
+        _default_benchmark_ingest = _resolve_default_benchmark_ingest()
+    return _default_benchmark_ingest
+
+
+def ingest(url: str, **kwargs: Any) -> SafeDocument:
+    """Default benchmark ingest bridge kept for backward-compatible monkeypatching."""
+    return _get_default_benchmark_ingest()(url, **kwargs)
 
 
 class Benchmark:
