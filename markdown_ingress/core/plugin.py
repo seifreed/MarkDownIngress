@@ -24,6 +24,7 @@ PLUGIN_HOOK_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+PLUGIN_LOAD_ERRORS: tuple[type[Exception], ...] = (ImportError, SyntaxError, *PLUGIN_HOOK_ERRORS)
 
 
 @dataclass
@@ -178,7 +179,7 @@ class PluginLoader:
                         loaded_from_file.append(plugin_instance.info.name)
                         loaded_count += 1
 
-            except Exception as exc:  # noqa: BLE001 - bad external plugins are skipped
+            except PLUGIN_LOAD_ERRORS as exc:
                 sys.modules.pop(module_name, None)
                 loaded_count -= self._rollback_file_plugins(py_file, loaded_from_file)
                 _logger.warning("Failed to load plugin from %s: %s", py_file, exc)
