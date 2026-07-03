@@ -66,7 +66,12 @@ def _read_pending_count(queue_obj: Any) -> int | None:
             return None
 
 
-def _count_unknown_ttl_jobs(queue_obj: Any, logger: logging.Logger) -> int:
+def _count_unknown_ttl_jobs(
+    queue_obj: Any,
+    logger: logging.Logger,
+    now: datetime,
+) -> int:
+    """Count legacy jobs with unknown TTL that are still visible at ``now``."""
     connect = getattr(queue_obj, "_connect", None)
     if not callable(connect):
         return 0
@@ -81,7 +86,6 @@ def _count_unknown_ttl_jobs(queue_obj: Any, logger: logging.Logger) -> int:
         logger.warning("Error counting unknown TTL jobs: %s", exc, exc_info=True)
         return 0
     count = 0
-    now = datetime.now(UTC)
     for row in rows:
         completed_at = row["completed_at"] if hasattr(row, "keys") else row[0]
         legacy_expires_at = row["legacy_expires_at"] if hasattr(row, "keys") else row[1]
@@ -109,7 +113,8 @@ def build_job_subsystem_snapshot(
     if current_queue is not None:
         seen_db_paths.add(str(getattr(current_queue, "db_path", inputs.job_db_path)))
     pending_unknown = current_pending is None
-    current_unknown_ttl_jobs = _count_unknown_ttl_jobs(current_queue, inputs.logger)
+    snapshot_now = datetime.now(UTC)
+    current_unknown_ttl_jobs = _count_unknown_ttl_jobs(current_queue, inputs.logger, snapshot_now)
     for legacy_queue in inputs.history:
         raw_legacy_db_path = getattr(legacy_queue, "db_path", None)
         legacy_db_path = str(raw_legacy_db_path) if raw_legacy_db_path is not None else None
@@ -122,7 +127,9 @@ def build_job_subsystem_snapshot(
             pending_unknown = True
             continue
         legacy_pending += legacy_value
-        legacy_unknown_ttl_jobs += _count_unknown_ttl_jobs(legacy_queue, inputs.logger)
+        legacy_unknown_ttl_jobs += _count_unknown_ttl_jobs(
+            legacy_queue, inputs.logger, snapshot_now
+        )
         legacy_visible_queues += 1
         if legacy_db_path is not None:
             legacy_db_paths.append(legacy_db_path)
