@@ -18,7 +18,7 @@ from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCas
 from markdown_ingress.application.batch_state import PROGRESS_CALLBACK_ERRORS
 from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.config_validation import Mode
+from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
@@ -60,30 +60,21 @@ _BATCH_PROCESSOR_OPTION_NAMES = (
     "base_config",
     "explicit_overrides",
 )
-_BATCH_PROCESSOR_OPTION_NAME_SET = frozenset(_BATCH_PROCESSOR_OPTION_NAMES)
 
 
 def _normalize_batch_processor_options(
     args: tuple[object, ...],
     options: BatchProcessorOptions,
 ) -> BatchProcessorOptions:
-    if len(args) > len(_BATCH_PROCESSOR_OPTION_NAMES):
-        raise TypeError(
-            f"BatchProcessor() expected at most {len(_BATCH_PROCESSOR_OPTION_NAMES)} arguments"
-        )
-
-    unexpected = set(options) - _BATCH_PROCESSOR_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"BatchProcessor() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _BATCH_PROCESSOR_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"BatchProcessor() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(BatchProcessorOptions, normalized)
+    return cast(
+        BatchProcessorOptions,
+        collect_option_values(
+            "BatchProcessor()",
+            _BATCH_PROCESSOR_OPTION_NAMES,
+            args,
+            options,
+        ),
+    )
 
 
 def _ensure_safe_document(document: object) -> SafeDocument:

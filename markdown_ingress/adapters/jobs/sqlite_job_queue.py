@@ -42,6 +42,7 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
 )
 from markdown_ingress.adapters.jobs.job_state_machine import JobStateMachineMixin
 from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.interfaces import IWebhookNotifier
 
 _logger = logging.getLogger(__name__)
@@ -72,31 +73,22 @@ _PERSISTENT_JOB_QUEUE_OPTION_NAMES = (
     "allow_local_webhooks",
     "job_timeout_seconds",
 )
-_PERSISTENT_JOB_QUEUE_OPTION_NAME_SET = frozenset(_PERSISTENT_JOB_QUEUE_OPTION_NAMES)
 
 
 def _normalize_persistent_job_queue_options(
     args: tuple[object, ...],
     options: PersistentJobQueueOptions,
 ) -> PersistentJobQueueOptions:
-    if len(args) > len(_PERSISTENT_JOB_QUEUE_OPTION_NAMES):
-        raise TypeError(
-            f"PersistentJobQueue() expected at most "
-            f"{len(_PERSISTENT_JOB_QUEUE_OPTION_NAMES) + 1} arguments"
-        )
-
-    unexpected = set(options) - _PERSISTENT_JOB_QUEUE_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"PersistentJobQueue() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _PERSISTENT_JOB_QUEUE_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"PersistentJobQueue() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(PersistentJobQueueOptions, normalized)
+    return cast(
+        PersistentJobQueueOptions,
+        collect_option_values(
+            "PersistentJobQueue()",
+            _PERSISTENT_JOB_QUEUE_OPTION_NAMES,
+            args,
+            options,
+            positional_offset=1,
+        ),
+    )
 
 
 def _job_queue_notifier(

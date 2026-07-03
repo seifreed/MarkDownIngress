@@ -17,7 +17,7 @@ from markdown_ingress.api_facade import (
 )
 from markdown_ingress.api_runtime import resolve_batch_api_options
 from markdown_ingress.config_models import IngestConfig
-from markdown_ingress.config_validation import Mode
+from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
@@ -47,30 +47,22 @@ _RETRY_INGEST_OPTION_NAMES = (
     "initial_timeout",
     "max_timeout",
 )
-_RETRY_INGEST_OPTION_NAME_SET = frozenset(_RETRY_INGEST_OPTION_NAMES)
 
 
 def _normalize_retry_ingest_options(
     args: tuple[object, ...],
     options: RetryIngestOptions,
 ) -> RetryIngestOptions:
-    if len(args) > len(_RETRY_INGEST_OPTION_NAMES):
-        raise TypeError(
-            f"retry_ingest() expected at most {len(_RETRY_INGEST_OPTION_NAMES) + 1} arguments"
-        )
-
-    unexpected = set(options) - _RETRY_INGEST_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"retry_ingest() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _RETRY_INGEST_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"retry_ingest() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(RetryIngestOptions, normalized)
+    return cast(
+        RetryIngestOptions,
+        collect_option_values(
+            "retry_ingest()",
+            _RETRY_INGEST_OPTION_NAMES,
+            args,
+            options,
+            positional_offset=1,
+        ),
+    )
 
 
 def ingest(

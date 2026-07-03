@@ -4,6 +4,7 @@ import time
 from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.document_builder import process_fetched_content
 from markdown_ingress.core.hashing import Hasher
 from markdown_ingress.core.inflight import (
@@ -69,30 +70,21 @@ _ORCHESTRATOR_OPTION_NAMES = (
     "link_analyzer",
     "inflight_registry",
 )
-_ORCHESTRATOR_OPTION_NAME_SET = frozenset(_ORCHESTRATOR_OPTION_NAMES)
 
 
 def _normalize_orchestrator_options(
     args: tuple[object, ...],
     options: OrchestratorOptions,
 ) -> OrchestratorOptions:
-    if len(args) > len(_ORCHESTRATOR_OPTION_NAMES):
-        raise TypeError(
-            f"IngestOrchestrator() expected at most {len(_ORCHESTRATOR_OPTION_NAMES)} arguments"
-        )
-
-    unexpected = set(options) - _ORCHESTRATOR_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"IngestOrchestrator() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _ORCHESTRATOR_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"IngestOrchestrator() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(OrchestratorOptions, normalized)
+    return cast(
+        OrchestratorOptions,
+        collect_option_values(
+            "IngestOrchestrator()",
+            _ORCHESTRATOR_OPTION_NAMES,
+            args,
+            options,
+        ),
+    )
 
 
 class IngestOrchestrator:

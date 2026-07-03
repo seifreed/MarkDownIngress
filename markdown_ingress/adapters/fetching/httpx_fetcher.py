@@ -24,6 +24,7 @@ from markdown_ingress.adapters.fetching.httpx_fetch_sync import SyncHttpxFetchMi
 from markdown_ingress.adapters.fetching.request_policy import FetchRequestPolicyMixin
 from markdown_ingress.adapters.fetching.response_content import ResponseContentMixin
 from markdown_ingress.adapters.fetching.ssl_bypass_fetch import SslBypassFetchMixin
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
 from markdown_ingress.stealth_browser_profiles import ADVANCED_USER_AGENTS
@@ -71,28 +72,16 @@ _FETCHER_OPTION_NAMES = (
     "max_response_size",
     "failure_decay_seconds",
 )
-_FETCHER_OPTION_NAME_SET = frozenset(_FETCHER_OPTION_NAMES)
 
 
 def _normalize_fetcher_options(
     args: tuple[object, ...],
     options: FetcherOptions,
 ) -> FetcherOptions:
-    if len(args) > len(_FETCHER_OPTION_NAMES):
-        raise TypeError(f"Fetcher() expected at most {len(_FETCHER_OPTION_NAMES)} arguments")
-
-    unexpected = set(options) - _FETCHER_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"Fetcher() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _FETCHER_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"Fetcher() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(FetcherOptions, normalized)
+    return cast(
+        FetcherOptions,
+        collect_option_values("Fetcher()", _FETCHER_OPTION_NAMES, args, options),
+    )
 
 
 class Fetcher(

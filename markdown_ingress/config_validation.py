@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import MISSING, fields
 from typing import Any, Literal, get_args
 
@@ -282,3 +283,31 @@ def collect_init_values(
         )
 
     return values, frozenset(explicit)
+
+
+def collect_option_values(
+    owner: str,
+    option_names: tuple[str, ...],
+    args: tuple[object, ...],
+    options: Mapping[str, object],
+    *,
+    positional_offset: int = 0,
+) -> dict[str, object]:
+    """Resolve legacy positional options and keyword overrides for hand-written APIs."""
+    if len(args) > len(option_names):
+        raise TypeError(
+            f"{owner} expected at most {len(option_names) + positional_offset} arguments"
+        )
+
+    unexpected = set(options) - set(option_names)
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"{owner} got an unexpected keyword argument '{name}'")
+
+    values = dict(options)
+    for index, value in enumerate(args):
+        name = option_names[index]
+        if name in values:
+            raise TypeError(f"{owner} got multiple values for argument '{name}'")
+        values[name] = value
+    return values

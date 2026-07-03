@@ -3,7 +3,7 @@
 import importlib
 import importlib.util
 import logging
-from typing import Any, TypedDict, Unpack
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.adapters.rendering.renderer_navigation import (
     CONTENT_SELECTORS as DEFAULT_CONTENT_SELECTORS,
@@ -28,6 +28,7 @@ from markdown_ingress.adapters.rendering.renderer_support import (
     timeout_seconds_to_ms,
 )
 from markdown_ingress.config_models import RenderConfig
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.models import FetchResult
 
@@ -94,27 +95,16 @@ _RENDERER_OPTION_NAMES = (
     "screenshot",
     "allow_local_urls",
 )
-_RENDERER_OPTION_NAME_SET = frozenset(_RENDERER_OPTION_NAMES)
 
 
 def _normalize_renderer_inputs(
     args: tuple[object, ...],
     options: RendererOptions,
 ) -> RendererConfigInputs:
-    if len(args) > len(_RENDERER_OPTION_NAMES):
-        raise TypeError(f"Renderer() expected at most {len(_RENDERER_OPTION_NAMES)} arguments")
-
-    unexpected = set(options) - _RENDERER_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"Renderer() got an unexpected keyword argument '{name}'")
-
-    parsed: dict[str, Any] = dict(options)
-    for index, value in enumerate(args):
-        name = _RENDERER_OPTION_NAMES[index]
-        if name in parsed:
-            raise TypeError(f"Renderer() got multiple values for argument '{name}'")
-        parsed[name] = value
+    parsed = cast(
+        dict[str, Any],
+        collect_option_values("Renderer()", _RENDERER_OPTION_NAMES, args, options),
+    )
 
     return RendererConfigInputs(
         config=parsed.get("config"),
