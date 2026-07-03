@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import os
 from urllib.parse import urlsplit, urlunsplit
 
-from markdown_ingress.core.config_env import _FALSE_STRINGS as _ALLOW_LOCAL_FALSE_VALUES
-from markdown_ingress.core.config_env import _TRUE_STRINGS as _ALLOW_LOCAL_TRUE_VALUES
+from markdown_ingress.core.config_env import read_bool_env
 
 logger = logging.getLogger(__name__)
 
@@ -30,21 +28,7 @@ def resolve_allow_local_urls(allow_local_urls: bool | None) -> bool:
     if allow_local_urls is not None:
         return bool(allow_local_urls)
 
-    raw = os.getenv("MDI_ALLOW_LOCAL_URLS")
-    if raw is None:
-        return False
-
-    normalized = raw.strip().lower()
-    if normalized in _ALLOW_LOCAL_TRUE_VALUES:
-        return True
-    if normalized in _ALLOW_LOCAL_FALSE_VALUES:
-        return False
-
-    logger.warning(
-        "Invalid MDI_ALLOW_LOCAL_URLS=%r for SSRF resolution; defaulting to False.",
-        raw,
-    )
-    return False
+    return read_bool_env("MDI_ALLOW_LOCAL_URLS", False)
 
 
 def normalize_domain_pattern(raw_domain: str) -> str:

@@ -34,12 +34,14 @@ from markdown_ingress.core.document_security_patterns import (
 from markdown_ingress.core.ingest_stats import timed_stage_with_snapshot
 from markdown_ingress.core.interfaces import IExtractor, IMarkdownConverter, ITokenEstimator
 from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.core.security_engine import SecurityEngine
+from markdown_ingress.core.security_engine import SecurityEngine, _dedupe_preserving_order
 from markdown_ingress.core.structured import (
     ChunkBuilder,
     HTMLStructureExtractor,
 )
 from markdown_ingress.models import FetchResult, SafeDocument
+
+__all__ = ["_dedupe_preserving_order"]
 
 
 def register_document_builder_factories(

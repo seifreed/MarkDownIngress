@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Collection
 from dataclasses import fields
 from typing import Any
@@ -12,7 +11,7 @@ from markdown_ingress.config_models import (
     _validate_output_profile_name,
     _validate_output_representations,
 )
-from markdown_ingress.core.config_env import EnvVarMapping
+from markdown_ingress.core.config_env import EnvVarMapping, read_env
 from markdown_ingress.core.config_env import parse_csv_string_list as _parse_csv_string_list
 from markdown_ingress.core.config_env_numeric import validate_numeric_fields
 from markdown_ingress.core.config_env_restore import FieldRestoreContext, restore_field
@@ -36,7 +35,7 @@ def _apply_env_mapping_overrides(
     explicit: set,
 ) -> None:
     for env_var, (attr_name, converter) in env_mapping.items():
-        value = os.getenv(env_var)
+        value = read_env(env_var)
         if value is None:
             continue
         try:
@@ -53,7 +52,7 @@ def _apply_env_mapping_overrides(
 
 
 def _apply_custom_patterns_override(config: Any, explicit: set) -> None:
-    custom_patterns_env = os.getenv("MDI_CUSTOM_PATTERNS")
+    custom_patterns_env = read_env("MDI_CUSTOM_PATTERNS")
     if not custom_patterns_env:
         return
     patterns = _parse_csv_string_list("custom_patterns", custom_patterns_env)
@@ -74,7 +73,7 @@ def _apply_custom_patterns_override(config: Any, explicit: set) -> None:
 
 
 def _apply_csv_list_override(config: Any, explicit: set, env_var: str, attr_name: str) -> None:
-    value = os.getenv(env_var)
+    value = read_env(env_var)
     if value is None:
         return
     try:
@@ -237,8 +236,8 @@ def apply_env_overrides(config: Any, env_mapping: EnvVarMapping) -> Any:
         for config_field in fields(type(config))
         if not config_field.name.startswith("_")
     }
-    env_policy = os.getenv("MDI_POLICY")
-    env_policy_name = os.getenv("MDI_POLICY_NAME")
+    env_policy = read_env("MDI_POLICY")
+    env_policy_name = read_env("MDI_POLICY_NAME")
     if env_policy is not None and env_policy_name is not None and env_policy != env_policy_name:
         raise ValueError(
             "Environment cannot define both MDI_POLICY and MDI_POLICY_NAME " "with different values"

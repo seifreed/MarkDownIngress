@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from markdown_ingress.config_validation import ensure_finite_float, ensure_int
+from markdown_ingress.core.config_env import read_env
 from markdown_ingress.core.ssrf import (
     is_blocked_hostname,
     is_blocked_ip_address,
@@ -38,7 +39,7 @@ def allowed_db_roots() -> list[Path]:
     """Return directories where the persistent job DB is allowed to live."""
     import tempfile
 
-    override = os.getenv("MDI_ALLOWED_DB_DIRS")
+    override = read_env("MDI_ALLOWED_DB_DIRS")
     if override:
         roots: list[Path] = []
         for raw_root in override.split(os.pathsep):

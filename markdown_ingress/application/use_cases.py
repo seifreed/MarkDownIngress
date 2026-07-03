@@ -298,7 +298,8 @@ class IngestUseCase:
             get_shared_fetcher=self._fetcher_mgr.get,
             playwright_available=self.playwright_available,
         )
-        if context.requested_mode == "auto":
+        run_mode = context.resolved_config.mode
+        if run_mode == "auto":
             document = _AutoModeSelector(pipeline, self.playwright_available).execute(
                 url,
                 context.resolved_config,

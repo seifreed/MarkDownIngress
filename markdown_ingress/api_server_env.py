@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import datetime
 import logging
-import math
-import os
 from dataclasses import dataclass
+
+from markdown_ingress.core.config_env import (
+    read_bool_env,
+    read_env,
+    read_optional_float_env,
+    read_positive_int_env,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -58,39 +63,39 @@ class APIServerAuthEnvConfig:
 
 def load_api_server_env_config() -> APIServerEnvConfig:
     """Build a typed API server configuration snapshot from environment values."""
-    webhook_retry_delay = _read_optional_float_env(
+    webhook_retry_delay = read_optional_float_env(
         "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
     )
     return APIServerEnvConfig(
-        job_ttl_seconds=_read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600),
-        job_db_path=os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3"),
-        job_workers=_read_positive_int_env("MDI_API_JOB_WORKERS", 2),
-        max_queued_jobs=_read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100),
-        webhook_max_retries=_read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2),
+        job_ttl_seconds=read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600),
+        job_db_path=read_env("MDI_API_JOB_DB_PATH") or "artifacts/api_jobs/jobs.sqlite3",
+        job_workers=read_positive_int_env("MDI_API_JOB_WORKERS", 2),
+        max_queued_jobs=read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100),
+        webhook_max_retries=read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2),
         webhook_retry_delay_seconds=0.25 if webhook_retry_delay is None else webhook_retry_delay,
-        execution_timeout_seconds=_read_optional_float_env(
+        execution_timeout_seconds=read_optional_float_env(
             "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
         ),
-        allow_local_webhooks=_read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False),
+        allow_local_webhooks=read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False),
     )
 
 
 def load_api_server_rate_limit_config() -> APIRateLimitEnvConfig:
     """Build a typed rate-limit configuration snapshot from environment values."""
     return APIRateLimitEnvConfig(
-        requests=_read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100),
-        window_seconds=_read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60),
-        backend=os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower(),
-        redis_url=os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0"),
-        redis_prefix=os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:"),
+        requests=read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100),
+        window_seconds=read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60),
+        backend=(read_env("MDI_RATE_LIMIT_BACKEND") or "memory").strip().lower(),
+        redis_url=read_env("MDI_RATE_LIMIT_REDIS_URL") or "redis://localhost:6379/0",
+        redis_prefix=read_env("MDI_RATE_LIMIT_REDIS_PREFIX") or "mdi:rl:",
     )
 
 
 def load_api_server_auth_config() -> APIServerAuthEnvConfig:
     """Build a typed API auth/trusted-proxy configuration snapshot from environment values."""
-    raw_api_key = os.getenv("MDI_API_KEY")
+    raw_api_key = read_env("MDI_API_KEY")
     api_key_config_error = raw_api_key is not None and raw_api_key.strip() == ""
-    trusted_proxy_ips = frozenset(_parse_csv_set(os.getenv("MDI_TRUSTED_PROXY_IPS", "")))
+    trusted_proxy_ips = frozenset(_parse_csv_set(read_env("MDI_TRUSTED_PROXY_IPS") or ""))
     return APIServerAuthEnvConfig(
         optional_api_key=None if api_key_config_error else raw_api_key,
         api_key_config_error=api_key_config_error,
@@ -101,77 +106,19 @@ def load_api_server_auth_config() -> APIServerAuthEnvConfig:
 def load_api_server_model_validation_config() -> APIServerModelValidationConfig:
     """Build typed validation limit configuration for API request models."""
     return APIServerModelValidationConfig(
-        max_batch_urls=_read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100),
-        max_timeout_seconds=_read_positive_int_env("MDI_API_MAX_TIMEOUT", 300),
-        max_chunk_size=_read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000),
-        max_custom_patterns=_read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000),
-        max_domain_policies=_read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000),
+        max_batch_urls=read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100),
+        max_timeout_seconds=read_positive_int_env("MDI_API_MAX_TIMEOUT", 300),
+        max_chunk_size=read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000),
+        max_custom_patterns=read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000),
+        max_domain_policies=read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000),
     )
 
 
 def load_api_server_listen_config() -> tuple[str, int]:
     """Build host/port configuration for API server startup."""
-    host = os.getenv("MDI_HOST", "127.0.0.1")
-    port = _read_positive_int_env("MDI_PORT", 8000)
+    host = read_env("MDI_HOST") or "127.0.0.1"
+    port = read_positive_int_env("MDI_PORT", 8000)
     return host, port
-
-
-def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
-        return default
-    if value < minimum:
-        _logger.warning(
-            "Invalid value for %s=%r. Minimum is %d. Using default %d.", name, raw, minimum, default
-        )
-        return default
-    return value
-
-
-def _read_bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    _logger.warning("Invalid boolean for %s=%r. Using default %s.", name, raw, default)
-    return default
-
-
-def _read_optional_float_env(
-    name: str, *, minimum: float = 0.0, exclusive_minimum: bool = False
-) -> float | None:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    try:
-        value = float(raw)
-    except ValueError:
-        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
-        return None
-    if not math.isfinite(value):
-        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
-        return None
-    is_invalid = value < minimum or (exclusive_minimum and value == minimum)
-    if is_invalid:
-        comparator = ">" if exclusive_minimum else ">="
-        _logger.warning(
-            "Invalid value for %s=%r. Expected %s %s. Disabling optional setting.",
-            name,
-            raw,
-            comparator,
-            minimum,
-        )
-        return None
-    return value
 
 
 def _parse_csv_set(value: str) -> set[str]:
@@ -203,7 +150,7 @@ def _detect_multiworker_environment() -> bool:
     # Gunicorn and Uvicorn use worker-count environment variables.
     # Invalid values should degrade gracefully instead of crashing import.
     for env_name in ("GUNICORN_WORKERS", "UVICORN_WORKERS"):
-        raw = os.environ.get(env_name)
+        raw = read_env(env_name)
         if not raw:
             continue
         try:
@@ -211,6 +158,8 @@ def _detect_multiworker_environment() -> bool:
                 return True
         except ValueError:
             _logger.warning(
-                "Invalid integer for %s=%r. Assuming single-worker deployment.", env_name, raw
+                "Invalid integer for %s=%r. Assuming single-worker deployment.",
+                env_name,
+                raw,
             )
     return False

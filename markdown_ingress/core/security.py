@@ -2,10 +2,10 @@
 Security analysis module - Prompt injection detection
 """
 
-import logging
-import os
 import re
 import threading
+
+from markdown_ingress.core.config_env import read_float_env, read_positive_int_env
 
 # Re-export all static data so existing callers that do
 #   ``from markdown_ingress.core.security import InjectionPattern``
@@ -87,42 +87,11 @@ from markdown_ingress.core.security_text import (
 )
 from markdown_ingress.models import InjectionAnalysis
 
-_log = logging.getLogger(__name__)
-_logger = logging.getLogger(__name__)
-
-
-def _env_int(name: str, default: int, minimum: int = 1) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        _log.warning("Invalid integer for %s=%r; using default %d.", name, raw, default)
-        return default
-    return max(minimum, value)
-
-
-def _env_float(name: str, default: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        _log.warning("Invalid float for %s=%r; using default %.2f.", name, raw, default)
-        return default
-    if not minimum <= value <= maximum:
-        _log.warning("Out-of-range %s=%r; using default %.2f.", name, raw, default)
-        return default
-    return value
-
-
 # Security fix (S6): escalate injection score when a single pattern repeats
 # many times. Without this, payloads built from low-weight (0.3) patterns can
 # stack just under the warn threshold (0.4) yet clearly exhibit injection intent.
-_INJECTION_COUNT_FLOOR = _env_int("MDI_INJECTION_COUNT_FLOOR", 5, minimum=1)
-_INJECTION_COUNT_FLOOR_SCORE = _env_float(
+_INJECTION_COUNT_FLOOR = read_positive_int_env("MDI_INJECTION_COUNT_FLOOR", 5, minimum=1)
+_INJECTION_COUNT_FLOOR_SCORE = read_float_env(
     "MDI_INJECTION_COUNT_FLOOR_SCORE", 0.4, minimum=0.0, maximum=1.0
 )
 

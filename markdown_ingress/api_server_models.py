@@ -72,7 +72,7 @@ __all__ = [
 
 
 def _allow_local_webhooks_enabled() -> bool:
-    return _API_SERVER_ENV_CONFIG.allow_local_webhooks
+    return load_api_server_env_config().allow_local_webhooks
 
 
 class DomainPolicyModel(BaseModel):

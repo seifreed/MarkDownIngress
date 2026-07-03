@@ -2,15 +2,125 @@
 
 from __future__ import annotations
 
+import logging
+import math
+import os
 from collections.abc import Callable
 
 import markdown_ingress.config_validation as config_validation
 
+_logger = logging.getLogger(__name__)
 EnvConverter = Callable[[str], object]
 EnvVarMapping = dict[str, tuple[str, EnvConverter]]
 
 _TRUE_STRINGS = frozenset({"true", "1", "yes", "on", "enabled"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off", "disabled"})
+
+
+def read_env(name: str) -> str | None:
+    """Read an environment variable as a raw string."""
+    return os.getenv(name)
+
+
+def read_bool_env(name: str, default: bool = False) -> bool:
+    """Parse a boolean-like environment value."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in _TRUE_STRINGS:
+        return True
+    if normalized in _FALSE_STRINGS:
+        return False
+    _logger.warning(
+        "Invalid boolean for %s=%r. Using default %s.",
+        name,
+        raw,
+        default,
+    )
+    return default
+
+
+def read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read a non-empty integer >= minimum, otherwise return ``default``."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        _logger.warning("Invalid integer for %s=%r. Using default %d.", name, raw, default)
+        return default
+    if value < minimum:
+        _logger.warning(
+            "Invalid value for %s=%r. Minimum is %d. Using default %d.",
+            name,
+            raw,
+            minimum,
+            default,
+        )
+        return default
+    return value
+
+
+def read_float_env(
+    name: str,
+    default: float,
+    *,
+    minimum: float = 0.0,
+    maximum: float | None = None,
+) -> float:
+    """Read a finite float within bounds, otherwise return ``default``."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        _logger.warning("Invalid float for %s=%r. Using default %.2f.", name, raw, default)
+        return default
+    if not math.isfinite(value):
+        _logger.warning("Invalid float for %s=%r. Using default %.2f.", name, raw, default)
+        return default
+    if value < minimum or (maximum is not None and value > maximum):
+        comparator = f"between {minimum} and {maximum}" if maximum is not None else f">= {minimum}"
+        _logger.warning(
+            "Invalid float for %s=%r. Expected %s. Using default %.2f.",
+            name,
+            raw,
+            comparator,
+            default,
+        )
+        return default
+    return value
+
+
+def read_optional_float_env(
+    name: str, *, minimum: float = 0.0, exclusive_minimum: bool = False
+) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
+        return None
+    if not math.isfinite(value):
+        _logger.warning("Invalid float for %s=%r. Disabling optional setting.", name, raw)
+        return None
+    is_invalid = value < minimum or (exclusive_minimum and value == minimum)
+    if is_invalid:
+        comparator = ">" if exclusive_minimum else ">="
+        _logger.warning(
+            "Invalid value for %s=%r. Expected %s %s. Disabling optional setting.",
+            name,
+            raw,
+            comparator,
+            minimum,
+        )
+        return None
+    return value
 
 
 def parse_csv_string_list(field_name: str, value: str) -> list[str]:
