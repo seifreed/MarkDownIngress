@@ -123,6 +123,26 @@ class BatchProcessor:
             ingest_use_case=IngestUseCase(playwright_available=RENDERER_AVAILABLE)
         )
 
+    def __enter__(self) -> BatchProcessor:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc: object | None,
+        tb: object | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        owns_ingest_use_case = getattr(self._batch_use_case, "_owns_ingest_use_case", False)
+        if callable(close := getattr(self._batch_use_case, "close", None)):
+            close()
+        if not owns_ingest_use_case:
+            close_ingest = getattr(self._batch_use_case.ingest_use_case, "close", None)
+            if callable(close_ingest):
+                close_ingest()
+
     def _build_config(self) -> IngestConfig:
         if self._base_config is None:
             return IngestConfig(
