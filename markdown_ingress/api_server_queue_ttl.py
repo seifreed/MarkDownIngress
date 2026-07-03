@@ -8,8 +8,7 @@ from typing import cast
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import LEGACY_UNKNOWN_TTL_SECONDS
 from markdown_ingress.api_server_env import _parse_iso_datetime_utc
-
-_ACTIVE_JOB_STATUSES = {"queued", "running"}
+from markdown_ingress.api_server_job_queue_states import ACTIVE_JOB_STATUSES as _ACTIVE_JOB_STATUSES
 
 
 def _legacy_unknown_ttl_expires_at(

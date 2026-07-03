@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Set
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ class JobQueueSelection:
     start_repair: bool = False
 
 
-def select_job_queue_for_use(queue: Any | None, repairable_states: set[str]) -> JobQueueSelection:
+def select_job_queue_for_use(queue: Any | None, repairable_states: Set[str]) -> JobQueueSelection:
     if queue is None:
         raise RuntimeError("Job queue is unavailable")
     state = getattr(queue, "state", None)
@@ -31,7 +32,7 @@ def select_job_queue_for_use(queue: Any | None, repairable_states: set[str]) -> 
 def current_queue_after_repair_close_failure(
     queue_to_repair: Any,
     current_queue: Any | None,
-    repairable_states: set[str],
+    repairable_states: Set[str],
 ) -> Any | None:
     if getattr(queue_to_repair, "state", None) not in repairable_states:
         return None
@@ -46,7 +47,7 @@ def current_queue_if_expected_changed(expected_queue: Any, current_queue: Any) -
     return None
 
 
-def queue_if_expected_state(expected_queue: Any, states: set[str]) -> Any | None:
+def queue_if_expected_state(expected_queue: Any, states: Set[str]) -> Any | None:
     if getattr(expected_queue, "state", None) in states:
         return expected_queue
     return None

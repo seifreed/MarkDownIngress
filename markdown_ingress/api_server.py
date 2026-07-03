@@ -73,6 +73,12 @@ from markdown_ingress.api_server_job_queue_selection import (
     queue_if_expected_state,
     select_job_queue_for_use,
 )
+from markdown_ingress.api_server_job_queue_states import (
+    RECOVERABLE_QUEUE_STATES,
+    REPAIRABLE_QUEUE_STATES,
+    STATE_BACKEND_ERROR,
+    STATE_EXTERNAL_OWNER,
+)
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import (
     _LEGACY_QUEUE_PRUNE_ERROR_THRESHOLD,
@@ -206,8 +212,8 @@ _JOB_QUEUE_REPAIR_STOP: threading.Event | None = None
 _JOB_QUEUE_WATCHDOG_THREAD: threading.Thread | None = None
 _JOB_QUEUE_WATCHDOG_STOP: threading.Event | None = None
 _JOB_QUEUE_HISTORY: list[PersistentJobQueue] = []
-_RECOVERABLE_QUEUE_STATES = {"closing", "lease_lost", "external_owner", "backend_error"}
-_REPAIRABLE_QUEUE_STATES = _RECOVERABLE_QUEUE_STATES | {"closed"}
+_RECOVERABLE_QUEUE_STATES = RECOVERABLE_QUEUE_STATES
+_REPAIRABLE_QUEUE_STATES = REPAIRABLE_QUEUE_STATES
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
 
@@ -253,7 +259,7 @@ def _replace_job_queue_if_current(expected_queue, replacement_queue) -> bool:
 
 
 def _promote_external_owner_queue(expected_queue):
-    if getattr(expected_queue, "state", None) == "external_owner":
+    if getattr(expected_queue, "state", None) == STATE_EXTERNAL_OWNER:
         return expected_queue
     replacement_queue = _ExternalOwnerJobQueue(getattr(expected_queue, "db_path", JOB_DB_PATH))
     if _replace_job_queue_if_current(expected_queue, replacement_queue):
@@ -275,7 +281,7 @@ def _queue_if_expected_state(expected_queue, states: set[str]):
 def _replacement_for_runtime_build_error(expected_queue, exc: RuntimeError):
     if _is_active_owner_error(exc):
         return _promote_external_owner_queue(expected_queue)
-    if getattr(expected_queue, "state", None) == "backend_error":
+    if getattr(expected_queue, "state", None) == STATE_BACKEND_ERROR:
         return expected_queue
     return None
 
@@ -303,7 +309,7 @@ def _build_replacement_queue_or_current(expected_queue):
             raise
         except (SQLiteError, OSError):
             fallback_queue = _queue_if_expected_state(
-                expected_queue, {"backend_error", "external_owner"}
+                expected_queue, {STATE_BACKEND_ERROR, STATE_EXTERNAL_OWNER}
             )
             if fallback_queue is not None:
                 return fallback_queue
@@ -362,7 +368,7 @@ def _wait_for_next_job_queue_repair_attempt(stop_event: threading.Event, state: 
 def _maybe_wait_for_external_owner_backend(
     queue: Any, state: str | None, stop_event: threading.Event
 ) -> tuple[str | None, bool]:
-    if state != "external_owner":
+    if state != STATE_EXTERNAL_OWNER:
         return state, False
     try:
         backend_still_owned = _external_owner_backend_still_owned(queue)

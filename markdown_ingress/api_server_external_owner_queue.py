@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import JobRecord, PersistentJobQueue
+from markdown_ingress.api_server_job_queue_states import ACTIVE_JOB_STATUSES
 from markdown_ingress.api_server_queue_ttl import (
-    _ACTIVE_JOB_STATUSES,
     _completed_row_with_ttl_is_expired,
     _completed_row_without_ttl_is_expired,
 )
@@ -60,7 +60,7 @@ class _ExternalOwnerJobQueue:
 
     @staticmethod
     def _row_is_expired(row: sqlite3.Row) -> bool:
-        if row["status"] in _ACTIVE_JOB_STATUSES:
+        if row["status"] in ACTIVE_JOB_STATUSES:
             return False
 
         now_dt = datetime.now(UTC)
