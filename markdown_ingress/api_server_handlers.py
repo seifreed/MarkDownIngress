@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 
@@ -39,21 +39,7 @@ def _handle_handler_exception(message: str, exc_ctx: object, exc: Exception) -> 
     raise_runtime_http_error(exc)
 
 
-async def _run_to_thread(
-    message: str,
-    exc_ctx: object,
-    func: Callable[..., Any],
-    func_args: tuple[Any, ...] = (),
-    func_kwargs: dict[str, Any] | None = None,
-) -> Any:
-    if func_kwargs is None:
-        func_kwargs = {}
-    try:
-        return await asyncio.to_thread(func, *func_args, **func_kwargs)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        _handle_handler_exception(message, exc_ctx, exc)
+_RunMode = Literal["thread", "awaitable"]
 
 
 def _run_blocking(
@@ -63,6 +49,7 @@ def _run_blocking(
     func_args: tuple[Any, ...] = (),
     func_kwargs: dict[str, Any] | None = None,
 ) -> Any:
+    """Execute a synchronous handler path with unified transport error mapping."""
     if func_kwargs is None:
         func_kwargs = {}
     try:
@@ -73,6 +60,41 @@ def _run_blocking(
         _handle_handler_exception(message, exc_ctx, exc)
 
 
+async def _run_handler(
+    message: str,
+    exc_ctx: object,
+    func: Callable[..., Any],
+    run_mode: _RunMode,
+    func_args: tuple[Any, ...] = (),
+    func_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    try:
+        if run_mode == "thread":
+            return await asyncio.to_thread(func, *func_args, **(func_kwargs or {}))
+        return await func(*func_args, **(func_kwargs or {}))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _handle_handler_exception(message, exc_ctx, exc)
+
+
+async def _run_to_thread(
+    message: str,
+    exc_ctx: object,
+    func: Callable[..., Any],
+    func_args: tuple[Any, ...] = (),
+    func_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    return await _run_handler(
+        message,
+        exc_ctx,
+        func,
+        "thread",
+        func_args,
+        func_kwargs,
+    )
+
+
 async def _run_async(
     message: str,
     exc_ctx: object,
@@ -80,14 +102,7 @@ async def _run_async(
     func_args: tuple[Any, ...] = (),
     func_kwargs: dict[str, Any] | None = None,
 ) -> Any:
-    if func_kwargs is None:
-        func_kwargs = {}
-    try:
-        return await func(*func_args, **func_kwargs)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        _handle_handler_exception(message, exc_ctx, exc)
+    return await _run_handler(message, exc_ctx, func, "awaitable", func_args, func_kwargs)
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
