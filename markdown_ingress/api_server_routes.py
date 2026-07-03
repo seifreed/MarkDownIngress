@@ -214,41 +214,29 @@ def register_api_routes(
     health_detailed = _build_health_detailed(providers)
     root = _build_root(providers)
 
-    app.post(
-        "/api/v1/ingest",
-        response_model=IngestResponse,
-        dependencies=protected_dependencies,
-    )(ingest_endpoint)
-    app.post(
-        "/api/v1/ingest/retry",
-        response_model=IngestResponse,
-        dependencies=protected_dependencies,
-    )(retry_ingest_endpoint)
-    app.post(
-        "/api/v1/ingest/batch",
-        response_model=BatchIngestResponse,
-        dependencies=protected_dependencies,
-    )(batch_ingest_endpoint)
-    app.post(
-        "/api/v1/jobs/batch",
-        response_model=BatchJobAccepted,
-        dependencies=protected_dependencies,
-    )(batch_job_submit)
+    protected_post_routes = [
+        ("/api/v1/ingest", ingest_endpoint, IngestResponse),
+        ("/api/v1/ingest/retry", retry_ingest_endpoint, IngestResponse),
+        ("/api/v1/ingest/batch", batch_ingest_endpoint, BatchIngestResponse),
+        ("/api/v1/jobs/batch", batch_job_submit, BatchJobAccepted),
+        ("/api/v1/security/report", security_report_endpoint, SecurityReportResponse),
+        (
+            "/api/v1/evaluate/extractors",
+            extractor_comparison_endpoint,
+            ExtractorComparisonResponse,
+        ),
+    ]
+    for path, endpoint, response_model in protected_post_routes:
+        app.post(
+            path,
+            response_model=response_model,
+            dependencies=protected_dependencies,
+        )(endpoint)
     app.get(
         "/api/v1/jobs/{job_id}",
         response_model=BatchJobResponse,
         dependencies=protected_dependencies,
     )(batch_job_status)
-    app.post(
-        "/api/v1/security/report",
-        response_model=SecurityReportResponse,
-        dependencies=protected_dependencies,
-    )(security_report_endpoint)
-    app.post(
-        "/api/v1/evaluate/extractors",
-        response_model=ExtractorComparisonResponse,
-        dependencies=protected_dependencies,
-    )(extractor_comparison_endpoint)
     app.get("/api/v1/stats", dependencies=[Depends(require_api_key)])(stats_endpoint)
     app.get("/api/v1/health")(health)
     app.get("/api/v1/health/detailed", dependencies=[Depends(require_api_key)])(health_detailed)
