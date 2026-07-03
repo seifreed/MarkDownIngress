@@ -147,38 +147,30 @@ class ClientLifecycleMixin:
     async def __aexit__(self: Any, *args: Any) -> None:
         await self.aclose()
 
-    def __del__(self: Any) -> None:
-        sync_client_exists = False
-        async_client_exists = False
-        try:
-            with self._client_lock:
-                sync_client_exists = self._sync_client is not None
-        except CLIENT_CLEANUP_ERRORS as exc:
-            logger.debug(
-                "Could not inspect sync client during finalization: %s", exc, exc_info=True
-            )
-        try:
-            with self._async_client_lock_guard:
-                async_client_exists = getattr(self, "_async_client", None) is not None
-        except CLIENT_CLEANUP_ERRORS as exc:
-            logger.debug(
-                "Could not inspect async client during finalization: %s", exc, exc_info=True
-            )
+    def _has_sync_client(self: Any) -> bool:
+        with self._client_lock:
+            return self._sync_client is not None
 
-        # Emitting a warning during interpreter shutdown is unreliable (the
-        # import machinery may be torn down, raising "import of warnings halted")
-        # and pointless — the process is exiting. Skip it then, like the other
-        # finalizer blocks below tolerate shutdown-time failures.
-        if (sync_client_exists or async_client_exists) and not sys.is_finalizing():
-            try:
-                warnings.warn(
-                    "Fetcher was not properly closed; HTTP client resources may leak. "
-                    "Use 'async with fetcher:' or call 'await fetcher.aclose()' explicitly.",
-                    ResourceWarning,
-                    stacklevel=2,
-                )
-            except CLIENT_CLEANUP_ERRORS as exc:
-                logger.debug("Could not emit ResourceWarning during finalization: %s", exc)
+    def _has_async_client(self: Any) -> bool:
+        return getattr(self, "_async_client", None) is not None
+
+    def _warn_if_unclosed(self: Any) -> None:
+        if sys.is_finalizing():
+            return
+        warnings.warn(
+            "Fetcher was not properly closed; HTTP client resources may leak. "
+            "Use 'async with fetcher:' or call 'await fetcher.aclose()' explicitly.",
+            ResourceWarning,
+            stacklevel=2,
+        )
+
+    def _try_warn_if_unclosed(self: Any) -> None:
+        try:
+            self._warn_if_unclosed()
+        except CLIENT_CLEANUP_ERRORS as exc:
+            logger.debug("Could not emit ResourceWarning during finalization: %s", exc)
+
+    def _shutdown_sync_client(self: Any) -> None:
         try:
             with self._client_lock:
                 if self._sync_client is not None:
@@ -186,9 +178,37 @@ class ClientLifecycleMixin:
                     self._sync_client = None
         except CLIENT_CLEANUP_ERRORS as exc:
             logger.debug("Could not close sync client during finalization: %s", exc, exc_info=True)
+
+    def _shutdown_async_state(self: Any) -> None:
         try:
             with self._async_client_lock_guard:
                 self._async_client = None
                 self._async_client_lock = None
         except CLIENT_CLEANUP_ERRORS as exc:
             logger.debug("Could not clear async client during finalization: %s", exc, exc_info=True)
+
+    def __del__(self: Any) -> None:
+        try:
+            sync_client_exists = self._has_sync_client()
+        except CLIENT_CLEANUP_ERRORS as exc:
+            logger.debug(
+                "Could not inspect sync client during finalization: %s", exc, exc_info=True
+            )
+            sync_client_exists = False
+        try:
+            async_client_exists = self._has_async_client()
+        except CLIENT_CLEANUP_ERRORS as exc:
+            logger.debug(
+                "Could not inspect async client during finalization: %s", exc, exc_info=True
+            )
+            async_client_exists = False
+
+        # Emitting a warning during interpreter shutdown is unreliable (the
+        # import machinery may be torn down, raising "import of warnings halted")
+        # and pointless — the process is exiting. Skip it then, like the other
+        # finalizer blocks below tolerate shutdown-time failures.
+        if sync_client_exists or async_client_exists:
+            self._try_warn_if_unclosed()
+
+        self._shutdown_sync_client()
+        self._shutdown_async_state()
