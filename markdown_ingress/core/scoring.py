@@ -65,10 +65,7 @@ class Scorer:
         if math.isnan(score):
             _logger.warning("Injection score is NaN, treating as critical (fail-safe)")
             return "critical"
-        if score < 0.0:
-            score = 0.0
-        elif score > 1.0:
-            score = 1.0
+        score = max(0.0, min(1.0, score))
         if score != original_score:
             _logger.warning(
                 "Clamped out-of-range injection score from %s to %s", original_score, score
