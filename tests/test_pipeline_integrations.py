@@ -124,6 +124,14 @@ def test_in_use_case_does_not_close_injected_orchestrator():
     assert orchestrator.close_calls == 0
 
 
+def test_orchestrator_reports_default_runtime_dependencies():
+    assert IngestOrchestrator().uses_default_runtime_dependencies() is True
+    assert (
+        IngestOrchestrator(inflight_registry=InFlightRegistry()).uses_default_runtime_dependencies()
+        is False
+    )
+
+
 def _start_counting_html_server(
     html: bytes,
     *,

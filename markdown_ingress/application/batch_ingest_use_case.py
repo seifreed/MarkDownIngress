@@ -30,6 +30,7 @@ from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.inflight import build_request_identity
 from markdown_ingress.core.interfaces import IIngestOrchestrator
 from markdown_ingress.models import SafeDocument
+from markdown_ingress.runtime_helpers import validate_batch_max_concurrent
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 _logger = logging.getLogger(__name__)
@@ -78,9 +79,9 @@ class BatchIngestUseCase:
 
     def __exit__(
         self,
-        exc_type: object,
-        exc: object | None,
-        tb: object | None,
+        _exc_type: object,
+        _exc: object | None,
+        _tb: object | None,
     ) -> None:
         self.close()
 
@@ -189,10 +190,7 @@ class BatchIngestUseCase:
         max_concurrent: int = 5,
         on_progress: Callable[[int, int, str], None] | None = None,
     ) -> BatchResult:
-        if isinstance(max_concurrent, bool) or not isinstance(max_concurrent, int):
-            raise ValueError(f"max_concurrent must be an int, got {type(max_concurrent).__name__}")
-        if max_concurrent < 1:
-            raise ValueError("max_concurrent must be >= 1")
+        max_concurrent = validate_batch_max_concurrent(max_concurrent)
 
         url_list = list(urls)
         total = len(url_list)

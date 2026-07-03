@@ -141,9 +141,9 @@ class IngestUseCase:
 
     def __exit__(
         self,
-        exc_type: object,
-        exc: object | None,
-        tb: object | None,
+        _exc_type: object,
+        _exc: object | None,
+        _tb: object | None,
     ) -> None:
         self.close()
 
@@ -200,23 +200,7 @@ class IngestUseCase:
         )
         orchestrator = self.orchestrator
         uses_default_orchestrator = (
-            self._owns_default_orchestrator
-            and not getattr(orchestrator, "_inflight_registry_was_injected", False)
-            and getattr(orchestrator, "_default_inflight_registry", None)
-            is getattr(orchestrator, "inflight_registry", None)
-            and all(
-                getattr(orchestrator, name) is None
-                for name in (
-                    "extractor",
-                    "normalizer",
-                    "md_converter",
-                    "hasher",
-                    "token_estimator",
-                    "scorer",
-                    "metadata_extractor",
-                    "link_analyzer",
-                )
-            )
+            self._owns_default_orchestrator and orchestrator.uses_default_runtime_dependencies()
         )
         return uses_default_fetcher and uses_default_renderer and uses_default_orchestrator
 

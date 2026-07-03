@@ -128,9 +128,9 @@ class BatchProcessor:
 
     def __exit__(
         self,
-        exc_type: object,
-        exc: object | None,
-        tb: object | None,
+        _exc_type: object,
+        _exc: object | None,
+        _tb: object | None,
     ) -> None:
         self.close()
 

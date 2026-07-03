@@ -166,6 +166,22 @@ class IngestOrchestrator:
             self._default_inflight_registry.stop_periodic_cleanup()
             self._default_inflight_registry = None
 
+    def uses_default_runtime_dependencies(self) -> bool:
+        """Return whether orchestrator dependencies are defaults and safe to isolate."""
+        return self._default_inflight_registry is not None and all(
+            getattr(self, name) is None
+            for name in (
+                "extractor",
+                "normalizer",
+                "md_converter",
+                "hasher",
+                "token_estimator",
+                "scorer",
+                "metadata_extractor",
+                "link_analyzer",
+            )
+        )
+
     def has_active_cleanup_thread(self) -> bool:
         """Return whether the owned inflight cleanup thread is alive."""
         return self.inflight_registry.has_active_cleanup_thread()
