@@ -38,6 +38,12 @@ except ImportError:  # pragma: no cover
     PlaywrightTimeoutError = Exception  # pragma: no cover
 
 
+_CONTENT_RETRIEVAL_RETRYABLE_ERRORS = (
+    PlaywrightError,
+    RuntimeError,
+)
+
+
 async def wait_for_content(
     page: Any,
     *,
@@ -113,7 +119,7 @@ async def extract_page_content(page: Any) -> str:
     for attempt in range(3):
         try:
             return cast(str, await page.content())
-        except Exception as exc:
+        except _CONTENT_RETRIEVAL_RETRYABLE_ERRORS as exc:
             if "page is navigating" not in str(exc).lower():
                 raise
             if attempt == 2:

@@ -14,6 +14,12 @@ from markdown_ingress.application.exceptions import _copy_batch_exception
 from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
+_DEEP_COPY_ERRORS = (
+    AttributeError,
+    RecursionError,
+    TypeError,
+    copy.Error,
+)
 
 
 def _remove_if_current(ctx: BatchContext, request_key: str, record: BatchInFlightRecord) -> None:
@@ -67,7 +73,7 @@ async def publish_batch_inflight_result(
     async with ctx.batch_inflight_lock:
         try:
             shared_document = copy.deepcopy(document)
-        except Exception as exc:
+        except _DEEP_COPY_ERRORS as exc:
             _logger.error(
                 "Batch deepcopy failed for %s: %s",
                 request_key[:32],
