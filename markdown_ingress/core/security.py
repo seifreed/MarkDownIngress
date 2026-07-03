@@ -193,9 +193,7 @@ class SecurityAnalyzer:
         Returns list of matched patterns with metadata.
         """
         decoded_text, decode_warnings = _decode_html_entities(text)
-        normalized_variants = normalized_detection_variants(
-            text, decoded_text, decode_warnings
-        )
+        normalized_variants = normalized_detection_variants(text, decoded_text, decode_warnings)
         matches = collect_pattern_matches(
             self._compiled_patterns_for_detection(), normalized_variants
         )
