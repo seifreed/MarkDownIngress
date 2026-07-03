@@ -292,14 +292,18 @@ def collect_option_values(
     options: Mapping[str, object],
     *,
     positional_offset: int = 0,
+    valid_option_names: frozenset[str] | None = None,
+    too_many_positional_message: str | None = None,
 ) -> dict[str, object]:
     """Resolve legacy positional options and keyword overrides for hand-written APIs."""
     if len(args) > len(option_names):
-        raise TypeError(
+        message = too_many_positional_message or (
             f"{owner} expected at most {len(option_names) + positional_offset} arguments"
         )
+        raise TypeError(message)
 
-    unexpected = set(options) - set(option_names)
+    valid_names = valid_option_names or frozenset(option_names)
+    unexpected = set(options) - valid_names
     if unexpected:
         name = sorted(unexpected)[0]
         raise TypeError(f"{owner} got an unexpected keyword argument '{name}'")

@@ -33,6 +33,7 @@ _ensure_bool = config_validation.ensure_bool
 _ensure_finite_float = config_validation.ensure_finite_float
 _ensure_optional_bool = config_validation.ensure_optional_bool
 _ensure_str = config_validation.ensure_str
+_collect_option_values = config_validation.collect_option_values
 
 
 class AdvancedStealthRendererOptions(TypedDict, total=False):
@@ -74,24 +75,16 @@ def _normalize_advanced_stealth_options(
     args: tuple[object, ...],
     options: AdvancedStealthRendererOptions,
 ) -> AdvancedStealthRendererOptions:
-    if len(args) > len(_ADVANCED_STEALTH_POSITIONAL_NAMES):
-        raise TypeError(
-            f"AdvancedStealthRenderer() expected at most "
-            f"{len(_ADVANCED_STEALTH_POSITIONAL_NAMES)} arguments"
-        )
-
-    unexpected = set(options) - _ADVANCED_STEALTH_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"AdvancedStealthRenderer() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _ADVANCED_STEALTH_POSITIONAL_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"AdvancedStealthRenderer() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(AdvancedStealthRendererOptions, normalized)
+    return cast(
+        AdvancedStealthRendererOptions,
+        _collect_option_values(
+            "AdvancedStealthRenderer()",
+            _ADVANCED_STEALTH_POSITIONAL_NAMES,
+            args,
+            options,
+            valid_option_names=_ADVANCED_STEALTH_OPTION_NAME_SET,
+        ),
+    )
 
 
 def _advanced_stealth_renderer_from_options(

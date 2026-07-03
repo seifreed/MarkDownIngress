@@ -12,6 +12,7 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, TypedDict, Unpack, cast
 
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.nova_rules import (
     parse_bundled_rule_content,
     parse_rule_content,
@@ -68,21 +69,19 @@ def _normalize_nova_guard_options(
     args: tuple[object, ...],
     options: NovaGuardOptions,
 ) -> NovaGuardOptions:
-    if len(args) > len(_NOVA_GUARD_POSITIONAL_OPTION_NAMES):
-        raise TypeError(f"NovaGuard() takes at most 4 positional arguments ({len(args)} given)")
-
-    unexpected = set(options) - _NOVA_GUARD_OPTION_NAME_SET
-    if unexpected:
-        name = sorted(unexpected)[0]
-        raise TypeError(f"NovaGuard() got an unexpected keyword argument '{name}'")
-
-    normalized = dict(options)
-    for index, value in enumerate(args):
-        name = _NOVA_GUARD_POSITIONAL_OPTION_NAMES[index]
-        if name in normalized:
-            raise TypeError(f"NovaGuard() got multiple values for argument '{name}'")
-        normalized[name] = value
-    return cast(NovaGuardOptions, normalized)
+    return cast(
+        NovaGuardOptions,
+        collect_option_values(
+            "NovaGuard()",
+            _NOVA_GUARD_POSITIONAL_OPTION_NAMES,
+            args,
+            options,
+            valid_option_names=_NOVA_GUARD_OPTION_NAME_SET,
+            too_many_positional_message=(
+                f"NovaGuard() takes at most 4 positional arguments ({len(args)} given)"
+            ),
+        ),
+    )
 
 
 def _load_nova_api() -> tuple[Any, Any]:
