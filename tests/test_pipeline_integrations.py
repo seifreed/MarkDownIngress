@@ -780,7 +780,7 @@ def test_inflight_followers_counter_consistent_under_concurrency():
                 document_result = registry.await_result(entry, key)
                 with results_lock:
                     results.append(document_result)
-            except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+            except (RuntimeError, TimeoutError) as exc:
                 with results_lock:
                     errors.append(exc)
 
