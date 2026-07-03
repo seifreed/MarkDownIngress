@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
+_REPORT_PERSIST_ERRORS = (OSError, TypeError, ValueError)
 
 __all__ = [
     "BatchContext",
@@ -265,7 +266,7 @@ class BatchUrlProcessor:
                 exc.document,
                 prepared.resolved_config.reports_dir,
             )
-        except Exception as persist_exc:  # noqa: BLE001 - report persistence is optional
+        except _REPORT_PERSIST_ERRORS as persist_exc:
             _logger.warning(
                 "Failed to persist security report for %s: %s",
                 prepared.url,
