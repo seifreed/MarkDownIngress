@@ -7,7 +7,6 @@ import json
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, fields
-from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -23,8 +22,9 @@ from markdown_ingress.config_models import (
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.config_rules import validate_config
 from markdown_ingress.core.config_runtime import build_ingest_config
+from markdown_ingress.runtime_helpers import load_optional_module
 
-yaml = cast(Any, import_module("yaml"))
+yaml = cast(Any, load_optional_module("yaml", purpose="YAML support"))
 
 _logger = logging.getLogger(__name__)
 

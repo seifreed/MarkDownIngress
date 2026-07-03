@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from importlib import import_module
 from typing import Any, cast
 
 from markdown_ingress.adapters.tokens.tiktoken_estimator import TokenEstimator
 from markdown_ingress.core.security import SecurityAnalyzer
+from markdown_ingress.runtime_helpers import load_optional_module
 
-Document = cast(Any, import_module("readability").Document)
+Document = cast(Any, load_optional_module("readability", purpose="extractor comparison").Document)
 
 
 @dataclass
@@ -85,7 +85,9 @@ class ExtractorEvaluator:
 
     def _evaluate_trafilatura(self, html: str) -> ExtractorComparisonResult:
         try:
-            trafilatura = cast(Any, import_module("trafilatura"))
+            trafilatura = cast(
+                Any, load_optional_module("trafilatura", purpose="trafilatura extraction")
+            )
         except ImportError:
             return ExtractorComparisonResult.unavailable("trafilatura", "trafilatura not installed")
         try:

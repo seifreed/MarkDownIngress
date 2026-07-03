@@ -6,9 +6,10 @@ import os
 import re
 import urllib.parse
 from dataclasses import dataclass
-from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol
+
+from markdown_ingress.runtime_helpers import load_optional_module
 
 MAX_RULES_FILE_SIZE_BYTES = 10 * 1024 * 1024
 
@@ -44,7 +45,10 @@ class RuleParseFailure:
 
 def _nova_parser_error_type() -> type[Exception]:
     try:
-        parser_module = import_module("nova.core.parser")
+        parser_module = load_optional_module(
+            "nova.core.parser",
+            purpose="Nova rules parsing",
+        )
     except ImportError:
         return ValueError
     parser_error = getattr(parser_module, "NovaParserError", ValueError)

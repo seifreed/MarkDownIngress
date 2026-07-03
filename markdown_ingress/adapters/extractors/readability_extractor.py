@@ -2,7 +2,6 @@
 
 import logging
 import re
-from importlib import import_module
 from typing import Any, cast
 
 from selectolax.parser import HTMLParser
@@ -13,12 +12,13 @@ from markdown_ingress.adapters.extractors.readability_sanitization import (
 )
 from markdown_ingress.core.interfaces import IExtractor
 from markdown_ingress.models import ExtractionResult
+from markdown_ingress.runtime_helpers import load_optional_module, load_optional_object
 
 logger = logging.getLogger(__name__)
-Document = cast(Any, import_module("readability").Document)
-_etree = import_module("lxml.etree")
-ParserError = cast(type[Exception], _etree.ParserError)
-XMLSyntaxError = cast(type[Exception], _etree.XMLSyntaxError)
+Document = cast(Any, load_optional_module("readability", purpose="readability extraction").Document)
+_etree = load_optional_module("lxml.etree", purpose="readability extraction")
+ParserError = cast(type[Exception], load_optional_object("lxml.etree", "ParserError"))
+XMLSyntaxError = cast(type[Exception], load_optional_object("lxml.etree", "XMLSyntaxError"))
 READABILITY_EXTRACTION_ERRORS: tuple[type[Exception], ...] = (
     AttributeError,
     ParserError,

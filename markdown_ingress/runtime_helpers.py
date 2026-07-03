@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from functools import lru_cache
+from importlib import import_module
+from importlib.util import find_spec
 from typing import Any
 
 from markdown_ingress.config_validation import validate_positive_int
@@ -27,3 +30,41 @@ def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T
 def validate_batch_max_concurrent(value: object) -> int:
     """Validate and coerce `max_concurrent`."""
     return validate_positive_int("max_concurrent", value)
+
+
+@lru_cache(maxsize=128)
+def load_optional_module(
+    module_name: str,
+    *,
+    pip_name: str | None = None,
+    purpose: str | None = None,
+) -> Any:
+    """Import an optional dependency with a clear error when missing."""
+    if find_spec(module_name) is None:
+        package = pip_name or module_name.split(".")[0]
+        feature = f" for {purpose}" if purpose else ""
+        raise ImportError(
+            f"Optional dependency{feature} '{module_name}' is not installed. "
+            f"Install with: pip install {package}."
+        )
+    return import_module(module_name)
+
+
+def load_optional_object(
+    module_name: str,
+    object_name: str,
+    *,
+    pip_name: str | None = None,
+    purpose: str | None = None,
+) -> Any:
+    """Return ``getattr(imported_module, object_name)`` with a clean ImportError."""
+    module = load_optional_module(module_name, pip_name=pip_name, purpose=purpose)
+    try:
+        return getattr(module, object_name)
+    except AttributeError as exc:
+        package = pip_name or module_name.split(".")[0]
+        feature = f" for {purpose}" if purpose else ""
+        raise ImportError(
+            f"Optional dependency{feature} '{module_name}' does not export {object_name!r}. "
+            f"Install/update {package}."
+        ) from exc

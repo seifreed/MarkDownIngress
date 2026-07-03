@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from importlib import import_module
 from typing import Any, cast
 
 from selectolax.parser import HTMLParser
+
+from markdown_ingress.runtime_helpers import load_optional_module, load_optional_object
 
 logger = logging.getLogger(__name__)
 LANGDETECT_SAMPLE_CHARS = 5000
@@ -81,8 +82,15 @@ def detect_content_language_info(
     normalize_multilingual: bool,
 ) -> dict[str, Any] | None:
     try:
-        langdetect = cast(Any, import_module("langdetect"))
-        langdetect_exceptions = cast(Any, import_module("langdetect.lang_detect_exception"))
+        langdetect = cast(Any, load_optional_module("langdetect", purpose="language detection"))
+        langdetect_exceptions = cast(
+            Any,
+            load_optional_object(
+                "langdetect.lang_detect_exception",
+                "LangDetectException",
+                purpose="language detection",
+            ),
+        )
 
         # langdetect seeds its detector randomly per process, so the same text
         # can resolve to different languages across runs. Pin the seed for

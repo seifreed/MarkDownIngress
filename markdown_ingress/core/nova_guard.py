@@ -7,7 +7,6 @@ This integration is optional and degrades safely when NOVA rules are not configu
 import contextlib
 import io
 import logging
-from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, TypedDict, Unpack, cast
@@ -25,6 +24,7 @@ from markdown_ingress.core.security_validation import (
 from markdown_ingress.core.security_validation import (
     ensure_severity_threshold as _ensure_threshold,
 )
+from markdown_ingress.runtime_helpers import load_optional_module
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def _load_nova_api() -> tuple[Any, Any]:
         return NovaMatcher, NovaParser
 
     try:
-        nova_module = import_module("nova")
+        nova_module = load_optional_module("nova", purpose="nova-hunting integration")
     except ImportError as exc:
         NOVA_AVAILABLE = False
         raise ImportError("nova-hunting not installed") from exc
