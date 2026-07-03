@@ -120,47 +120,6 @@ _VALIDATED_RUNTIME_KEYS = frozenset(
     {"custom_patterns", "plugin_dirs", "output_profile", "domain_policies"}
 )
 
-_RUNTIME_CONFIG_OPTION_NAMES = (
-    "mode",
-    "strict",
-    "allow_local_urls",
-    "model",
-    "timeout",
-    "auto_render_threshold",
-    "stealth",
-    "disable_http2",
-    "extreme_mode",
-    "screenshot",
-    "extract_metadata",
-    "extract_links",
-    "advanced_security",
-    "use_llm",
-    "cache",
-    "cache_ttl",
-    "policy_name",
-    "custom_patterns",
-    "plugin_dirs",
-    "output_format",
-    "output_profile",
-    "output_formats",
-    "extract_blocks",
-    "chunking_strategy",
-    "chunk_size",
-    "chunk_overlap",
-    "detect_language",
-    "normalize_multilingual",
-    "include_security_explanation",
-    "include_observability",
-    "save_reports",
-    "reports_dir",
-    "fetcher_user_agent",
-    "domain_request_interval",
-    "circuit_breaker_threshold",
-    "circuit_breaker_open_seconds",
-    "render_cost_budget",
-    "domain_policies",
-)
-
 _RUNTIME_CONFIG_OPTION_DEFAULTS: dict[str, object] = {
     "mode": None,
     "strict": None,
@@ -372,19 +331,18 @@ def _normalize_runtime_config_options(
     args: tuple[object, ...],
     options: Mapping[str, object],
 ) -> dict[str, object]:
-    if len(args) > len(_RUNTIME_CONFIG_OPTION_NAMES):
+    option_names = tuple(_RUNTIME_CONFIG_OPTION_DEFAULTS)
+    if len(args) > len(option_names):
         raise TypeError(
-            f"build_runtime_config() expected at most "
-            f"{len(_RUNTIME_CONFIG_OPTION_NAMES) + 1} arguments"
+            f"build_runtime_config() expected at most {len(option_names) + 1} arguments"
         )
 
     values = {"config": config, **_RUNTIME_CONFIG_OPTION_DEFAULTS}
-    valid_options = set(_RUNTIME_CONFIG_OPTION_NAMES)
     for key in options:
-        if key not in valid_options:
+        if key not in _RUNTIME_CONFIG_OPTION_DEFAULTS:
             raise TypeError(f"build_runtime_config() got an unexpected keyword argument '{key}'")
 
-    positional_values = dict(zip(_RUNTIME_CONFIG_OPTION_NAMES, args, strict=False))
+    positional_values = dict(zip(option_names, args, strict=False))
     duplicate_keys = positional_values.keys() & options.keys()
     if duplicate_keys:
         duplicate = next(iter(duplicate_keys))
