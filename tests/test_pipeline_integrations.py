@@ -1718,13 +1718,12 @@ def test_benchmark_compare_extractors_closes_fetcher_clients(monkeypatch):
     def fake_compare_extractors(html: str, model: str = "gpt-4"):
         return {"html_len": len(html), "model": model}
 
-    monkeypatch.setattr("markdown_ingress.core.benchmark.ingest", fake_ingest)
-
     try:
         from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
         benchmark = Benchmark(
             model="gpt-4",
+            ingest_func=fake_ingest,
             fetcher_factory=lambda: Fetcher(timeout=30.0),
             compare_fn=fake_compare_extractors,
         )

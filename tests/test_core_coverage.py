@@ -11,6 +11,8 @@ from typing import Any, cast
 import httpx
 import pytest
 
+import markdown_ingress.api as _api
+
 # ---------------------------------------------------------------------------
 # models.py
 # ---------------------------------------------------------------------------
@@ -1653,35 +1655,31 @@ def test_benchmark_generate_report_empty():
     """benchmark.py line 196: no results -> 'No benchmark results'"""
     from markdown_ingress.core.benchmark import Benchmark
 
-    bench = Benchmark()
+    bench = Benchmark(ingest_func=_api.ingest)
     report = bench.generate_report([])
     assert report == "No benchmark results"
 
 
 def test_benchmark_run_single_all_fail(monkeypatch):
     """benchmark.py lines 85-86, 89: all iterations fail"""
-    import markdown_ingress.core.benchmark as bm_module
     from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
 
-    monkeypatch.setattr(bm_module, "ingest", bad_ingest)
-    bench = Benchmark()
+    bench = Benchmark(ingest_func=bad_ingest)
     with pytest.raises(ValueError, match="All benchmark iterations failed"):
         bench.run_single("http://example.com", iterations=1)
 
 
 def test_benchmark_run_batch_skip_failures(monkeypatch):
     """benchmark.py lines 152-154: skip failed URLs in batch"""
-    import markdown_ingress.core.benchmark as bm_module
     from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
 
-    monkeypatch.setattr(bm_module, "ingest", bad_ingest)
-    bench = Benchmark()
+    bench = Benchmark(ingest_func=bad_ingest)
     results = bench.run_batch(["http://fail1.com", "http://fail2.com"], iterations=1)
     assert results == []
     # Failures must be recorded with their reason so callers can surface them
@@ -1691,14 +1689,12 @@ def test_benchmark_run_batch_skip_failures(monkeypatch):
 
 def test_benchmark_compare_modes_both_fail(monkeypatch):
     """benchmark.py lines 169-183: compare_modes with both failing"""
-    import markdown_ingress.core.benchmark as bm_module
     from markdown_ingress.core.benchmark import Benchmark
 
     def bad_ingest(*args, **kwargs):
         raise RuntimeError("network error")
 
-    monkeypatch.setattr(bm_module, "ingest", bad_ingest)
-    bench = Benchmark()
+    bench = Benchmark(ingest_func=bad_ingest)
     results = bench.compare_modes("http://example.com", iterations=1)
     assert results == {}
 

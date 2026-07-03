@@ -7,7 +7,6 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
 
 from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.interfaces import IFetcher
@@ -58,28 +57,6 @@ class BenchmarkResult:
     extractor_comparison: dict[str, dict] | None = None
 
 
-def _resolve_default_benchmark_ingest() -> Callable[..., SafeDocument]:
-    """Resolve the default ingest implementation lazily and cache it."""
-    from markdown_ingress.api import ingest as public_ingest
-
-    return cast(Callable[..., SafeDocument], public_ingest)
-
-
-_default_benchmark_ingest: Callable[..., SafeDocument] | None = None
-
-
-def _get_default_benchmark_ingest() -> Callable[..., SafeDocument]:
-    global _default_benchmark_ingest
-    if _default_benchmark_ingest is None:
-        _default_benchmark_ingest = _resolve_default_benchmark_ingest()
-    return _default_benchmark_ingest
-
-
-def ingest(url: str, **kwargs: Any) -> SafeDocument:
-    """Default benchmark ingest bridge kept for backward-compatible monkeypatching."""
-    return _get_default_benchmark_ingest()(url, **kwargs)
-
-
 class Benchmark:
     """Benchmark MarkDownIngress performance"""
 
@@ -90,8 +67,10 @@ class Benchmark:
         fetcher_factory: Callable[[], IFetcher] | None = None,
         compare_fn: Callable[[str, str], dict] | None = None,
     ):
+        if ingest_func is None or not callable(ingest_func):
+            raise TypeError("Benchmark() requires a callable ingest_func")
         self.model = model
-        self._ingest_func = ingest_func or ingest
+        self._ingest_func = ingest_func
         self._fetcher_factory = fetcher_factory
         self._compare_fn = compare_fn
         self.failures: list[tuple[str, str]] = []

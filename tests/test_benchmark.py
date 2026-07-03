@@ -8,6 +8,7 @@ from contextlib import ExitStack
 
 import pytest
 
+import markdown_ingress.api as _api
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult
 from tests.local_http_server import serve_html
 
@@ -27,7 +28,7 @@ class TestBenchmark:
 
     def test_run_single_benchmark(self, local_servers):
         """Benchmark a single URL"""
-        bench = Benchmark(model="gpt-4")
+        bench = Benchmark(model="gpt-4", ingest_func=_api.ingest)
 
         result = bench.run_single(local_servers[0], mode="fast", iterations=2)
 
@@ -42,7 +43,7 @@ class TestBenchmark:
 
     def test_benchmark_metrics(self, local_servers):
         """Benchmark captures token and size metrics"""
-        bench = Benchmark()
+        bench = Benchmark(ingest_func=_api.ingest)
 
         result = bench.run_single(local_servers[0], iterations=1)
 
@@ -53,7 +54,7 @@ class TestBenchmark:
 
     def test_run_batch_benchmark(self, local_servers):
         """Benchmark multiple URLs"""
-        bench = Benchmark()
+        bench = Benchmark(ingest_func=_api.ingest)
 
         urls = local_servers
 
@@ -64,7 +65,7 @@ class TestBenchmark:
 
     def test_generate_report(self, local_servers):
         """Generate text report from results"""
-        bench = Benchmark()
+        bench = Benchmark(ingest_func=_api.ingest)
 
         results = [bench.run_single(local_servers[0], iterations=1)]
 
@@ -76,61 +77,69 @@ class TestBenchmark:
         assert "Tokens:" in report
         assert "Summary" in report
 
-    def test_cli_benchmark_compare_extractors_reports_comparison(
-        self, local_servers, tmp_path, monkeypatch
-    ):
-        """CLI benchmark --compare-extractors includes extractor data."""
-        monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")
-        urls = tmp_path / "urls.txt"
-        report_path = tmp_path / "report.txt"
-        urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "markdown_ingress.cli",
-                "benchmark",
-                str(urls),
-                "--iterations",
-                "1",
-                "--fast",
-                "--compare-extractors",
-                "--output",
-                str(report_path),
-            ],
-            text=True,
-            capture_output=True,
-            timeout=60,
-        )
+def test_benchmark_default_ingest_can_be_required_and_reset():
+    """Benchmark requires an explicit ingest dependency."""
+    from markdown_ingress.core.benchmark import Benchmark
 
-        assert result.returncode == 0, result.stderr
-        report = report_path.read_text(encoding="utf-8")
-        assert "Extractors:" in report
-        assert "Extractor token averages:" in report
+    with pytest.raises(TypeError, match="requires a callable ingest_func"):
+        Benchmark()
 
-    def test_cli_benchmark_fails_when_all_urls_fail(self, local_servers, tmp_path, monkeypatch):
-        """CLI benchmark exits non-zero when no URL produced timing data."""
-        monkeypatch.delenv("MDI_ALLOW_LOCAL_URLS", raising=False)
-        urls = tmp_path / "urls.txt"
-        urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "markdown_ingress.cli",
-                "benchmark",
-                str(urls),
-                "--iterations",
-                "1",
-                "--fast",
-            ],
-            text=True,
-            capture_output=True,
-            timeout=60,
-        )
+def test_cli_benchmark_compare_extractors_reports_comparison(local_servers, tmp_path, monkeypatch):
+    """CLI benchmark --compare-extractors includes extractor data."""
+    monkeypatch.setenv("MDI_ALLOW_LOCAL_URLS", "true")
+    urls = tmp_path / "urls.txt"
+    report_path = tmp_path / "report.txt"
+    urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
 
-        assert result.returncode == 1
-        assert "Skipped" in result.stdout
-        assert "No benchmark results" in result.stdout
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "markdown_ingress.cli",
+            "benchmark",
+            str(urls),
+            "--iterations",
+            "1",
+            "--fast",
+            "--compare-extractors",
+            "--output",
+            str(report_path),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "Extractors:" in report
+    assert "Extractor token averages:" in report
+
+
+def test_cli_benchmark_fails_when_all_urls_fail(local_servers, tmp_path, monkeypatch):
+    """CLI benchmark exits non-zero when no URL produced timing data."""
+    monkeypatch.delenv("MDI_ALLOW_LOCAL_URLS", raising=False)
+    urls = tmp_path / "urls.txt"
+    urls.write_text(f"{local_servers[0]}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "markdown_ingress.cli",
+            "benchmark",
+            str(urls),
+            "--iterations",
+            "1",
+            "--fast",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 1
+    assert "Skipped" in result.stdout
+    assert "No benchmark results" in result.stdout

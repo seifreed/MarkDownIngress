@@ -283,6 +283,7 @@ def cmd_benchmark(args):
             fetcher_factory = None
     bench = Benchmark(
         model=args.model or "gpt-4",
+        ingest_func=_api.ingest,
         fetcher_factory=fetcher_factory,
         compare_fn=_compare_fn,
     )
