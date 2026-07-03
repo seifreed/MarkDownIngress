@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from typing import NoReturn
 
 import httpx
@@ -19,6 +20,17 @@ INTERNAL_ERROR_DETAIL = "Internal server error"
 
 _logger = logging.getLogger(__name__)
 
+_ErrorDetailFactory = Callable[[Exception], str]
+_ErrorMapEntry = tuple[tuple[type[Exception], ...], int, _ErrorDetailFactory]
+_RUNTIME_ERROR_MAP: tuple[_ErrorMapEntry, ...] = (
+    ((UnsupportedContentTypeError,), 415, lambda exc: str(exc)),
+    ((DomainCircuitOpenError,), 429, lambda exc: str(exc)),
+    ((httpx.InvalidURL, httpx.UnsupportedProtocol), 400, lambda exc: str(exc)),
+    ((httpx.TimeoutException,), 504, lambda _exc: "Upstream fetch timed out"),
+    ((httpx.RequestError,), 502, lambda _exc: "Upstream fetch failed"),
+    ((ValueError,), 400, lambda _exc: "Invalid request"),
+)
+
 
 def is_playwright_runtime_import_error(exc: ImportError) -> bool:
     """Return whether this ImportError is the explicit render-mode Playwright denial."""
@@ -32,26 +44,7 @@ def raise_runtime_http_error(exc: Exception) -> NoReturn:
     """Map expected runtime denials and environment errors to stable HTTP responses."""
     if isinstance(exc, ImportError) and is_playwright_runtime_import_error(exc):
         raise HTTPException(status_code=400, detail="Render mode requires Playwright")
-    if isinstance(exc, UnsupportedContentTypeError):
-        raise HTTPException(status_code=415, detail=str(exc))
-    if isinstance(exc, DomainCircuitOpenError):
-        raise HTTPException(status_code=429, detail=str(exc))
-    if isinstance(exc, (httpx.InvalidURL, httpx.UnsupportedProtocol)):
-        raise HTTPException(status_code=400, detail=str(exc))
-    if isinstance(exc, httpx.HTTPStatusError):
-        status_code = exc.response.status_code
-        mapped_status = status_code if 400 <= status_code < 500 else 502
-        raise HTTPException(
-            status_code=mapped_status,
-            detail="Upstream fetch returned an HTTP error",
-        )
-    if isinstance(exc, httpx.TimeoutException):
-        raise HTTPException(status_code=504, detail="Upstream fetch timed out")
-    if isinstance(exc, httpx.RequestError):
-        raise HTTPException(status_code=502, detail="Upstream fetch failed")
-    if isinstance(exc, ValueError):
-        _logger.warning("ValueError mapped to 400 Bad Request: %s", exc)
-        raise HTTPException(status_code=400, detail="Invalid request")
+
     if isinstance(exc, PolicyBlockedError):
         if exc.document is not None:
             _logger.info(
@@ -62,6 +55,20 @@ def raise_runtime_http_error(exc: Exception) -> NoReturn:
         raise HTTPException(
             status_code=403,
             detail={"type": "policy_blocked", "message": "Content blocked by security policy"},
+        )
+
+    for match_types, status_code, detail in _RUNTIME_ERROR_MAP:
+        if isinstance(exc, match_types):
+            if match_types == (ValueError,):
+                _logger.warning("ValueError mapped to 400 Bad Request: %s", exc)
+            raise HTTPException(status_code=status_code, detail=detail(exc))
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        mapped_status = status_code if 400 <= status_code < 500 else 502
+        raise HTTPException(
+            status_code=mapped_status,
+            detail="Upstream fetch returned an HTTP error",
         )
     raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
 
