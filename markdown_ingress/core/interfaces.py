@@ -111,6 +111,10 @@ class INormalizer(Protocol):
         ...  # pragma: no cover
 
 
+class CompareExtractorsFn(Protocol):
+    def __call__(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]: ...
+
+
 class ICacheBackend(Protocol):
     """Protocol for cache backend implementations."""
 

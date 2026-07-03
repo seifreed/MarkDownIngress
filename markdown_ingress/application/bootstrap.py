@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
 
 from markdown_ingress.config_models import IngestConfig, RenderConfig
 from markdown_ingress.core.cache import Cache
 from markdown_ingress.core.config import register_cache_factory
-from markdown_ingress.core.interfaces import IFetcher, IRenderer
+from markdown_ingress.core.interfaces import CompareExtractorsFn, IFetcher, IRenderer
 
 
 def _default_cache_factory(cache_type: str, sqlite_path: str | None, ttl: int) -> Cache:
@@ -48,11 +47,7 @@ def default_renderer_factory(config: RenderConfig) -> IRenderer:
     return PlaywrightRenderer(config=config)
 
 
-class _CompareExtractorsFn(Protocol):
-    def __call__(self, html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]: ...
-
-
-def default_compare_extractors_factory() -> _CompareExtractorsFn:
+def default_compare_extractors_factory() -> CompareExtractorsFn:
     """Return the default extractor comparison function."""
     from markdown_ingress.adapters.extractors.comparison import compare_extractors
 
