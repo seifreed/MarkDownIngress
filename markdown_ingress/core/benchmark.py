@@ -7,10 +7,11 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
-from markdown_ingress import ingest
 from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.interfaces import IFetcher
+from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
 
@@ -57,16 +58,26 @@ class BenchmarkResult:
     extractor_comparison: dict[str, dict] | None = None
 
 
+def ingest(url: str, **kwargs: object) -> SafeDocument:
+    """Default benchmark ingest bridge kept for backward-compatible monkeypatching."""
+    # ponytail: keep compatibility with existing tests that monkeypatch benchmark.ingest
+    from markdown_ingress import ingest as public_ingest
+
+    return cast(SafeDocument, public_ingest(url, **kwargs))
+
+
 class Benchmark:
     """Benchmark MarkDownIngress performance"""
 
     def __init__(
         self,
         model: str = "gpt-4",
+        ingest_func: Callable[..., SafeDocument] | None = None,
         fetcher_factory: Callable[[], IFetcher] | None = None,
         compare_fn: Callable[[str, str], dict] | None = None,
     ):
         self.model = model
+        self._ingest_func = ingest_func or ingest
         self._fetcher_factory = fetcher_factory
         self._compare_fn = compare_fn
         self.failures: list[tuple[str, str]] = []
@@ -103,7 +114,7 @@ class Benchmark:
         for _ in range(iterations):
             try:
                 start = time.perf_counter()
-                doc = ingest(url, mode=mode, model=self.model)
+                doc = self._ingest_func(url, mode=mode, model=self.model)
                 end = time.perf_counter()
 
                 timings.append((end - start) * 1000)  # Convert to ms

@@ -9,8 +9,6 @@ from fastapi import HTTPException
 
 from markdown_ingress.api_server_handler_errors import (
     INTERNAL_ERROR_DETAIL,
-    is_queue_full_error,
-    is_queue_unavailable_error,
     log_runtime_error,
     raise_runtime_http_error,
 )
@@ -33,18 +31,8 @@ from markdown_ingress.api_server_support import (
     to_document_response,
     to_security_report_response,
 )
-from markdown_ingress.core.runtime_error_policy import map_runtime_exception_to_http
 
 _logger = logging.getLogger(__name__)
-
-
-def _http_from_runtime_error(exc: Exception) -> HTTPException:
-    """Translate a runtime exception into an HTTPException with defaulted internal detail."""
-    mapped = map_runtime_exception_to_http(exc)
-    if mapped is None:
-        return HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
-    status_code, detail = mapped
-    return HTTPException(status_code=status_code, detail=detail)
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
@@ -104,11 +92,12 @@ async def handle_batch_submit(
             start_immediately=False,
         )
     except Exception as exc:
-        if is_queue_full_error(exc):
-            raise HTTPException(status_code=429, detail=str(exc)) from exc
-        if is_queue_unavailable_error(exc):
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        raise _http_from_runtime_error(exc) from exc
+        log_runtime_error(
+            "Error processing batch submit for %s",
+            exc,
+            request.webhook_url,
+        )
+        raise_runtime_http_error(exc)
 
     return BatchJobAccepted(
         job_id=job.job_id,
@@ -124,9 +113,8 @@ async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
     try:
         job = job_source(job_id) if callable(job_source) else job_source.get(job_id)
     except Exception as exc:
-        if is_queue_unavailable_error(exc):
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        raise _http_from_runtime_error(exc) from exc
+        log_runtime_error("Error processing batch status request for %s", exc, job_id)
+        raise_runtime_http_error(exc)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return BatchJobResponse(

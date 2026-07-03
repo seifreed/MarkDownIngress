@@ -27,7 +27,7 @@ def raise_runtime_http_error(exc: Exception) -> NoReturn:
     """Map expected runtime denials and environment errors to stable HTTP responses."""
     mapped = map_runtime_exception_to_http(exc)
     if mapped is None:
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
+        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from exc
     status_code, detail = mapped
     if isinstance(exc, PolicyBlockedError):
         if exc.document is not None:
@@ -38,7 +38,7 @@ def raise_runtime_http_error(exc: Exception) -> NoReturn:
             )
     if isinstance(exc, ValueError):
         _logger.warning("ValueError mapped to 400 Bad Request: %s", exc)
-    raise HTTPException(status_code=status_code, detail=detail)
+    raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 def log_runtime_error(message: str, exc: Exception, *args: object) -> None:
