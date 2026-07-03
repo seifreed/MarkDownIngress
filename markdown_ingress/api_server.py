@@ -635,11 +635,8 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapsh
     )
 
 
-_api_routes = register_api_routes(
-    app,
-    require_api_key=_require_api_key,
-    require_rate_limit=_require_rate_limit,
-    providers=ApiRouteProviders(
+def _build_route_providers() -> ApiRouteProviders:
+    return ApiRouteProviders(
         api_version=lambda: API_VERSION,
         ingest=lambda: ingest,
         retry_ingest=lambda: retry_ingest,
@@ -663,7 +660,14 @@ _api_routes = register_api_routes(
         build_health_payload=lambda: build_health_payload,
         build_detailed_health_payload=lambda: build_detailed_health_payload,
         build_root_payload=lambda: build_root_payload,
-    ),
+    )
+
+
+_api_routes = register_api_routes(
+    app,
+    require_api_key=_require_api_key,
+    require_rate_limit=_require_rate_limit,
+    providers=_build_route_providers(),
 )
 ingest_endpoint = _api_routes.ingest_endpoint
 retry_ingest_endpoint = _api_routes.retry_ingest_endpoint
