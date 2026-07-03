@@ -33,6 +33,12 @@ from markdown_ingress.api_server_support import (
 )
 
 
+def _handle_handler_exception(message: str, exc_ctx: object, exc: Exception) -> None:
+    """Map an execution failure to transport-safe HTTP handling."""
+    log_runtime_error(message, exc, exc_ctx)
+    raise_runtime_http_error(exc)
+
+
 async def _run_to_thread(
     message: str,
     exc_ctx: object,
@@ -44,9 +50,10 @@ async def _run_to_thread(
         func_kwargs = {}
     try:
         return await asyncio.to_thread(func, *func_args, **func_kwargs)
+    except HTTPException:
+        raise
     except Exception as exc:
-        log_runtime_error(message, exc, exc_ctx)
-        raise_runtime_http_error(exc)
+        _handle_handler_exception(message, exc_ctx, exc)
 
 
 def _run_blocking(
@@ -60,9 +67,10 @@ def _run_blocking(
         func_kwargs = {}
     try:
         return func(*func_args, **func_kwargs)
+    except HTTPException:
+        raise
     except Exception as exc:
-        log_runtime_error(message, exc, exc_ctx)
-        raise_runtime_http_error(exc)
+        _handle_handler_exception(message, exc_ctx, exc)
 
 
 async def _run_async(
@@ -76,9 +84,10 @@ async def _run_async(
         func_kwargs = {}
     try:
         return await func(*func_args, **func_kwargs)
+    except HTTPException:
+        raise
     except Exception as exc:
-        log_runtime_error(message, exc, exc_ctx)
-        raise_runtime_http_error(exc)
+        _handle_handler_exception(message, exc_ctx, exc)
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
