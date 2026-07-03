@@ -14,6 +14,14 @@ from markdown_ingress.core.interfaces import IFetcher
 
 _logger = logging.getLogger(__name__)
 
+BENCHMARK_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 @dataclass
 class BenchmarkResult:
@@ -101,7 +109,7 @@ class Benchmark:
                 timings.append((end - start) * 1000)  # Convert to ms
                 last_doc = doc
 
-            except Exception as e:  # noqa: BLE001 - benchmark records failed iterations
+            except BENCHMARK_ERRORS as e:
                 errors += 1
                 last_error = str(e)
                 _logger.debug("Benchmark iteration failed: %s", e)
@@ -153,7 +161,7 @@ class Benchmark:
                         if callable(close):
                             close()
                     extractor_comparison = self._compare_fn(fetch_result.html, self.model)
-                except Exception as e:  # noqa: BLE001 - extractor comparison is optional
+                except BENCHMARK_ERRORS as e:
                     _logger.debug("Extractor comparison failed: %s", e)
 
         return BenchmarkResult(
@@ -207,7 +215,7 @@ class Benchmark:
                     compare_extractors_enabled=compare_extractors_enabled,
                 )
                 results.append(result)
-            except Exception as e:  # noqa: BLE001 - batch benchmarks skip failed URLs
+            except BENCHMARK_ERRORS as e:
                 # Skip failed URLs but record the reason so callers can surface it
                 _logger.debug("Benchmark failed for URL %s: %s", url, e)
                 self.failures.append((url, str(e)))
@@ -230,13 +238,13 @@ class Benchmark:
         # Benchmark fast mode
         try:
             results["fast"] = self.run_single(url, mode="fast", iterations=iterations)
-        except Exception as e:  # noqa: BLE001 - mode comparison should keep partial results
+        except BENCHMARK_ERRORS as e:
             _logger.debug("Fast mode benchmark failed: %s", e)
 
         # Benchmark render mode (if available)
         try:
             results["render"] = self.run_single(url, mode="render", iterations=iterations)
-        except Exception as e:  # noqa: BLE001 - mode comparison should keep partial results
+        except BENCHMARK_ERRORS as e:
             _logger.debug("Render mode benchmark failed: %s", e)
 
         return results
