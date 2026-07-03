@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import logging
+from typing import Any, TypedDict, Unpack
 
 from markdown_ingress.adapters.rendering.renderer_navigation import (
     CONTENT_SELECTORS as DEFAULT_CONTENT_SELECTORS,
@@ -55,6 +56,86 @@ _PROGRESSIVE_RENDER_ERRORS = (
     _playwright_render_error_type(),
 )
 
+
+class RendererOptions(TypedDict, total=False):
+    config: RenderConfig | None
+    timeout: float | None
+    wait_until: str | None
+    headless: bool | None
+    user_agent: str | None
+    stealth: bool | None
+    disable_http2: bool | None
+    extreme_mode: bool | None
+    block_resources: bool | None
+    block_images: bool | None
+    block_fonts: bool | None
+    block_media: bool | None
+    block_ads: bool | None
+    block_trackers: bool | None
+    screenshot: bool | str | None
+    allow_local_urls: bool | None
+
+
+_RENDERER_OPTION_NAMES = (
+    "config",
+    "timeout",
+    "wait_until",
+    "headless",
+    "user_agent",
+    "stealth",
+    "disable_http2",
+    "extreme_mode",
+    "block_resources",
+    "block_images",
+    "block_fonts",
+    "block_media",
+    "block_ads",
+    "block_trackers",
+    "screenshot",
+    "allow_local_urls",
+)
+_RENDERER_OPTION_NAME_SET = frozenset(_RENDERER_OPTION_NAMES)
+
+
+def _normalize_renderer_inputs(
+    args: tuple[object, ...],
+    options: RendererOptions,
+) -> RendererConfigInputs:
+    if len(args) > len(_RENDERER_OPTION_NAMES):
+        raise TypeError(f"Renderer() expected at most {len(_RENDERER_OPTION_NAMES)} arguments")
+
+    unexpected = set(options) - _RENDERER_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"Renderer() got an unexpected keyword argument '{name}'")
+
+    parsed: dict[str, Any] = dict(options)
+    for index, value in enumerate(args):
+        name = _RENDERER_OPTION_NAMES[index]
+        if name in parsed:
+            raise TypeError(f"Renderer() got multiple values for argument '{name}'")
+        parsed[name] = value
+
+    return RendererConfigInputs(
+        config=parsed.get("config"),
+        timeout=parsed.get("timeout"),
+        wait_until=parsed.get("wait_until"),
+        headless=parsed.get("headless"),
+        user_agent=parsed.get("user_agent"),
+        stealth=parsed.get("stealth"),
+        disable_http2=parsed.get("disable_http2"),
+        extreme_mode=parsed.get("extreme_mode"),
+        block_resources=parsed.get("block_resources"),
+        block_images=parsed.get("block_images"),
+        block_fonts=parsed.get("block_fonts"),
+        block_media=parsed.get("block_media"),
+        block_ads=parsed.get("block_ads"),
+        block_trackers=parsed.get("block_trackers"),
+        screenshot=parsed.get("screenshot", _SCREENSHOT_UNSET),
+        allow_local_urls=parsed.get("allow_local_urls"),
+    )
+
+
 try:
     from markdown_ingress.core.stealth import (
         STEALTH_BROWSER_ARGS,
@@ -81,46 +162,10 @@ class Renderer(SharedRendererMixin, IRenderer):
 
     CONTENT_SELECTORS = DEFAULT_CONTENT_SELECTORS
 
-    # Public renderer constructor accepts legacy kwargs before normalizing config.
-    def __init__(  # noqa: PLR0913
-        self,
-        config: RenderConfig | None = None,
-        timeout: float | None = None,
-        wait_until: str | None = None,
-        headless: bool | None = None,
-        user_agent: str | None = None,
-        stealth: bool | None = None,
-        disable_http2: bool | None = None,
-        extreme_mode: bool | None = None,
-        block_resources: bool | None = None,
-        block_images: bool | None = None,
-        block_fonts: bool | None = None,
-        block_media: bool | None = None,
-        block_ads: bool | None = None,
-        block_trackers: bool | None = None,
-        screenshot: bool | str | None = _SCREENSHOT_UNSET,
-        allow_local_urls: bool | None = None,
-    ):
+    def __init__(self, *args: object, **options: Unpack[RendererOptions]) -> None:
         config = build_renderer_config(
             self.DEFAULT_WAIT_UNTIL,
-            RendererConfigInputs(
-                config=config,
-                timeout=timeout,
-                wait_until=wait_until,
-                headless=headless,
-                user_agent=user_agent,
-                stealth=stealth,
-                disable_http2=disable_http2,
-                extreme_mode=extreme_mode,
-                block_resources=block_resources,
-                block_images=block_images,
-                block_fonts=block_fonts,
-                block_media=block_media,
-                block_ads=block_ads,
-                block_trackers=block_trackers,
-                screenshot=screenshot,
-                allow_local_urls=allow_local_urls,
-            ),
+            _normalize_renderer_inputs(args, options),
         )
 
         self.timeout = timeout_seconds_to_ms(config.timeout)

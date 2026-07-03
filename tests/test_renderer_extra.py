@@ -96,6 +96,21 @@ def test_renderer_init_defaults_to_domcontentloaded():
     assert renderer.wait_until == "domcontentloaded"
 
 
+def test_renderer_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'timeout'"):
+        Renderer(None, 5.0, timeout=7.0)
+
+
+def test_renderer_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'timeot'"):
+        Renderer(timeot=5.0)
+
+
+def test_renderer_rejects_too_many_positional_options():
+    with pytest.raises(TypeError, match="expected at most 16 arguments"):
+        Renderer(*range(17))
+
+
 def test_renderer_init_config_override_with_params():
     """Config provided but individual params override it (lines 110-137)."""
     config = RenderConfig(timeout=30.0, wait_until="networkidle")
