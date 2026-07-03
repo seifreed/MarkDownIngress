@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -31,51 +32,96 @@ from markdown_ingress.api_server_support import (
     to_security_report_response,
 )
 
-_logger = logging.getLogger(__name__)
+
+async def _run_to_thread(
+    message: str,
+    exc_ctx: object,
+    func: Callable[..., Any],
+    func_args: tuple[Any, ...] = (),
+    func_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    if func_kwargs is None:
+        func_kwargs = {}
+    try:
+        return await asyncio.to_thread(func, *func_args, **func_kwargs)
+    except Exception as exc:
+        log_runtime_error(message, exc, exc_ctx)
+        raise_runtime_http_error(exc)
+
+
+def _run_blocking(
+    message: str,
+    exc_ctx: object,
+    func: Callable[..., Any],
+    func_args: tuple[Any, ...] = (),
+    func_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    if func_kwargs is None:
+        func_kwargs = {}
+    try:
+        return func(*func_args, **func_kwargs)
+    except Exception as exc:
+        log_runtime_error(message, exc, exc_ctx)
+        raise_runtime_http_error(exc)
+
+
+async def _run_async(
+    message: str,
+    exc_ctx: object,
+    func: Callable[..., Any],
+    func_args: tuple[Any, ...] = (),
+    func_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    if func_kwargs is None:
+        func_kwargs = {}
+    try:
+        return await func(*func_args, **func_kwargs)
+    except Exception as exc:
+        log_runtime_error(message, exc, exc_ctx)
+        raise_runtime_http_error(exc)
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
     # Request cancellation stops waiting on the response, but the sync ingest
     # work already dispatched to the worker thread will continue to completion.
-    try:
-        doc = await asyncio.to_thread(
-            ingest_func,
-            url=str(request.url),
-            **_common_ingest_kwargs(request),
-        )
-        return to_document_response(doc)
-    except Exception as exc:
-        log_runtime_error("Error processing ingest request for %s", exc, request.url)
-        raise_runtime_http_error(exc)
+    doc = await _run_to_thread(
+        message="Error processing ingest request for %s",
+        exc_ctx=request.url,
+        func=ingest_func,
+        func_kwargs={"url": str(request.url), **_common_ingest_kwargs(request)},
+    )
+    return to_document_response(doc)
 
 
 async def handle_retry_ingest(request: RetryIngestRequest, retry_ingest_func) -> IngestResponse:
     # Cancellation interrupts the async wait only; the worker thread keeps
     # running until the sync retry flow completes.
-    try:
-        doc = await asyncio.to_thread(
-            retry_ingest_func,
-            url=str(request.url),
-            mode=request.mode,
-            strict=request.strict,
-            model=request.model,
-            max_retries=request.max_retries,
-            enable_stealth=request.enable_stealth,
-            initial_timeout=request.initial_timeout,
-            max_timeout=request.max_timeout,
-        )
-        return to_document_response(doc)
-    except Exception as exc:
-        log_runtime_error("Error processing retry ingest request for %s", exc, request.url)
-        raise_runtime_http_error(exc)
+    doc = await _run_to_thread(
+        message="Error processing retry ingest request for %s",
+        exc_ctx=request.url,
+        func=retry_ingest_func,
+        func_kwargs={
+            "url": str(request.url),
+            "mode": request.mode,
+            "strict": request.strict,
+            "model": request.model,
+            "max_retries": request.max_retries,
+            "enable_stealth": request.enable_stealth,
+            "initial_timeout": request.initial_timeout,
+            "max_timeout": request.max_timeout,
+        },
+    )
+    return to_document_response(doc)
 
 
 async def handle_sync_batch(request: BatchIngestRequest, ingest_many_func) -> BatchIngestResponse:
-    try:
-        return BatchIngestResponse(**await sync_batch_response(request, ingest_many_func))
-    except Exception as exc:
-        log_runtime_error("Error processing sync batch request", exc)
-        raise_runtime_http_error(exc)
+    response = await _run_async(
+        message="Error processing sync batch request",
+        exc_ctx=request,
+        func=sync_batch_response,
+        func_kwargs={"request": request, "ingest_many_func": ingest_many_func},
+    )
+    return BatchIngestResponse(**response)
 
 
 async def handle_batch_submit(
@@ -84,19 +130,14 @@ async def handle_batch_submit(
     job_queue,
     job_ttl_seconds: int,
 ) -> BatchJobAccepted:
-    try:
-        job = job_queue.submit(
-            make_batch_job_task(request, ingest_many_func),
-            webhook_url=str(request.webhook_url) if request.webhook_url is not None else None,
-            start_immediately=False,
-        )
-    except Exception as exc:
-        log_runtime_error(
-            "Error processing batch submit for %s",
-            exc,
-            request.webhook_url,
-        )
-        raise_runtime_http_error(exc)
+    webhook_url = str(request.webhook_url) if request.webhook_url is not None else None
+    job = _run_blocking(
+        message="Error processing batch submit for %s",
+        exc_ctx=request.webhook_url,
+        func=job_queue.submit,
+        func_args=(make_batch_job_task(request, ingest_many_func),),
+        func_kwargs={"webhook_url": webhook_url, "start_immediately": False},
+    )
 
     return BatchJobAccepted(
         job_id=job.job_id,
@@ -109,11 +150,12 @@ async def handle_batch_submit(
 
 
 async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
-    try:
-        job = job_source(job_id) if callable(job_source) else job_source.get(job_id)
-    except Exception as exc:
-        log_runtime_error("Error processing batch status request for %s", exc, job_id)
-        raise_runtime_http_error(exc)
+    job = _run_blocking(
+        message="Error processing batch status request for %s",
+        exc_ctx=job_id,
+        func=(job_source if callable(job_source) else job_source.get),
+        func_args=(job_id,),
+    )
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return BatchJobResponse(
@@ -132,31 +174,24 @@ async def handle_security_report(
 ) -> SecurityReportResponse:
     # Cancellation interrupts the async wait only; report generation continues
     # in the dispatched worker thread.
-    try:
-        report = await asyncio.to_thread(
-            generate_security_report_func,
-            url=str(request.url),
-            **_common_ingest_kwargs(request),
-        )
-        return to_security_report_response(report)
-    except Exception as exc:
-        log_runtime_error(
-            "Error processing security report request for %s",
-            exc,
-            request.url,
-        )
-        raise_runtime_http_error(exc)
+    report = await _run_to_thread(
+        message="Error processing security report request for %s",
+        exc_ctx=request.url,
+        func=generate_security_report_func,
+        func_kwargs={"url": str(request.url), **_common_ingest_kwargs(request)},
+    )
+    return to_security_report_response(report)
 
 
 async def handle_extractor_comparison(
     request: HTMLCompareRequest,
     compare_extractors_func,
 ) -> ExtractorComparisonResponse:
-    try:
-        results = await asyncio.to_thread(
-            compare_extractors_func, request.html, model=request.model
-        )
-        return ExtractorComparisonResponse(results=results)
-    except Exception as exc:
-        log_runtime_error("Error processing extractor comparison request", exc)
-        raise_runtime_http_error(exc)
+    results = await _run_to_thread(
+        message="Error processing extractor comparison request",
+        exc_ctx=request.model,
+        func=compare_extractors_func,
+        func_args=(request.html,),
+        func_kwargs={"model": request.model},
+    )
+    return ExtractorComparisonResponse(results=results)

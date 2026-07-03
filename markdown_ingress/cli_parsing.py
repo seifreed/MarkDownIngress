@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from markdown_ingress import __version__
@@ -30,7 +30,9 @@ from markdown_ingress.cli_ingest_args import add_common_ingest_args as add_commo
 from markdown_ingress.cli_ingest_args import create_batch_parser as create_batch_parser
 from markdown_ingress.cli_ingest_args import create_ingest_parser as create_ingest_parser
 from markdown_ingress.cli_support import load_domain_policies
-from markdown_ingress.core.config import Config
+
+if TYPE_CHECKING:
+    from markdown_ingress.core.config import Config
 
 
 @dataclass
@@ -77,11 +79,12 @@ def load_runtime_config(args) -> Config:
     Returns:
         Config object with defaults, file config (if any), and env vars applied
     """
-    from .core.config import ConfigLoader
-
     config_path = getattr(args, "config", None)
-    loader = ConfigLoader(config_path)
-    return cast(Config, loader.load())
+    from markdown_ingress.application.config import (
+        load_runtime_config as app_load_runtime_config,
+    )
+
+    return app_load_runtime_config(config_path)
 
 
 def _runtime_ingest_config(args, runtime_config: Config | None):
