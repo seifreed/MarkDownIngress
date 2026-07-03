@@ -14,6 +14,13 @@ from markdown_ingress.core.url_safety import (
 )
 
 logger = logging.getLogger(__name__)
+SANITIZATION_DOM_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    KeyError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 HIDDEN_SELECTORS = (
     "[hidden]",
@@ -96,7 +103,7 @@ def _remove_hidden_selector_matches(tree: HTMLParser) -> int:
                 elem.decompose()
         except (AttributeError, ValueError, TypeError) as e:
             logger.debug("Selector '%s' not supported: %s", selector, e)
-        except Exception as e:  # noqa: BLE001 - sanitizer skips unsupported DOM nodes
+        except SANITIZATION_DOM_ERRORS as e:
             logger.warning("Unexpected error processing selector '%s': %s", selector, e)
     return count
 
@@ -268,7 +275,7 @@ def _remove_attributes(node: Any, attrs_to_remove: list[str]) -> None:
     for attr_name in attrs_to_remove:
         try:
             del node.attrs[attr_name]
-        except Exception as exc:  # noqa: BLE001 - sanitizer must neutralize best effort
+        except SANITIZATION_DOM_ERRORS as exc:
             logger.warning(
                 "Failed to delete dangerous attribute %s on <%s>: %s",
                 attr_name,
@@ -277,7 +284,7 @@ def _remove_attributes(node: Any, attrs_to_remove: list[str]) -> None:
             )
             try:
                 node.attrs[attr_name] = ""
-            except Exception:  # noqa: BLE001 - failed neutralization is logged below
+            except SANITIZATION_DOM_ERRORS:
                 logger.warning(
                     "Unable to neutralize dangerous attribute %s on <%s>",
                     attr_name,

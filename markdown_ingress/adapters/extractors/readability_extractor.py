@@ -16,6 +16,17 @@ from markdown_ingress.models import ExtractionResult
 
 logger = logging.getLogger(__name__)
 Document = cast(Any, import_module("readability").Document)
+_etree = import_module("lxml.etree")
+ParserError = cast(type[Exception], _etree.ParserError)
+XMLSyntaxError = cast(type[Exception], _etree.XMLSyntaxError)
+READABILITY_EXTRACTION_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    ParserError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    XMLSyntaxError,
+)
 
 
 def _is_empty_body(html: str) -> bool:
@@ -81,7 +92,7 @@ class Extractor(IExtractor):
             doc = Document(pre_cleaned_html)
             title = doc.title()
             content_html = doc.summary(html_partial=False)
-        except Exception as e:  # noqa: BLE001 - readability failures fall back to raw HTML
+        except READABILITY_EXTRACTION_ERRORS as e:
             logger.warning(
                 "Readability extraction failed for URL %s, falling back to raw content: %s",
                 url,
