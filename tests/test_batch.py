@@ -64,6 +64,21 @@ def test_batch_processor_defaults_to_auto_mode():
     assert BatchProcessor().mode == "auto"
 
 
+def test_batch_processor_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'mode'"):
+        BatchProcessor("fast", mode="auto")
+
+
+def test_batch_processor_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'mod'"):
+        BatchProcessor(mod="fast")
+
+
+def test_batch_processor_rejects_too_many_positional_options():
+    with pytest.raises(TypeError, match="expected at most 8 arguments"):
+        BatchProcessor(*range(9))
+
+
 def test_batch_processor_preserves_base_config_without_explicit_overrides():
     base = IngestConfig(mode="render", strict=False, model="custom", timeout=99.0)
 

@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.util import find_spec
+from typing import TypedDict, Unpack, cast
 
 from markdown_ingress.api_runtime import (
     _validate_batch_max_concurrent as _validate_max_concurrent,
@@ -37,6 +38,53 @@ class _CustomBatchState:
     completed: int = 0
 
 
+class BatchProcessorOptions(TypedDict, total=False):
+    mode: Mode
+    strict: bool
+    model: str
+    timeout: float
+    max_concurrent: int
+    on_progress: Callable[[int, int, str], None] | None
+    base_config: IngestConfig | None
+    explicit_overrides: frozenset[str] | None
+
+
+_BATCH_PROCESSOR_OPTION_NAMES = (
+    "mode",
+    "strict",
+    "model",
+    "timeout",
+    "max_concurrent",
+    "on_progress",
+    "base_config",
+    "explicit_overrides",
+)
+_BATCH_PROCESSOR_OPTION_NAME_SET = frozenset(_BATCH_PROCESSOR_OPTION_NAMES)
+
+
+def _normalize_batch_processor_options(
+    args: tuple[object, ...],
+    options: BatchProcessorOptions,
+) -> BatchProcessorOptions:
+    if len(args) > len(_BATCH_PROCESSOR_OPTION_NAMES):
+        raise TypeError(
+            f"BatchProcessor() expected at most {len(_BATCH_PROCESSOR_OPTION_NAMES)} arguments"
+        )
+
+    unexpected = set(options) - _BATCH_PROCESSOR_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"BatchProcessor() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _BATCH_PROCESSOR_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"BatchProcessor() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(BatchProcessorOptions, normalized)
+
+
 def _ensure_safe_document(document: object) -> SafeDocument:
     if document is None:
         raise TypeError("process_url() returned None instead of SafeDocument")
@@ -57,18 +105,17 @@ async def _record_custom_batch_error(
 class BatchProcessor:
     """Process multiple URLs in batch via the application use case layer."""
 
-    # Compatibility constructor accepts batch defaults before building IngestConfig.
-    def __init__(  # noqa: PLR0913
-        self,
-        mode: Mode = "auto",
-        strict: bool = True,
-        model: str = "gpt-4",
-        timeout: float = 30.0,
-        max_concurrent: int = 5,
-        on_progress: Callable[[int, int, str], None] | None = None,
-        base_config: IngestConfig | None = None,
-        explicit_overrides: frozenset[str] | None = None,
-    ):
+    def __init__(self, *args: object, **options: Unpack[BatchProcessorOptions]) -> None:
+        parsed = _normalize_batch_processor_options(args, options)
+        mode = parsed.get("mode", "auto")
+        strict = parsed.get("strict", True)
+        model = parsed.get("model", "gpt-4")
+        timeout = parsed.get("timeout", 30.0)
+        max_concurrent = parsed.get("max_concurrent", 5)
+        on_progress = parsed.get("on_progress")
+        base_config = parsed.get("base_config")
+        explicit_overrides = parsed.get("explicit_overrides")
+
         self.mode = mode
         self.strict = strict
         self.model = model
