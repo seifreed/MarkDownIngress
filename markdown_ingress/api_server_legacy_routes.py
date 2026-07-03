@@ -32,39 +32,24 @@ def register_legacy_routes(
     handlers: LegacyRouteHandlers,
 ) -> None:
     """Register pre-v1 compatibility aliases for existing clients."""
-    app.add_api_route(
-        "/ingest",
-        handlers.ingest_endpoint,
-        methods=["POST"],
-        response_model=IngestResponse,
-        dependencies=list(dependencies),
-    )
-    app.add_api_route(
-        "/ingest/retry",
-        handlers.retry_ingest_endpoint,
-        methods=["POST"],
-        response_model=IngestResponse,
-        dependencies=list(dependencies),
-    )
-    app.add_api_route(
-        "/ingest/batch",
-        handlers.batch_ingest_endpoint,
-        methods=["POST"],
-        response_model=BatchIngestResponse,
-        dependencies=list(dependencies),
-    )
-    app.add_api_route(
-        "/security/report",
-        handlers.security_report_endpoint,
-        methods=["POST"],
-        response_model=SecurityReportResponse,
-        dependencies=list(dependencies),
-    )
-    app.add_api_route(
-        "/evaluate/extractors",
-        handlers.extractor_comparison_endpoint,
-        methods=["POST"],
-        response_model=ExtractorComparisonResponse,
-        dependencies=list(dependencies),
-    )
+    route_dependencies = list(dependencies)
+    post_routes = [
+        ("/ingest", handlers.ingest_endpoint, IngestResponse),
+        ("/ingest/retry", handlers.retry_ingest_endpoint, IngestResponse),
+        ("/ingest/batch", handlers.batch_ingest_endpoint, BatchIngestResponse),
+        ("/security/report", handlers.security_report_endpoint, SecurityReportResponse),
+        (
+            "/evaluate/extractors",
+            handlers.extractor_comparison_endpoint,
+            ExtractorComparisonResponse,
+        ),
+    ]
+    for path, endpoint, response_model in post_routes:
+        app.add_api_route(
+            path,
+            endpoint,
+            methods=["POST"],
+            response_model=response_model,
+            dependencies=route_dependencies,
+        )
     app.add_api_route("/health", handlers.health_endpoint, methods=["GET"])
