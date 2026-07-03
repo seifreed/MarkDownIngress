@@ -108,6 +108,13 @@ _SCREENSHOT_UNSET: Final[Any] = object()
 _MIN_CHROMIUM_LAUNCH_TIMEOUT_MS: Final[int] = 1000
 _CHROMIUM_LAUNCH_RETRIES: Final[int] = 1
 _RESOURCE_CLOSE_TIMEOUT_S: Final[float] = 1.0
+RENDERER_OPTIONAL_OPERATION_ERRORS: tuple[type[Exception], ...] = (
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 # Lazy import for stealth injection
 try:
@@ -134,7 +141,7 @@ async def _close_async_resource(resource: Any | None, label: str) -> None:
         await asyncio.wait_for(resource.close(), timeout=_RESOURCE_CLOSE_TIMEOUT_S)
     except TimeoutError:
         logger.warning("Timed out closing %s cleanly", label)
-    except Exception as exc:  # noqa: BLE001 - cleanup must not mask prior failures
+    except RENDERER_OPTIONAL_OPERATION_ERRORS as exc:
         logger.warning("Failed to close %s cleanly: %s", label, exc)
 
 
@@ -316,7 +323,7 @@ async def execute_render_session(
             html = await renderer._extract_page_content(page)
             try:
                 screenshot_path = await renderer._capture_screenshot(page)
-            except Exception as e:  # noqa: BLE001 - screenshots are optional metadata
+            except RENDERER_OPTIONAL_OPERATION_ERRORS as e:
                 logger.warning("Screenshot capture failed, continuing without: %s", e)
                 screenshot_path = None
 
