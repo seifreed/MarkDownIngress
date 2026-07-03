@@ -11,6 +11,21 @@ from markdown_ingress.core.nova_guard import NOVA_AVAILABLE, NovaGuard
 from markdown_ingress.core.security_engine import SecurityEngine
 
 
+def test_nova_guard_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'enable_keywords'"):
+        NovaGuard(True, enable_keywords=False)
+
+
+def test_nova_guard_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'enable_keyword'"):
+        NovaGuard(**cast(Any, {"enable_keyword": True}))
+
+
+def test_nova_guard_rejects_too_many_positional_options():
+    with pytest.raises(TypeError, match="takes at most 4 positional arguments"):
+        NovaGuard(True, True, False, None, None)
+
+
 @pytest.mark.skipif(not NOVA_AVAILABLE, reason="nova-hunting not installed")
 class TestNovaIntegration:
     """Test Nova-tracer integration when available"""

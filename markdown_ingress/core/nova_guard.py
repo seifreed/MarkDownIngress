@@ -10,7 +10,7 @@ import logging
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.core.nova_rules import (
     parse_bundled_rule_content,
@@ -43,6 +43,46 @@ _PATH_PERMISSION_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+
+
+class NovaGuardOptions(TypedDict, total=False):
+    enable_keywords: bool
+    enable_semantics: bool
+    enable_llm: bool
+    rules_path: str | None
+    severity_high_threshold: float
+    severity_medium_threshold: float
+    allowed_rules_dirs: list[str] | None
+
+
+_NOVA_GUARD_POSITIONAL_OPTION_NAMES = (
+    "enable_keywords",
+    "enable_semantics",
+    "enable_llm",
+    "rules_path",
+)
+_NOVA_GUARD_OPTION_NAME_SET = frozenset(NovaGuardOptions.__annotations__)
+
+
+def _normalize_nova_guard_options(
+    args: tuple[object, ...],
+    options: NovaGuardOptions,
+) -> NovaGuardOptions:
+    if len(args) > len(_NOVA_GUARD_POSITIONAL_OPTION_NAMES):
+        raise TypeError(f"NovaGuard() takes at most 4 positional arguments ({len(args)} given)")
+
+    unexpected = set(options) - _NOVA_GUARD_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"NovaGuard() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _NOVA_GUARD_POSITIONAL_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"NovaGuard() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(NovaGuardOptions, normalized)
 
 
 def _load_nova_api() -> tuple[Any, Any]:
@@ -89,18 +129,19 @@ def _coerce_rule_score(raw_score: object, rule_name: str) -> float:
 class NovaGuard:
     """Advanced prompt injection detection using Nova Framework."""
 
-    # Detection profile constructor keeps optional engines and thresholds explicit.
-    def __init__(  # noqa: PLR0913
-        self,
-        enable_keywords: bool = True,
-        enable_semantics: bool = True,
-        enable_llm: bool = False,
-        rules_path: str | None = None,
-        *,
-        severity_high_threshold: float = DEFAULT_HIGH_THRESHOLD,
-        severity_medium_threshold: float = DEFAULT_MEDIUM_THRESHOLD,
-        allowed_rules_dirs: list[str] | None = None,
-    ):
+    def __init__(self, *args: object, **options: Unpack[NovaGuardOptions]) -> None:
+        parsed = _normalize_nova_guard_options(args, options)
+        enable_keywords = parsed.get("enable_keywords", True)
+        enable_semantics = parsed.get("enable_semantics", True)
+        enable_llm = parsed.get("enable_llm", False)
+        rules_path = parsed.get("rules_path")
+        severity_high_threshold = parsed.get("severity_high_threshold", DEFAULT_HIGH_THRESHOLD)
+        severity_medium_threshold = parsed.get(
+            "severity_medium_threshold",
+            DEFAULT_MEDIUM_THRESHOLD,
+        )
+        allowed_rules_dirs = parsed.get("allowed_rules_dirs")
+
         if not NOVA_AVAILABLE:
             raise ImportError("nova-hunting not installed")  # pragma: no cover
         nova_matcher, nova_parser = _load_nova_api()
