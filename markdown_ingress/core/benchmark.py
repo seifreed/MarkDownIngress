@@ -7,6 +7,7 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.interfaces import IFetcher
@@ -57,13 +58,22 @@ class BenchmarkResult:
     extractor_comparison: dict[str, dict] | None = None
 
 
+class BenchmarkIngest(Protocol):
+    """Callable protocol for benchmark ingestion adapters."""
+
+    def __call__(
+        self, url: str, *, mode: Mode = "fast", model: str = "gpt-4", **kwargs: object
+    ) -> SafeDocument: ...
+
+
 class Benchmark:
     """Benchmark MarkDownIngress performance"""
 
     def __init__(
         self,
+        *,
         model: str = "gpt-4",
-        ingest_func: Callable[..., SafeDocument] | None = None,
+        ingest_func: BenchmarkIngest,
         fetcher_factory: Callable[[], IFetcher] | None = None,
         compare_fn: Callable[[str, str], dict] | None = None,
     ):

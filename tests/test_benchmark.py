@@ -82,7 +82,7 @@ def test_benchmark_default_ingest_can_be_required_and_reset():
     """Benchmark requires an explicit ingest dependency."""
     from markdown_ingress.core.benchmark import Benchmark
 
-    with pytest.raises(TypeError, match="requires a callable ingest_func"):
+    with pytest.raises(TypeError):
         Benchmark()
 
 
