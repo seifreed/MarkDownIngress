@@ -13,6 +13,7 @@ from markdown_ingress.adapters.fetching.fetch_shared import (
     SslBypassSharedMixin,
 )
 from markdown_ingress.adapters.fetching.http_support import (
+    FETCH_ATTEMPT_ERRORS,
     MAX_RETRIES,
     RETRYABLE_STATUS,
     ResponseSizeLimitError,
@@ -68,7 +69,7 @@ class AsyncSslBypassFetchMixin(SslBypassSharedMixin, FetchAttemptSharedMixin):
                     )
                 except (DomainCircuitOpenError, httpx.TooManyRedirects):
                     raise
-                except Exception as exc:  # noqa: BLE001 - SSL fallback records attempt error
+                except FETCH_ATTEMPT_ERRORS as exc:
                     ssl_last_exc = exc
                     await self._handle_async_ssl_bypass_generic_error(
                         state, exc, ssl_attempt, remaining_attempts
