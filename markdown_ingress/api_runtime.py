@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, TypedDict, Unpack, cast
+from typing import Any, cast
 
-from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import (
-    ChunkingStrategy,
-    Mode,
-    OutputFormat,
-    validate_positive_int,
-)
+from markdown_ingress.config_models import IngestConfig, _validate_output_profile_name
+from markdown_ingress.config_validation import validate_positive_int
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -206,47 +201,6 @@ _RUNTIME_CONFIG_OPTION_DEFAULTS: dict[str, object] = {
     "render_cost_budget": UNSET,
     "domain_policies": None,
 }
-
-
-class RuntimeConfigOptions(TypedDict, total=False):
-    mode: Mode | None
-    strict: bool | None
-    allow_local_urls: bool | None
-    model: str | None
-    timeout: float | None
-    auto_render_threshold: int | None
-    stealth: bool | None
-    disable_http2: bool | None
-    extreme_mode: bool | None
-    screenshot: bool | str | None
-    extract_metadata: bool | None
-    extract_links: bool | None
-    advanced_security: bool | None
-    use_llm: bool | None
-    cache: ICacheBackend | None
-    cache_ttl: int | None
-    policy_name: str | None
-    custom_patterns: list[str] | None
-    plugin_dirs: list[str] | None
-    output_format: OutputFormat | None
-    output_profile: str | None
-    output_formats: list[str] | None
-    extract_blocks: bool | None
-    chunking_strategy: ChunkingStrategy | None
-    chunk_size: int | None
-    chunk_overlap: int | None
-    detect_language: bool | None
-    normalize_multilingual: bool | None
-    include_security_explanation: bool | None
-    include_observability: bool | None
-    save_reports: bool | None
-    reports_dir: str | None
-    fetcher_user_agent: str | None
-    domain_request_interval: float | None
-    circuit_breaker_threshold: int | None
-    circuit_breaker_open_seconds: float | None
-    render_cost_budget: int | None
-    domain_policies: list[dict[str, object]] | list[DomainPolicy] | None
 
 
 class _IsolatedCacheBackend:
@@ -445,7 +399,7 @@ def _normalize_runtime_config_options(
 def build_runtime_config(
     config: IngestConfig | FileConfig | None = None,
     *args: object,
-    **options: Unpack[RuntimeConfigOptions],
+    **options: object,
 ) -> IngestConfig:
     """Build an isolated runtime config from file/runtime config plus overrides."""
     values = _normalize_runtime_config_options(config, args, options)
