@@ -10,6 +10,7 @@ import pytest
 
 import markdown_ingress.api as _api
 from markdown_ingress.core.benchmark import Benchmark, BenchmarkResult
+from markdown_ingress.models import FetchResult
 from tests.local_http_server import serve_html
 
 _BENCHMARK_HTML = (
@@ -143,3 +144,38 @@ def test_cli_benchmark_fails_when_all_urls_fail(local_servers, tmp_path, monkeyp
     assert result.returncode == 1
     assert "Skipped" in result.stdout
     assert "No benchmark results" in result.stdout
+
+
+def test_benchmark_compare_extractors_uses_keyword_model_argument(local_servers):
+    """Comparator receives model via keyword argument for clarity and consistency."""
+    calls: list[tuple[str, str]] = []
+
+    def fake_compare(html: str, *, model: str = "gpt-4") -> dict[str, dict[str, object]]:
+        calls.append((html, model))
+        return {"fake": {"available": True, "model": model}}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str) -> FetchResult:
+            return FetchResult(
+                html="<html><body>test</body></html>",
+                url=url,
+                status_code=200,
+                final_url=url,
+                headers={},
+                timing_ms=0.0,
+            )
+
+        def close(self) -> None:
+            return None
+
+    bench = Benchmark(
+        model="gpt-4o-mini",
+        ingest_func=_api.ingest,
+        compare_fn=fake_compare,
+        fetcher_factory=FakeFetcher,
+    )
+    result = bench.run_single(local_servers[0], iterations=1, compare_extractors_enabled=True)
+
+    assert result.extractor_comparison is not None
+    assert calls == [("<html><body>test</body></html>", "gpt-4o-mini")]
+    assert result.extractor_comparison["fake"] == {"available": True, "model": "gpt-4o-mini"}
