@@ -154,6 +154,7 @@ def test_dynamic_import_detection_is_covered() -> None:
 import importlib
 from importlib import import_module as imported_module
 
+__import__("markdown_ingress")
 __import__("markdown_ingress.core")
 __import__(name="markdown_ingress.api")
 importlib.import_module("markdown_ingress.adapters")
@@ -173,6 +174,7 @@ object().import_module("markdown_ingress.runtime")
     }
 
     assert observed == {
+        "markdown_ingress",
         "markdown_ingress.core",
         "markdown_ingress.api",
         "markdown_ingress.adapters",
@@ -187,7 +189,15 @@ def test_package_facade_is_not_an_internal_import_target() -> None:
         if path.name == "__init__.py":
             continue
         tree = ast.parse(path.read_text())
+        importlib_aliases = _collect_importlib_aliases(tree)
         for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                imported = _dynamic_import_target(node, importlib_aliases)
+                if imported == PACKAGE_PREFIX:
+                    raise AssertionError(
+                        f"{path}: avoid dynamic import of package root; import from "
+                        f"specific submodules instead."
+                    )
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == PACKAGE_PREFIX:
