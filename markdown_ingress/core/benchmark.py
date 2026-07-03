@@ -22,6 +22,7 @@ BENCHMARK_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+_SEPARATOR = "=" * 80
 
 
 @dataclass
@@ -175,6 +176,80 @@ class Benchmark:
             extractor_comparison=extractor_comparison,
         )
 
+    @staticmethod
+    def _result_change_pct(value: float) -> str:
+        return f"-{value:.1f}%" if value > 0 else "0.0%"
+
+    @staticmethod
+    def _format_report_header(title: str) -> list[str]:
+        return [_SEPARATOR, title, _SEPARATOR, ""]
+
+    @staticmethod
+    def _format_extractor_summary(result: BenchmarkResult) -> str | None:
+        if not result.extractor_comparison:
+            return None
+
+        extractors = ", ".join(
+            f"{name}:{data['markdown_length']}"
+            for name, data in result.extractor_comparison.items()
+            if data.get("available")
+        )
+        if not extractors:
+            return None
+        return f"   Extractors: {extractors}"
+
+    def _format_result_lines(self, index: int, result: BenchmarkResult) -> list[str]:
+        return [
+            f"{index}. {result.url}",
+            f"   Mode: {result.mode}",
+            (
+                f"   Timing: {result.avg_time_ms:.1f}ms avg "
+                f"(min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms, "
+                f"std dev: {result.std_dev_ms:.1f}ms)"
+            ),
+            (
+                f"   Tokens: {result.original_tokens:,} → {result.cleaned_tokens:,} "
+                f"({self._result_change_pct(result.reduction_percent)})"
+            ),
+            (
+                f"   Size: {result.original_size_bytes:,} → "
+                f"{result.cleaned_size_bytes:,} bytes "
+                f"({self._result_change_pct(result.size_reduction_percent)})"
+            ),
+            f"   Security: {result.injection_score:.3f} ({result.risk_level})",
+            "",  # Blank line will be removed only if no extractor summary
+        ] + ([extractor_line] if (extractor_line := self._format_extractor_summary(result)) else [])
+
+    @staticmethod
+    def _collect_extractor_token_averages(
+        results: list[BenchmarkResult],
+    ) -> dict[str, list[float]]:
+        summary: dict[str, list[float]] = {}
+        for result in results:
+            if not result.extractor_comparison:
+                continue
+            for name, data in result.extractor_comparison.items():
+                if not data.get("available"):
+                    continue
+                summary.setdefault(name, []).append(float(data.get("token_estimate", 0)))
+        return summary
+
+    def _format_summary_lines(self, results: list[BenchmarkResult]) -> list[str]:
+        avg_time = statistics.mean([r.avg_time_ms for r in results])
+        avg_reduction = statistics.mean([r.reduction_percent for r in results])
+        extractor_summary = self._collect_extractor_token_averages(results)
+
+        lines = self._format_report_header("Summary")
+        lines.append(f"URLs tested: {len(results)}")
+        lines.append(f"Average time: {avg_time:.1f}ms")
+        lines.append(f"Average token reduction: {avg_reduction:.1f}%")
+        if extractor_summary:
+            lines.append("Extractor token averages:")
+            for name, values in sorted(extractor_summary.items()):
+                lines.append(f"- {name}: {statistics.mean(values):.1f} tokens")
+        lines.append("")
+        return lines
+
     def _compare_extractors(self, url: str) -> dict[str, dict] | None:
         if self._compare_fn is None:
             _logger.warning("compare_extractors not available (no compare_fn provided)")
@@ -301,67 +376,12 @@ class Benchmark:
             return "No benchmark results"
 
         report_lines = []
-        report_lines.append("=" * 80)
-        report_lines.append("MarkDownIngress Benchmark Report")
-        report_lines.append("=" * 80)
-        report_lines.append("")
+        report_lines.extend(self._format_report_header("MarkDownIngress Benchmark Report"))
 
         for i, result in enumerate(results, 1):
-            report_lines.append(f"{i}. {result.url}")
-            report_lines.append(f"   Mode: {result.mode}")
-            report_lines.append(
-                f"   Timing: {result.avg_time_ms:.1f}ms avg "
-                f"(min: {result.min_time_ms:.1f}ms, max: {result.max_time_ms:.1f}ms, "
-                f"std dev: {result.std_dev_ms:.1f}ms)"
-            )
-            token_pct = (
-                f"-{result.reduction_percent:.1f}%" if result.reduction_percent > 0 else "0.0%"
-            )
-            size_pct = (
-                f"-{result.size_reduction_percent:.1f}%"
-                if result.size_reduction_percent > 0
-                else "0.0%"
-            )
-            report_lines.append(
-                f"   Tokens: {result.original_tokens:,} → {result.cleaned_tokens:,} ({token_pct})"
-            )
-            report_lines.append(
-                f"   Size: {result.original_size_bytes:,} → "
-                f"{result.cleaned_size_bytes:,} bytes ({size_pct})"
-            )
-            report_lines.append(f"   Security: {result.injection_score:.3f} ({result.risk_level})")
-            if result.extractor_comparison:
-                extractors = ", ".join(
-                    f"{name}:{data['markdown_length']}"
-                    for name, data in result.extractor_comparison.items()
-                    if data.get("available")
-                )
-                report_lines.append(f"   Extractors: {extractors}")
+            report_lines.extend(self._format_result_lines(i, result))
             report_lines.append("")
 
-        # Summary
-        avg_time = statistics.mean([r.avg_time_ms for r in results])
-        avg_reduction = statistics.mean([r.reduction_percent for r in results])
-        extractor_summary: dict[str, list[float]] = {}
-        for result in results:
-            if not result.extractor_comparison:
-                continue
-            for name, data in result.extractor_comparison.items():
-                if data.get("available"):
-                    extractor_summary.setdefault(name, []).append(
-                        float(data.get("token_estimate", 0))
-                    )
-
-        report_lines.append("=" * 80)
-        report_lines.append("Summary")
-        report_lines.append("=" * 80)
-        report_lines.append(f"URLs tested: {len(results)}")
-        report_lines.append(f"Average time: {avg_time:.1f}ms")
-        report_lines.append(f"Average token reduction: {avg_reduction:.1f}%")
-        if extractor_summary:
-            report_lines.append("Extractor token averages:")
-            for name, values in sorted(extractor_summary.items()):
-                report_lines.append(f"- {name}: {statistics.mean(values):.1f} tokens")
-        report_lines.append("")
+        report_lines.extend(self._format_summary_lines(results))
 
         return "\n".join(report_lines)
