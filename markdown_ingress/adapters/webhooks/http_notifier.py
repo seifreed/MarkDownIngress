@@ -28,6 +28,12 @@ from markdown_ingress.core.ssrf import (
 # Note: URLError is intentionally NOT included - it includes transient network errors
 # like DNS failures, connection refused, and timeouts which SHOULD be retried.
 _NON_RETRYABLE = (ValueError, TypeError)
+_RETRYABLE_STANDARD_DELIVERY_ERRORS: tuple[type[Exception], ...] = (
+    httpx.HTTPError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+)
 
 
 @dataclass(frozen=True)
@@ -285,7 +291,7 @@ class HTTPWebhookNotifier:
             raise RuntimeError(
                 f"Webhook delivery failed (non-retryable) for {webhook_url}: {exc}"
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - webhook transport errors are retryable
+        except _RETRYABLE_STANDARD_DELIVERY_ERRORS as exc:
             return _WebhookAttemptOutcome(error=exc)
 
     def _run_delivery_loop(
