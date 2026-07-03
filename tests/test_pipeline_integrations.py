@@ -42,6 +42,15 @@ from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import FetchResult, SafeDocument
 
 
+class _CloseTrackingOrchestrator(IngestOrchestrator):
+    def __init__(self) -> None:
+        super().__init__(inflight_registry=InFlightRegistry())
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 def _make_fetch_result(url: str, html: str) -> FetchResult:
     return FetchResult(
         html=html,
@@ -104,6 +113,15 @@ def test_batch_ingest_use_case_context_manager_closes_default_ingest_resources()
 
     assert not batch_use_case.has_active_cleanup_thread()
     assert batch_use_case.wait_for_cleanup_thread_stop(timeout=2.0)
+
+
+def test_in_use_case_does_not_close_injected_orchestrator():
+    orchestrator = _CloseTrackingOrchestrator()
+    use_case = IngestUseCase(orchestrator=orchestrator)
+
+    use_case.close()
+
+    assert orchestrator.close_calls == 0
 
 
 def _start_counting_html_server(

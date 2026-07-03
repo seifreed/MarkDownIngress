@@ -39,6 +39,9 @@ class _IngestUseCaseLike(Protocol):
     orchestrator: IIngestOrchestrator
     playwright_available: bool
 
+    @property
+    def auto_fetcher_user_agent(self) -> str: ...
+
     def execute(self, url: str, config: IngestConfig) -> SafeDocument: ...
 
     def uses_default_runtime_dependencies(self) -> bool: ...
@@ -55,14 +58,18 @@ class BatchIngestUseCase:
 
     def __init__(self, ingest_use_case: _IngestUseCaseLike | None = None) -> None:
         self._owns_ingest_use_case = ingest_use_case is None
+        resolved_use_case: _IngestUseCaseLike
         if ingest_use_case is None:
             from markdown_ingress.application.use_cases import IngestUseCase
 
             ingest_use_case = IngestUseCase()
-        self.ingest_use_case = ingest_use_case
+            resolved_use_case = ingest_use_case
+        else:
+            resolved_use_case = ingest_use_case
+        self.ingest_use_case = resolved_use_case
         self._auto_fetcher_user_agent = getattr(
             self.ingest_use_case,
-            "_auto_fetcher_user_agent",
+            "auto_fetcher_user_agent",
             _select_stable_fetcher_user_agent(),
         )
 

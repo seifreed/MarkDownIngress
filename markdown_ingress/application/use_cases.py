@@ -120,9 +120,9 @@ class IngestUseCase:
         *,
         playwright_available: bool | None = None,
     ) -> None:
-        selected_orchestrator, _used_default_orchestrator = _select_orchestrator(orchestrator)
+        selected_orchestrator, _owns_default_orchestrator = _select_orchestrator(orchestrator)
         self.orchestrator: IIngestOrchestrator = selected_orchestrator
-        self._used_default_orchestrator = _used_default_orchestrator
+        self._owns_default_orchestrator = _owns_default_orchestrator
         self.fetcher_factory = fetcher_factory or self._default_fetcher_factory
         self.renderer_factory = renderer_factory or self._default_renderer_factory
         self.playwright_available = (
@@ -158,7 +158,12 @@ class IngestUseCase:
     def close(self) -> None:
         """Close shared resources (fetcher, etc.)."""
         self._fetcher_mgr.close()
-        self.orchestrator.close()
+        if self._owns_default_orchestrator:
+            self.orchestrator.close()
+
+    @property
+    def auto_fetcher_user_agent(self) -> str:
+        return self._auto_fetcher_user_agent
 
     def has_active_cleanup_thread(self) -> bool:
         """Return whether orchestration cleanup background thread is alive."""
@@ -195,7 +200,7 @@ class IngestUseCase:
         )
         orchestrator = self.orchestrator
         uses_default_orchestrator = (
-            self._used_default_orchestrator
+            self._owns_default_orchestrator
             and not getattr(orchestrator, "_inflight_registry_was_injected", False)
             and getattr(orchestrator, "_default_inflight_registry", None)
             is getattr(orchestrator, "inflight_registry", None)
@@ -260,7 +265,7 @@ class IngestUseCase:
             url,
             resolved_config,
             matched_domain_policy,
-            default_user_agent=self._auto_fetcher_user_agent,
+            default_user_agent=self.auto_fetcher_user_agent,
         )
 
         fresh_screenshot = screenshot_requires_fresh_capture(resolved_config)
