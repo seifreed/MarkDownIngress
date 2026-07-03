@@ -7,10 +7,10 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from markdown_ingress import compare_extractors
 from markdown_ingress.adapters.jobs.sqlite_job_queue import PersistentJobQueue
 from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
 from markdown_ingress.application.batch import BatchProcessor
-from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 
 
 def _start_html_server(html: bytes) -> tuple[ThreadingHTTPServer, str]:
@@ -92,6 +92,6 @@ def test_compare_extractors_use_case_runs_without_mocking():
     html = """
     <html><body><article><h1>Docs</h1><p>Paragraph.</p><pre><code>print('x')</code></pre></article></body></html>
     """
-    results = CompareExtractorsUseCase().execute(html, model="gpt-4")
+    results = compare_extractors(html)
     assert "readability" in results
     assert "available" in results["readability"]

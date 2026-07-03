@@ -28,7 +28,7 @@ _EXPORTS = {
     "SQLiteCache": "markdown_ingress.adapters.cache.sqlite",
     "SafeDocument": "markdown_ingress.models",
     "SecurityReport": "markdown_ingress.models",
-    "compare_extractors": "markdown_ingress.adapters.extractors.comparison",
+    "compare_extractors": "markdown_ingress.api",
     "generate_security_report": "markdown_ingress.api",
     "get_ingest_stats": "markdown_ingress.core.orchestrator",
     "ingest": "markdown_ingress.api",

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from importlib.util import find_spec
-from typing import TypedDict, Unpack, cast
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.api_facade import (
     UNSET,
@@ -277,3 +277,10 @@ def generate_security_report(
         SecurityReport with detailed security analysis
     """
     return generate_security_report_impl(url, config=config, **kwargs)
+
+
+def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
+    """Public API for extractor comparison benchmark inputs."""
+    from markdown_ingress.application.use_cases import CompareExtractorsUseCase
+
+    return CompareExtractorsUseCase().execute(html, model=model)

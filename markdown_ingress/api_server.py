@@ -18,7 +18,13 @@ from markdown_ingress.adapters.jobs.sqlite_job_queue import (
     PersistentJobQueue,
     SQLiteError,
 )
-from markdown_ingress.api import generate_security_report, ingest, ingest_many, retry_ingest
+from markdown_ingress.api import (
+    compare_extractors,
+    generate_security_report,
+    ingest,
+    ingest_many,
+    retry_ingest,
+)
 from markdown_ingress.api_server_auth import (
     RATE_LIMIT_REQUESTS,
     RATE_LIMIT_WINDOW_SECONDS,
@@ -104,7 +110,6 @@ from markdown_ingress.api_server_threads import (
     start_control_thread,
     stop_reloaded_control_thread_pair,
 )
-from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 from markdown_ingress.core.orchestrator import get_ingest_stats
 
 _logger = logging.getLogger(__name__)
@@ -633,11 +638,6 @@ def _snapshot_job_subsystem(*, start_repair: bool = True) -> _JobSubsystemSnapsh
             logger=_logger,
         )
     )
-
-
-def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
-    """Compatibility wrapper exposing extractor comparison at module scope."""
-    return CompareExtractorsUseCase().execute(html, model=model)
 
 
 _api_routes = register_api_routes(
