@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import socket
+import sqlite3
 import threading
 from collections.abc import Callable
 from contextlib import closing
@@ -20,6 +21,13 @@ from markdown_ingress.adapters.jobs.job_queue_models import (
 from markdown_ingress.adapters.jobs.job_queue_security import validate_positive_finite_float
 
 _logger = logging.getLogger(__name__)
+JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    sqlite3.Error,
+    TypeError,
+    ValueError,
+)
 
 
 class JobQueueExecutionMixin:
@@ -49,7 +57,7 @@ class JobQueueExecutionMixin:
             job = self.get(job_id, cleanup_expired=False)
             if job is not None and job.status not in {"failed", "completed"}:
                 self._mark_failed(job_id, str(exc))
-        except Exception as mark_exc:  # noqa: BLE001 - fallback keeps failure visible
+        except JOB_QUEUE_STATE_ERRORS as mark_exc:
             _logger.warning(
                 "Could not mark job %s as failed: %s",
                 job_id,
@@ -112,7 +120,7 @@ class JobQueueExecutionMixin:
     def _mark_job_failed_preserving_original_error(self: Any, job_id: str, exc: Exception) -> None:
         try:
             self._mark_failed(job_id, str(exc))
-        except Exception:  # noqa: BLE001 - original job failure must be preserved
+        except JOB_QUEUE_STATE_ERRORS:
             _logger.warning(
                 "Failed to mark job %s as failed (original error: %s)",
                 job_id,
@@ -129,7 +137,7 @@ class JobQueueExecutionMixin:
                 self._mark_completed_preserve_result(
                     job_id, result, "Job queue lease was lost before result persistence"
                 )
-            except Exception as e:  # noqa: BLE001 - lease-loss preservation is best effort
+            except JOB_QUEUE_STATE_ERRORS as e:
                 _logger.debug("Failed to preserve job result on lease loss: %s", e)
                 self._mark_failed(job_id, "Job queue lease was lost before result persistence")
             raise RuntimeError("Job queue lease was lost before result persistence")
