@@ -65,6 +65,21 @@ def _fetcher_resource_warning_messages(
     ]
 
 
+def test_orchestrator_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'extractor'"):
+        IngestOrchestrator(object(), extractor=object())
+
+
+def test_orchestrator_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'extractr'"):
+        IngestOrchestrator(extractr=object())
+
+
+def test_orchestrator_rejects_too_many_positional_options():
+    with pytest.raises(TypeError, match="expected at most 9 arguments"):
+        IngestOrchestrator(*range(10))
+
+
 def _start_counting_html_server(
     html: bytes,
     *,

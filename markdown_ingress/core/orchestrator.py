@@ -1,7 +1,7 @@
 """Ingestion orchestration entrypoint for the MarkDownIngress pipeline."""
 
 import time
-from typing import Any
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig
 from markdown_ingress.core.document_builder import process_fetched_content
@@ -46,6 +46,55 @@ def reset_ingest_stats() -> None:
     _reset_ingest_stats()
 
 
+class OrchestratorOptions(TypedDict, total=False):
+    extractor: IExtractor | None
+    normalizer: INormalizer | None
+    md_converter: IMarkdownConverter | None
+    hasher: Hasher | None
+    token_estimator: ITokenEstimator | None
+    scorer: Scorer | None
+    metadata_extractor: MetadataExtractor | None
+    link_analyzer: LinkAnalyzer | None
+    inflight_registry: InFlightRegistry | None
+
+
+_ORCHESTRATOR_OPTION_NAMES = (
+    "extractor",
+    "normalizer",
+    "md_converter",
+    "hasher",
+    "token_estimator",
+    "scorer",
+    "metadata_extractor",
+    "link_analyzer",
+    "inflight_registry",
+)
+_ORCHESTRATOR_OPTION_NAME_SET = frozenset(_ORCHESTRATOR_OPTION_NAMES)
+
+
+def _normalize_orchestrator_options(
+    args: tuple[object, ...],
+    options: OrchestratorOptions,
+) -> OrchestratorOptions:
+    if len(args) > len(_ORCHESTRATOR_OPTION_NAMES):
+        raise TypeError(
+            f"IngestOrchestrator() expected at most {len(_ORCHESTRATOR_OPTION_NAMES)} arguments"
+        )
+
+    unexpected = set(options) - _ORCHESTRATOR_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"IngestOrchestrator() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _ORCHESTRATOR_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"IngestOrchestrator() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(OrchestratorOptions, normalized)
+
+
 class IngestOrchestrator:
     """
     Orchestrates the web → markdown ingestion pipeline.
@@ -54,19 +103,7 @@ class IngestOrchestrator:
     using dependency injection pattern for better testability and maintainability.
     """
 
-    # Dependency-injection constructor keeps pipeline ports explicit for tests.
-    def __init__(  # noqa: PLR0913
-        self,
-        extractor: IExtractor | None = None,
-        normalizer: INormalizer | None = None,
-        md_converter: IMarkdownConverter | None = None,
-        hasher: Hasher | None = None,
-        token_estimator: ITokenEstimator | None = None,
-        scorer: Scorer | None = None,
-        metadata_extractor: MetadataExtractor | None = None,
-        link_analyzer: LinkAnalyzer | None = None,
-        inflight_registry: InFlightRegistry | None = None,
-    ):
+    def __init__(self, *args: object, **options: Unpack[OrchestratorOptions]) -> None:
         """
         Initialize orchestrator with optional dependency injection.
 
@@ -80,6 +117,17 @@ class IngestOrchestrator:
             metadata_extractor: Metadata extractor
             link_analyzer: Link analyzer
         """
+        parsed = _normalize_orchestrator_options(args, options)
+        extractor = parsed.get("extractor")
+        normalizer = parsed.get("normalizer")
+        md_converter = parsed.get("md_converter")
+        hasher = parsed.get("hasher")
+        token_estimator = parsed.get("token_estimator")
+        scorer = parsed.get("scorer")
+        metadata_extractor = parsed.get("metadata_extractor")
+        link_analyzer = parsed.get("link_analyzer")
+        inflight_registry = parsed.get("inflight_registry")
+
         self.extractor = extractor
         self.normalizer = normalizer
         self.md_converter: IMarkdownConverter | None = md_converter
