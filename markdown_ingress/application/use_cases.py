@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import cast
 
 from markdown_ingress.application.batch_ingest_use_case import (
@@ -62,6 +63,18 @@ _FACTORIES_REGISTERED = False
 PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
 
 
+@dataclass
+class _ExecutionContext:
+    resolved_config: IngestConfig
+    matched_domain_policy: DomainPolicy | None
+    requested_mode: str
+    cache_backend: Cache | None
+    request_key: str | None
+    cache_key: str | None
+    leader_slot_acquired: bool
+    fresh_screenshot: bool
+
+
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:
     """Compatibility wrapper for the moved cache purge helper."""
     return _purge_corrupt_cache_entry_impl(cache_backend, cache_key)
@@ -96,7 +109,6 @@ class IngestUseCase:
         *,
         playwright_available: bool | None = None,
     ) -> None:
-        _ensure_factories_registered()
         selected_orchestrator, _used_default_orchestrator = _select_orchestrator(orchestrator)
         self.orchestrator: IIngestOrchestrator = selected_orchestrator
         self._used_default_orchestrator = _used_default_orchestrator
@@ -185,12 +197,44 @@ class IngestUseCase:
 
     def execute(self, url: str, config: IngestConfig) -> SafeDocument:
         """Execute one ingestion request with cache, inflight handling, and auto fallback."""
+        _ensure_factories_registered()
         bump_ingest_stat("requests_total")
         started_at = time.perf_counter()
-        requested_mode = config.mode
-        record_mode_request(requested_mode)
-        request_key: str | None = None
-        leader_slot_acquired = False
+
+        context = self._build_execution_context(url, config)
+        record_mode_request(context.requested_mode)
+
+        try:
+            early_return = self._resolve_cache_or_inflight(url, context)
+            if early_return is not None:
+                return early_return
+            bump_ingest_stat("leader_executions")
+            document = self._execute_uncached(url, context)
+        except Exception as exc:
+            if context.request_key is not None and context.leader_slot_acquired:
+                with suppress(KeyError):
+                    self.orchestrator.release_inflight(context.request_key, error=exc)
+            record_mode_result(context.requested_mode, success=False)
+            raise
+        finally:
+            record_mode_timing(context.requested_mode, (time.perf_counter() - started_at) * 1000.0)
+
+        document.metadata[REQUESTED_MODE] = context.requested_mode
+        shared_count = 0
+        if context.request_key is not None and context.leader_slot_acquired:
+            shared_count = self.orchestrator.release_inflight(
+                context.request_key,
+                document=document,
+            )
+        document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
+        record_mode_result(context.requested_mode, success=True)
+        return document
+
+    def _build_execution_context(
+        self,
+        url: str,
+        config: IngestConfig,
+    ) -> _ExecutionContext:
         resolved_config, matched_domain_policy = config.resolve_for_url(url)
         _ensure_fetcher_user_agent(
             url,
@@ -198,72 +242,84 @@ class IngestUseCase:
             matched_domain_policy,
             default_user_agent=self._auto_fetcher_user_agent,
         )
-        try:
-            fresh_screenshot = screenshot_requires_fresh_capture(resolved_config)
-            cache_backend = None if fresh_screenshot else cast(Cache | None, config.cache)
-            cache_key: str | None = None
-            if not fresh_screenshot:
-                request_key = self.orchestrator.make_request_key(
-                    url, resolved_config, matched_domain_policy
-                )
-                early_return, cache_key = self._cache_resolver.resolve(
-                    CacheResolutionRequest(
-                        url=url,
-                        resolved_config=resolved_config,
-                        matched_domain_policy=matched_domain_policy,
-                        cache_backend=cache_backend,
-                        request_key=request_key,
-                        requested_mode=requested_mode,
-                    )
-                )
-                if early_return is not None:
-                    return early_return
-                leader_slot_acquired = True
-            bump_ingest_stat("leader_executions")
-            document = self._execute_uncached(
-                url, resolved_config, matched_domain_policy, cache_backend, cache_key
-            )
-        except Exception as exc:
-            if request_key is not None and leader_slot_acquired:
-                with suppress(KeyError):
-                    self.orchestrator.release_inflight(request_key, error=exc)
-            record_mode_result(requested_mode, success=False)
-            raise
-        finally:
-            record_mode_timing(requested_mode, (time.perf_counter() - started_at) * 1000.0)
 
-        document.metadata[REQUESTED_MODE] = requested_mode
-        shared_count = 0
-        if request_key is not None and leader_slot_acquired:
-            shared_count = self.orchestrator.release_inflight(request_key, document=document)
-        document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
-        record_mode_result(requested_mode, success=True)
-        return document
+        fresh_screenshot = screenshot_requires_fresh_capture(resolved_config)
+        cache_backend = None if fresh_screenshot else cast(Cache | None, config.cache)
+        return _ExecutionContext(
+            resolved_config=resolved_config,
+            matched_domain_policy=matched_domain_policy,
+            requested_mode=config.mode,
+            cache_backend=cache_backend,
+            request_key=None,
+            cache_key=None,
+            leader_slot_acquired=False,
+            fresh_screenshot=fresh_screenshot,
+        )
+
+    def _resolve_cache_or_inflight(
+        self,
+        url: str,
+        context: _ExecutionContext,
+    ) -> SafeDocument | None:
+        if context.fresh_screenshot:
+            return None
+
+        context.request_key = self.orchestrator.make_request_key(
+            url,
+            context.resolved_config,
+            context.matched_domain_policy,
+        )
+        early_return, cache_key = self._cache_resolver.resolve(
+            CacheResolutionRequest(
+                url=url,
+                resolved_config=context.resolved_config,
+                matched_domain_policy=context.matched_domain_policy,
+                cache_backend=context.cache_backend,
+                request_key=context.request_key,
+                requested_mode=context.requested_mode,
+            )
+        )
+        context.cache_key = cache_key
+        if early_return is not None:
+            return early_return
+
+        context.leader_slot_acquired = True
+        return None
 
     def _execute_uncached(
         self,
         url: str,
-        config: IngestConfig,
-        matched_domain_policy: DomainPolicy | None,
-        cache_backend: Cache | None,
-        cache_key: str | None,
+        context: _ExecutionContext,
     ) -> SafeDocument:
-        budget = CostBudget(limit=config.render_cost_budget)
+        budget = CostBudget(limit=context.resolved_config.render_cost_budget)
         pipeline = _FetchPipeline(
             orchestrator=self.orchestrator,
             renderer_factory=self.renderer_factory,
             get_shared_fetcher=self._fetcher_mgr.get,
             playwright_available=self.playwright_available,
         )
-        if config.mode == "auto":
+        if context.requested_mode == "auto":
             document = _AutoModeSelector(pipeline, self.playwright_available).execute(
-                url, config, matched_domain_policy, budget
+                url,
+                context.resolved_config,
+                context.matched_domain_policy,
+                budget,
             )
         else:
-            document = pipeline.execute_mode(url, config, matched_domain_policy, budget)
+            document = pipeline.execute_mode(
+                url,
+                context.resolved_config,
+                context.matched_domain_policy,
+                budget,
+            )
 
-        if not screenshot_requires_fresh_capture(config):
-            write_cache_entry(cache_backend, cache_key, document, ttl=config.cache_ttl)
+        if not context.fresh_screenshot:
+            write_cache_entry(
+                context.cache_backend,
+                context.cache_key,
+                document,
+                ttl=context.resolved_config.cache_ttl,
+            )
         document.metadata[CACHE_HIT] = False
         document.metadata[INFLIGHT_DEDUPLICATED] = False
         document.metadata[INFLIGHT_SHARED_COUNT] = 0
