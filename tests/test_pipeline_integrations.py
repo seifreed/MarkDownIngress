@@ -82,32 +82,28 @@ def test_orchestrator_rejects_too_many_positional_options():
 
 def test_in_use_case_close_stops_default_inflight_cleanup_thread():
     use_case = IngestUseCase()
-    orchestrator = use_case.orchestrator
-    thread = orchestrator.inflight_registry._cleanup_thread
-    assert thread is not None and thread.is_alive()
+    assert use_case.has_active_cleanup_thread()
 
     use_case.close()
-    thread.join(timeout=2.0)
-
-    assert not thread.is_alive()
+    assert not use_case.has_active_cleanup_thread()
+    assert use_case.wait_for_cleanup_thread_stop(timeout=2.0)
 
 
 def test_in_use_case_context_manager_closes_default_inflight_thread():
     with IngestUseCase() as use_case:
-        thread = use_case.orchestrator.inflight_registry._cleanup_thread
-        assert thread is not None and thread.is_alive()
-    thread.join(timeout=2.0)
+        assert use_case.has_active_cleanup_thread()
 
-    assert not thread.is_alive()
+    assert not use_case.has_active_cleanup_thread()
+    assert use_case.wait_for_cleanup_thread_stop(timeout=2.0)
 
 
 def test_batch_ingest_use_case_context_manager_closes_default_ingest_resources():
     with BatchIngestUseCase() as batch_use_case:
-        thread = batch_use_case.ingest_use_case.orchestrator.inflight_registry._cleanup_thread
-        assert thread is not None and thread.is_alive()
-    thread.join(timeout=2.0)
+        assert batch_use_case.owns_ingest_use_case
+        assert batch_use_case.has_active_cleanup_thread()
 
-    assert not thread.is_alive()
+    assert not batch_use_case.has_active_cleanup_thread()
+    assert batch_use_case.wait_for_cleanup_thread_stop(timeout=2.0)
 
 
 def _start_counting_html_server(
