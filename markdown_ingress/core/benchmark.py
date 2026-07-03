@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from markdown_ingress.config_validation import Mode
-from markdown_ingress.core.interfaces import IFetcher
+from markdown_ingress.core.interfaces import CompareExtractorsFn, IFetcher
 from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class Benchmark:
         model: str = "gpt-4",
         ingest_func: BenchmarkIngest,
         fetcher_factory: Callable[[], IFetcher] | None = None,
-        compare_fn: Callable[[str, str], dict] | None = None,
+        compare_fn: CompareExtractorsFn | None = None,
     ):
         if ingest_func is None or not callable(ingest_func):
             raise TypeError("Benchmark() requires a callable ingest_func")
@@ -187,7 +187,7 @@ class Benchmark:
                 close = getattr(fetcher, "close", None)
                 if callable(close):
                     close()
-            return self._compare_fn(fetch_result.html, self.model)
+            return self._compare_fn(fetch_result.html, model=self.model)
         except BENCHMARK_ERRORS as exc:
             _logger.debug("Extractor comparison failed: %s", exc)
             return None
