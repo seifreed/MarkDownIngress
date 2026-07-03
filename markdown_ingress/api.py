@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from importlib.util import find_spec
+from typing import TypedDict, Unpack, cast
 
 from markdown_ingress.api_facade import (
     UNSET,
@@ -16,12 +17,60 @@ from markdown_ingress.api_facade import (
 )
 from markdown_ingress.api_runtime import resolve_batch_api_options
 from markdown_ingress.config_models import IngestConfig
+from markdown_ingress.config_validation import Mode
 from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.shared_results import BatchResult
 
 PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
 _ingest_resolved = ingest_resolved
+
+
+class RetryIngestOptions(TypedDict, total=False):
+    mode: Mode
+    strict: bool
+    allow_local_urls: object
+    model: str
+    max_retries: int
+    enable_stealth: bool
+    initial_timeout: float
+    max_timeout: float | None
+
+
+_RETRY_INGEST_OPTION_NAMES = (
+    "mode",
+    "strict",
+    "allow_local_urls",
+    "model",
+    "max_retries",
+    "enable_stealth",
+    "initial_timeout",
+    "max_timeout",
+)
+_RETRY_INGEST_OPTION_NAME_SET = frozenset(_RETRY_INGEST_OPTION_NAMES)
+
+
+def _normalize_retry_ingest_options(
+    args: tuple[object, ...],
+    options: RetryIngestOptions,
+) -> RetryIngestOptions:
+    if len(args) > len(_RETRY_INGEST_OPTION_NAMES):
+        raise TypeError(
+            f"retry_ingest() expected at most {len(_RETRY_INGEST_OPTION_NAMES) + 1} arguments"
+        )
+
+    unexpected = set(options) - _RETRY_INGEST_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"retry_ingest() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _RETRY_INGEST_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"retry_ingest() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(RetryIngestOptions, normalized)
 
 
 def ingest(
@@ -152,16 +201,10 @@ def ingest_many(
 
 
 # Public compatibility API; internals collapse these into RetryIngestRequest.
-def retry_ingest(  # noqa: PLR0913
+def retry_ingest(
     url: str,
-    mode="auto",
-    strict: bool = True,
-    allow_local_urls=UNSET,
-    model: str = "gpt-4",
-    max_retries: int = 3,
-    enable_stealth: bool = True,
-    initial_timeout: float = 60.0,
-    max_timeout: float | None = None,
+    *args: object,
+    **options: Unpack[RetryIngestOptions],
 ) -> SafeDocument:
     """
     Ingest with automatic retry logic and timeout escalation.
@@ -206,17 +249,18 @@ def retry_ingest(  # noqa: PLR0913
         >>> print(f"Attempts: {doc.metadata['retry_attempts']}")
         >>> print(f"Final timeout: {doc.metadata['final_timeout']}s")
     """
+    parsed = _normalize_retry_ingest_options(args, options)
     return retry_ingest_impl(
         RetryIngestRequest(
             url=url,
-            mode=mode,
-            strict=strict,
-            allow_local_urls=allow_local_urls,
-            model=model,
-            max_retries=max_retries,
-            enable_stealth=enable_stealth,
-            initial_timeout=initial_timeout,
-            max_timeout=max_timeout,
+            mode=parsed.get("mode", "auto"),
+            strict=parsed.get("strict", True),
+            allow_local_urls=parsed.get("allow_local_urls", UNSET),
+            model=parsed.get("model", "gpt-4"),
+            max_retries=parsed.get("max_retries", 3),
+            enable_stealth=parsed.get("enable_stealth", True),
+            initial_timeout=parsed.get("initial_timeout", 60.0),
+            max_timeout=parsed.get("max_timeout"),
         )
     )
 

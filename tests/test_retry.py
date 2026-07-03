@@ -49,6 +49,30 @@ def test_retry_ingest_success_first_attempt(mock_document):
         assert mock_ingest.call_count == 1
 
 
+def test_retry_ingest_keeps_legacy_positional_options(mock_document):
+    with patch("markdown_ingress.api.ingest") as mock_ingest:
+        mock_ingest.return_value = mock_document
+
+        retry_ingest("https://example.com", "fast", False, True, "gpt-test", 1, False, 15.0, 20.0)
+
+        call_args = mock_ingest.call_args.kwargs
+        assert call_args["mode"] == "fast"
+        assert call_args["strict"] is False
+        assert call_args["allow_local_urls"] is True
+        assert call_args["model"] == "gpt-test"
+        assert call_args["timeout"] == 15.0
+
+
+def test_retry_ingest_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'mode'"):
+        retry_ingest("https://example.com", "fast", mode="render")
+
+
+def test_retry_ingest_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'timeot'"):
+        retry_ingest("https://example.com", timeot=10.0)
+
+
 def test_retry_ingest_single_attempt_does_not_enable_extreme_mode(mock_document):
     from markdown_ingress.api_facade import _compute_retry_attempt_params
 
