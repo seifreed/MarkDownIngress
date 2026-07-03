@@ -1,7 +1,6 @@
 """Main public API for MarkDownIngress."""
 
 from collections.abc import Callable, Sequence
-from importlib.util import find_spec
 from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.api_facade import (
@@ -20,9 +19,10 @@ from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.core.config import Config as FileConfig
 from markdown_ingress.models import SafeDocument, SecurityReport
+from markdown_ingress.runtime_helpers import is_dependency_available
 from markdown_ingress.shared_results import BatchResult
 
-PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
+PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
 _ingest_resolved = ingest_resolved
 
 

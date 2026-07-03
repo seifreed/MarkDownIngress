@@ -7,7 +7,6 @@ This integration is optional and degrades safely when NOVA rules are not configu
 import contextlib
 import io
 import logging
-from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, TypedDict, Unpack, cast
 
@@ -24,13 +23,13 @@ from markdown_ingress.core.security_validation import (
 from markdown_ingress.core.security_validation import (
     ensure_severity_threshold as _ensure_threshold,
 )
-from markdown_ingress.runtime_helpers import load_optional_module
+from markdown_ingress.runtime_helpers import is_dependency_available, load_optional_module
 
 logger = logging.getLogger(__name__)
 
 NovaMatcher: Any = None
 NovaParser: Any = None
-NOVA_AVAILABLE = find_spec("nova") is not None
+NOVA_AVAILABLE = is_dependency_available("nova")
 
 _BUNDLED_RULES_PATH = Path(__file__).parent.parent / "rules" / "prompt_injection.nova"
 

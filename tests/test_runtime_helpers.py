@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from markdown_ingress.runtime_helpers import load_optional_module, load_optional_object
+from markdown_ingress import runtime_helpers
+from markdown_ingress.runtime_helpers import (
+    is_dependency_available,
+    load_optional_module,
+    load_optional_object,
+)
 
 
 def test_load_optional_module_returns_module() -> None:
@@ -35,3 +40,12 @@ def test_load_optional_object_missing_object_has_helpful_error() -> None:
         match="does not export 'definitely_not_there'",
     ):
         load_optional_object("json", "definitely_not_there", purpose="json parsing")
+
+
+def test_is_dependency_available_true_for_stdlib_module() -> None:
+    assert is_dependency_available("json") is True
+
+
+def test_is_dependency_available_returns_false_when_missing(monkeypatch) -> None:
+    monkeypatch.setattr(runtime_helpers, "find_spec", lambda name: None)
+    assert is_dependency_available("does_not_exist_module_xyz") is False

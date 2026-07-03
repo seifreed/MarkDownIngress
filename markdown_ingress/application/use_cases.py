@@ -6,7 +6,6 @@ import logging
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from importlib.util import find_spec
 from typing import cast
 
 from markdown_ingress.application.batch_ingest_use_case import (
@@ -55,11 +54,12 @@ from markdown_ingress.core.metadata_keys import (
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import security_report_from_document
+from markdown_ingress.runtime_helpers import is_dependency_available
 
 _logger = logging.getLogger(__name__)
 _FACTORIES_REGISTERED = False
 
-PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
+PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
 
 
 def _purge_corrupt_cache_entry(cache_backend: Cache, cache_key: str) -> None:

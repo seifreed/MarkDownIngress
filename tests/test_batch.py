@@ -3,7 +3,6 @@
 import asyncio
 import gc
 import importlib
-import importlib.util
 import pickle
 import queue as queue_module
 import threading
@@ -15,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import markdown_ingress.api as public_api
-from markdown_ingress import ingest_async, ingest_many, ingest_many_async
+from markdown_ingress import ingest_async, ingest_many, ingest_many_async, runtime_helpers
 from markdown_ingress.adapters.cache.memory import MemoryCache
 from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
@@ -222,11 +221,11 @@ def test_batch_processor_applies_only_explicit_overrides_on_base_config():
     assert config.timeout == 10.0
 
 
-def test_batch_processor_renderer_availability_uses_find_spec(monkeypatch):
+def test_batch_processor_renderer_availability_depends_on_dependency_probe(monkeypatch):
     import markdown_ingress.application.batch as batch_module
 
     try:
-        monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(runtime_helpers, "find_spec", lambda name: None)
         reloaded_batch = importlib.reload(batch_module)
 
         processor = reloaded_batch.BatchProcessor(mode="auto")

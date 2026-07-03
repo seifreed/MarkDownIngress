@@ -6,7 +6,6 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib.util import find_spec
 from typing import TypedDict, Unpack, cast
 
 from markdown_ingress.application.async_tasks import gather_or_cancel
@@ -17,16 +16,17 @@ from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.runtime_helpers import (
-    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
+    is_dependency_available,
+    validate_batch_max_concurrent,
 )
 from markdown_ingress.runtime_helpers import (
-    validate_batch_max_concurrent,
+    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
 )
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 _logger = logging.getLogger(__name__)
 
-RENDERER_AVAILABLE = find_spec("playwright") is not None
+RENDERER_AVAILABLE = is_dependency_available("playwright")
 _CUSTOM_BATCH_ITEM_FAILURES = (Exception,)
 run_ingest_many_blocking = _shared_run_ingest_many_blocking
 

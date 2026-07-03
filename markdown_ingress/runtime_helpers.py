@@ -27,6 +27,11 @@ def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T
     raise RuntimeError(_INGEST_MANY_IN_LOOP_ERROR)
 
 
+def is_dependency_available(module_name: str) -> bool:
+    """Check if an optional dependency can be imported by module name."""
+    return find_spec(module_name) is not None
+
+
 def validate_batch_max_concurrent(value: object) -> int:
     """Validate and coerce `max_concurrent`."""
     return validate_positive_int("max_concurrent", value)

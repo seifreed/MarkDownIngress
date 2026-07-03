@@ -8,7 +8,6 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from importlib.util import find_spec
 from typing import Any, cast
 
 from markdown_ingress.api_runtime import (
@@ -27,12 +26,12 @@ from markdown_ingress.reporting import (
 from markdown_ingress.reporting import (
     persist_security_report as _persist_security_report,
 )
-from markdown_ingress.runtime_helpers import validate_batch_max_concurrent
+from markdown_ingress.runtime_helpers import is_dependency_available, validate_batch_max_concurrent
 from markdown_ingress.shared_results import BatchResult
 
 logger = logging.getLogger(__name__)
 
-PLAYWRIGHT_AVAILABLE = find_spec("playwright") is not None
+PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
 _RETRY_TIMEOUT_INCREMENT_S: float = 30.0
 _REPORT_PERSIST_ERRORS = (OSError, TypeError, ValueError)
 _LAZY_EXPORTS = {

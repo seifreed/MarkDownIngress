@@ -1,7 +1,5 @@
 """Playwright-based renderer adapter for SPA/JavaScript-heavy sites."""
 
-import importlib
-import importlib.util
 import logging
 from typing import Any, TypedDict, Unpack, cast
 
@@ -31,30 +29,33 @@ from markdown_ingress.config_models import RenderConfig
 from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.interfaces import IRenderer
 from markdown_ingress.models import FetchResult
+from markdown_ingress.runtime_helpers import is_dependency_available, load_optional_object
 
 logger = logging.getLogger(__name__)
 
-PLAYWRIGHT_INSTALLED = importlib.util.find_spec("playwright") is not None
+PLAYWRIGHT_INSTALLED = is_dependency_available("playwright")
+
+_PLAYWRIGHT_ERROR: type[Exception] = RuntimeError
+if PLAYWRIGHT_INSTALLED:
+    try:
+        candidate = load_optional_object(
+            "playwright.async_api", "Error", purpose="playwright rendering"
+        )
+        if isinstance(candidate, type) and issubclass(candidate, Exception):
+            _PLAYWRIGHT_ERROR = cast(type[Exception], candidate)
+    except ImportError:
+        _PLAYWRIGHT_ERROR = RuntimeError
 _RETRYABLE_NAVIGATION_ERRORS = (
     "err_internet_disconnected",
     "err_network_io_suspended",
 )
 
 
-def _playwright_render_error_type() -> type[Exception]:
-    if not PLAYWRIGHT_INSTALLED:
-        return RuntimeError
-    error_type = getattr(importlib.import_module("playwright.async_api"), "Error", RuntimeError)
-    if isinstance(error_type, type) and issubclass(error_type, Exception):
-        return error_type
-    return RuntimeError
-
-
 _PROGRESSIVE_RENDER_ERRORS = (
     OSError,
     RuntimeError,
     TimeoutError,
-    _playwright_render_error_type(),
+    _PLAYWRIGHT_ERROR,
 )
 
 
