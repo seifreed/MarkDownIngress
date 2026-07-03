@@ -1,5 +1,6 @@
 """Playwright-based renderer adapter for SPA/JavaScript-heavy sites."""
 
+import importlib
 import importlib.util
 import logging
 
@@ -35,6 +36,23 @@ PLAYWRIGHT_INSTALLED = importlib.util.find_spec("playwright") is not None
 _RETRYABLE_NAVIGATION_ERRORS = (
     "err_internet_disconnected",
     "err_network_io_suspended",
+)
+
+
+def _playwright_render_error_type() -> type[Exception]:
+    if not PLAYWRIGHT_INSTALLED:
+        return RuntimeError
+    error_type = getattr(importlib.import_module("playwright.async_api"), "Error", RuntimeError)
+    if isinstance(error_type, type) and issubclass(error_type, Exception):
+        return error_type
+    return RuntimeError
+
+
+_PROGRESSIVE_RENDER_ERRORS = (
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    _playwright_render_error_type(),
 )
 
 try:
@@ -266,7 +284,7 @@ class Renderer(SharedRendererMixin, IRenderer):
                 result.metadata["timeout_used_ms"] = timeout_ms
                 logger.info(f"[Extreme Mode] Success with {wait_state} strategy")
 
-            except Exception as e:  # noqa: BLE001 - progressive render tries next strategy
+            except _PROGRESSIVE_RENDER_ERRORS as e:
                 last_exception = e
                 error_msg = str(e)
                 logger.warning(f"[Extreme Mode] {wait_state} strategy failed: {error_msg[:100]}")
