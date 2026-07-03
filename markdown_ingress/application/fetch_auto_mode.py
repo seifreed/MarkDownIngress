@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+import httpx
+
 from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.heuristics import (
     _looks_like_auth_interstitial,
@@ -23,11 +25,25 @@ from markdown_ingress.core.metadata_keys import (
     OPERATIONAL_FLAGS,
     SCREENSHOT_TEMP,
 )
+from markdown_ingress.core.policy import (
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
 from markdown_ingress.models import SafeDocument
 
 _logger = logging.getLogger(__name__)
 
 _AUTO_RENDER_MIN_IMPROVEMENT = 0.10
+_AUTO_FAST_FALLBACK_ERRORS = (
+    OSError,
+    RuntimeError,
+    ValueError,
+    httpx.HTTPError,
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
 
 
 class _IngestPipeline(Protocol):
@@ -58,7 +74,7 @@ class _AutoModeSelector:
         fast_config.mode = "fast"
         try:
             fast_doc = self._pipeline.execute_mode(url, fast_config, matched_domain_policy, budget)
-        except Exception as exc:  # noqa: BLE001 - auto mode falls back from fast to render
+        except _AUTO_FAST_FALLBACK_ERRORS as exc:
             return self._auto_fallback_render_on_error(
                 url, config, matched_domain_policy, budget, exc
             )
