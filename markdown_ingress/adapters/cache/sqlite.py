@@ -334,7 +334,7 @@ class SQLiteCache(Cache):  # implements ICacheBackend protocol
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, _exc_type: object, _exc_val: object | None, _exc_tb: object | None) -> None:
         """Context manager exit - ensures connection is closed."""
         self.close()
 

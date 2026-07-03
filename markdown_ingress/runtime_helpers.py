@@ -37,11 +37,10 @@ def validate_batch_max_concurrent(value: object) -> int:
 @lru_cache(maxsize=128)
 def _is_dependency_available_cached(
     module_name: str,
-    find_spec_fn_id: int,
-    find_spec_patched: bool,
+    find_spec_fn: Callable[[str], object | None],
 ) -> bool:
     """Check dependency availability by module name and lookup strategy."""
-    return find_spec(module_name) is not None
+    return find_spec_fn(module_name) is not None
 
 
 def is_dependency_available(module_name: str) -> bool:
@@ -51,8 +50,7 @@ def is_dependency_available(module_name: str) -> bool:
         return True
     return _is_dependency_available_cached(
         module_name,
-        id(find_spec),
-        is_find_spec_patched,
+        find_spec,
     )
 
 
