@@ -50,6 +50,13 @@ _logger = logging.getLogger(__name__)
 # Re-export so callers outside this module don't need to import sqlite3 directly.
 SQLiteError = sqlite3.Error
 _STOP_WORKER = STOP_WORKER
+_JOB_QUEUE_SUBMISSION_ERRORS = (
+    OSError,
+    RuntimeError,
+    sqlite3.Error,
+    TypeError,
+    ValueError,
+)
 
 
 class PersistentJobQueueOptions(TypedDict, total=False):
@@ -323,7 +330,7 @@ class PersistentJobQueue(
                     self._ensure_workers()
                     self._assert_queue_usable(require_lease=True, allow_closing=True)
                     self._queue.put((job_id, task))
-            except Exception:
+            except _JOB_QUEUE_SUBMISSION_ERRORS:
                 if job_inserted:
                     self._delete_queued_job(job_id)
                 raise

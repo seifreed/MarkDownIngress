@@ -29,6 +29,13 @@ JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
 )
 JOB_QUEUE_WORKER_FAILURES = (Exception,)
+JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    sqlite3.Error,
+    TypeError,
+    ValueError,
+)
 JOB_QUEUE_THREAD_BRIDGE_FAILURES = (BaseException,)
 
 
@@ -77,7 +84,7 @@ class JobQueueExecutionMixin:
                     (error, utcnow(), job_id),
                 )
                 conn.commit()
-        except Exception as fallback_exc:
+        except JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS as fallback_exc:
             _logger.error(
                 "Fallback mark-failed also failed for job %s: %s",
                 job_id,
