@@ -90,4 +90,4 @@ async def inject_stealth_post_nav(page) -> None:
     try:
         await page.evaluate(STEALTH_JS_POST_LOAD)
     except _playwright_errors():
-        pass  # pragma: no cover
+        return  # pragma: no cover
