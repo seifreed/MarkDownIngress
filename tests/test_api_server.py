@@ -205,15 +205,6 @@ def test_batch_request_rejects_invalid_output_formats_early():
         BatchIngestRequest(urls=["https://example.com"], output_formats=["bogus"])
 
 
-@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
-def test_read_optional_float_env_rejects_non_finite_values(monkeypatch, raw_value: str):
-    from markdown_ingress.api_server_env import _read_optional_float_env
-
-    monkeypatch.setenv("MDI_TEST_FLOAT", raw_value)
-
-    assert _read_optional_float_env("MDI_TEST_FLOAT", minimum=0.0) is None
-
-
 def test_ingest_request_rejects_invalid_policy_name_early():
     with pytest.raises(ValueError, match="policy_name has invalid value 'bogus'"):
         IngestRequest(url="https://example.com", policy_name="bogus")
@@ -2375,6 +2366,23 @@ def test_rate_limit_uses_client_ip_for_anonymous_requests():
     request = Request({"type": "http", "client": ("203.0.113.10", 12345), "headers": []})
 
     assert api_server._rate_limit_client_id(request, None) == "ip:203.0.113.10"
+
+
+def test_rate_limit_uses_x_forwarded_for_when_client_is_trusted_proxy():
+    request = Request(
+        {
+            "type": "http",
+            "client": ("198.51.100.1", 12345),
+            "headers": [
+                (b"x-forwarded-for", b"203.0.113.11, 198.51.100.1"),
+            ],
+        }
+    )
+
+    assert (
+        api_server._rate_limit_client_id(request, None, {"198.51.100.1", "198.51.100.2"})
+        == "ip:203.0.113.11"
+    )
 
 
 def test_rate_limit_backend_errors_return_service_unavailable(monkeypatch):

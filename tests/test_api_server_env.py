@@ -6,8 +6,10 @@ from _pytest.monkeypatch import MonkeyPatch
 
 from markdown_ingress.api_server_env import (
     APIRateLimitEnvConfig,
+    APIServerAuthEnvConfig,
     APIServerEnvConfig,
     APIServerModelValidationConfig,
+    load_api_server_auth_config,
     load_api_server_env_config,
     load_api_server_listen_config,
     load_api_server_model_validation_config,
@@ -36,6 +38,50 @@ def test_load_api_server_env_config_uses_defaults(monkeypatch: MonkeyPatch) -> N
     assert config.webhook_retry_delay_seconds == 0.25
     assert config.execution_timeout_seconds is None
     assert config.allow_local_webhooks is False
+
+
+def test_load_api_server_env_config_rejects_invalid_optional_floats(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", "nan")
+    monkeypatch.setenv("MDI_API_JOB_TIMEOUT_SECONDS", "inf")
+
+    config = load_api_server_env_config()
+
+    assert config.webhook_retry_delay_seconds == 0.25
+    assert config.execution_timeout_seconds is None
+
+
+def test_load_api_server_auth_config_uses_defaults(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.delenv("MDI_API_KEY", raising=False)
+    monkeypatch.delenv("MDI_TRUSTED_PROXY_IPS", raising=False)
+
+    config = load_api_server_auth_config()
+
+    assert isinstance(config, APIServerAuthEnvConfig)
+    assert config.optional_api_key is None
+    assert config.api_key_config_error is False
+    assert config.trusted_proxy_ips == frozenset()
+
+
+def test_load_api_server_auth_config_parses_trusted_proxy_ips(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("MDI_API_KEY", "secret")
+    monkeypatch.setenv("MDI_TRUSTED_PROXY_IPS", "203.0.113.10, 198.51.100.1 ,")
+
+    config = load_api_server_auth_config()
+
+    assert config.optional_api_key == "secret"
+    assert config.api_key_config_error is False
+    assert config.trusted_proxy_ips == frozenset({"203.0.113.10", "198.51.100.1"})
+
+
+def test_load_api_server_auth_config_flags_empty_key_as_error(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("MDI_API_KEY", "   ")
+
+    config = load_api_server_auth_config()
+
+    assert config.optional_api_key is None
+    assert config.api_key_config_error is True
 
 
 def test_load_api_server_env_config_parses_overrides_and_invalid_values(

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
+from collections.abc import Collection
 
 from fastapi import Header, HTTPException, Request
 
@@ -43,9 +43,8 @@ def _request_client_host(request: Request) -> str | None:
     return None
 
 
-def _trusted_proxy_ips() -> set[str]:
-    trusted_proxies = os.getenv("MDI_TRUSTED_PROXY_IPS", "").strip()
-    return {ip.strip() for ip in trusted_proxies.split(",") if ip.strip()}
+def _trusted_proxy_ips(trusted_proxy_ips: Collection[str] | None = None) -> set[str]:
+    return set(trusted_proxy_ips or ())
 
 
 def _real_ip_client_id(request: Request) -> str | None:
@@ -78,13 +77,15 @@ def _trusted_proxy_client_id(request: Request, trusted_set: set[str]) -> str | N
     return _real_ip_client_id(request) or _forwarded_for_client_id(request, trusted_set)
 
 
-def _rate_limit_client_id(request: Request, x_api_key: str | None) -> str:
+def _rate_limit_client_id(
+    request: Request, x_api_key: str | None, trusted_proxy_ips: Collection[str] | None = None
+) -> str:
     api_key_client_id = _api_key_client_id(x_api_key)
     if api_key_client_id is not None:
         return api_key_client_id
 
     client_host = _request_client_host(request)
-    trusted_set = _trusted_proxy_ips()
+    trusted_set = _trusted_proxy_ips(trusted_proxy_ips)
     if client_host is not None and client_host in trusted_set:
         proxy_client_id = _trusted_proxy_client_id(request, trusted_set)
         if proxy_client_id is not None:
@@ -103,7 +104,7 @@ def _require_rate_limit(request: Request, x_api_key: str | None = Header(default
     """
     import markdown_ingress.api_server as _srv
 
-    client_id = _rate_limit_client_id(request, x_api_key)
+    client_id = _rate_limit_client_id(request, x_api_key, _srv.TRUSTED_PROXY_IPS)
     try:
         allowed, retry_after = _srv._check_rate_limit(client_id)
     except RuntimeError as exc:

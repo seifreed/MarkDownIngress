@@ -47,6 +47,15 @@ class APIServerModelValidationConfig:
     max_domain_policies: int
 
 
+@dataclass(frozen=True)
+class APIServerAuthEnvConfig:
+    """Parsed API authentication and trusted proxy configuration."""
+
+    optional_api_key: str | None
+    api_key_config_error: bool
+    trusted_proxy_ips: frozenset[str]
+
+
 def load_api_server_env_config() -> APIServerEnvConfig:
     """Build a typed API server configuration snapshot from environment values."""
     webhook_retry_delay = _read_optional_float_env(
@@ -74,6 +83,18 @@ def load_api_server_rate_limit_config() -> APIRateLimitEnvConfig:
         backend=os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower(),
         redis_url=os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0"),
         redis_prefix=os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:"),
+    )
+
+
+def load_api_server_auth_config() -> APIServerAuthEnvConfig:
+    """Build a typed API auth/trusted-proxy configuration snapshot from environment values."""
+    raw_api_key = os.getenv("MDI_API_KEY")
+    api_key_config_error = raw_api_key is not None and raw_api_key.strip() == ""
+    trusted_proxy_ips = frozenset(_parse_csv_set(os.getenv("MDI_TRUSTED_PROXY_IPS", "")))
+    return APIServerAuthEnvConfig(
+        optional_api_key=None if api_key_config_error else raw_api_key,
+        api_key_config_error=api_key_config_error,
+        trusted_proxy_ips=trusted_proxy_ips,
     )
 
 
@@ -151,6 +172,10 @@ def _read_optional_float_env(
         )
         return None
     return value
+
+
+def _parse_csv_set(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
 
 
 def _parse_iso_datetime_utc(value: str) -> datetime.datetime | None:

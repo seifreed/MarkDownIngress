@@ -5,7 +5,6 @@ FastAPI server for MarkDownIngress.
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import threading
 import time
@@ -38,7 +37,9 @@ from markdown_ingress.api_server_dependencies import (
     _require_rate_limit,
 )
 from markdown_ingress.api_server_env import (
+    APIServerAuthEnvConfig,
     _detect_multiworker_environment,
+    load_api_server_auth_config,
     load_api_server_env_config,
     load_api_server_listen_config,
     load_api_server_rate_limit_config,
@@ -117,11 +118,12 @@ _logger = logging.getLogger(__name__)
 API_VERSION = "1.0.0"
 
 # ---------------------------------------------------------------------------
-# API key configuration (kept here so monkeypatch via api_server.* works)
+# API auth configuration (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
-_RAW_API_KEY = os.getenv("MDI_API_KEY")
-API_KEY_CONFIG_ERROR: bool = _RAW_API_KEY is not None and _RAW_API_KEY.strip() == ""
-OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
+_API_SERVER_AUTH_CONFIG: APIServerAuthEnvConfig = load_api_server_auth_config()
+API_KEY_CONFIG_ERROR: bool = _API_SERVER_AUTH_CONFIG.api_key_config_error
+OPTIONAL_API_KEY: str | None = _API_SERVER_AUTH_CONFIG.optional_api_key
+TRUSTED_PROXY_IPS: frozenset[str] = _API_SERVER_AUTH_CONFIG.trusted_proxy_ips
 
 # ---------------------------------------------------------------------------
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
