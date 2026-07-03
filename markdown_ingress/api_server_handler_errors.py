@@ -9,12 +9,6 @@ from fastapi import HTTPException
 
 from markdown_ingress.core.policy import PolicyBlockedError
 from markdown_ingress.core.runtime_error_policy import (
-    is_queue_full_error as _is_queue_full_error,
-)
-from markdown_ingress.core.runtime_error_policy import (
-    is_queue_unavailable_error as _is_queue_unavailable_error,
-)
-from markdown_ingress.core.runtime_error_policy import (
     map_runtime_exception_to_http,
 )
 
@@ -48,13 +42,3 @@ def log_runtime_error(message: str, exc: Exception, *args: object) -> None:
         _logger.debug(message, *args, exc_info=True)
         return
     _logger.exception(message, *args)
-
-
-def is_queue_full_error(exc: Exception) -> bool:
-    """Backward-compatible adapter for queue-capacity checks."""
-    return _is_queue_full_error(exc)
-
-
-def is_queue_unavailable_error(exc: Exception) -> bool:
-    """Backward-compatible adapter for queue availability checks."""
-    return _is_queue_unavailable_error(exc)

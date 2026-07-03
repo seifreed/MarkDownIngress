@@ -8,7 +8,6 @@ import logging
 from fastapi import HTTPException
 
 from markdown_ingress.api_server_handler_errors import (
-    INTERNAL_ERROR_DETAIL,
     log_runtime_error,
     raise_runtime_http_error,
 )
@@ -141,6 +140,11 @@ async def handle_security_report(
         )
         return to_security_report_response(report)
     except Exception as exc:
+        log_runtime_error(
+            "Error processing security report request for %s",
+            exc,
+            request.url,
+        )
         raise_runtime_http_error(exc)
 
 
@@ -154,5 +158,5 @@ async def handle_extractor_comparison(
         )
         return ExtractorComparisonResponse(results=results)
     except Exception as exc:
-        _logger.exception("Error processing extractor comparison request")
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from exc
+        log_runtime_error("Error processing extractor comparison request", exc)
+        raise_runtime_http_error(exc)
