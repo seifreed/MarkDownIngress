@@ -31,7 +31,11 @@ from markdown_ingress.core.metadata_keys import (
     RENDER_COST_BUDGET,
     SCREENSHOT_TEMP,
 )
-from markdown_ingress.core.policy import DomainCircuitOpenError, UnsupportedContentTypeError
+from markdown_ingress.core.policy import (
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
 from markdown_ingress.core.ssrf import (
     dns_pin_for_validated_http_url,
     resolve_allow_local_urls,
@@ -42,7 +46,16 @@ from markdown_ingress.models import FetchResult, SafeDocument
 _logger = logging.getLogger(__name__)
 
 _RENDER_COST_BUDGET_CEILING: int = 5
-_RENDER_FAILURES = (Exception,)
+_RENDER_FAILURES: tuple[type[Exception], ...] = (
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    TypeError,
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
 
 
 @dataclass(frozen=True)
@@ -116,7 +129,7 @@ class _FetchPipeline:
                 fetch_result = self._fetch_render(
                     url, config, budget, timed_stage, operational_flags
                 )
-            except Exception:
+            except _RENDER_FAILURES:
                 _cleanup_orphaned_screenshot(config)
                 raise
         else:
