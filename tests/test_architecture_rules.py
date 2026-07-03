@@ -57,26 +57,49 @@ def _imported_modules(node: ast.AST, path: Path) -> list[str]:
 
 def _iter_imports(path: Path) -> list[str]:
     tree = ast.parse(path.read_text())
+    importlib_aliases = _collect_importlib_aliases(tree)
     imports: list[str] = []
     for node in ast.walk(tree):
         imports.extend(_imported_modules(node, path))
         if isinstance(node, ast.Call):
-            imported = _dynamic_import_target(node)
+            imported = _dynamic_import_target(node, importlib_aliases)
             if imported:
                 imports.append(imported)
     return imports
 
 
-def _dynamic_import_target(node: ast.Call) -> str | None:
+def _collect_importlib_aliases(tree: ast.AST) -> set[str]:
+    """Return possible identifiers referring to importlib or import_module."""
+    aliases = {"import_module", "importlib"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib":
+                    aliases.add(alias.asname or alias.name)
+                if alias.name == "importlib.import_module":
+                    aliases.add(alias.asname or "import_module")
+
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        aliases.add(alias.asname or alias.name)
+    return aliases
+
+
+def _dynamic_import_target(node: ast.Call, importlib_aliases: set[str]) -> str | None:
     """Return top-level module imported via string-based dynamic import, if any."""
     if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+        return _string_call_arg(node)
+
+    if isinstance(node.func, ast.Name) and node.func.id in importlib_aliases:
         return _string_call_arg(node)
 
     if (
         isinstance(node.func, ast.Attribute)
         and node.func.attr == "import_module"
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "importlib"
+        and node.func.value.id in importlib_aliases
     ):
         return _string_call_arg(node)
 
@@ -84,6 +107,13 @@ def _dynamic_import_target(node: ast.Call) -> str | None:
 
 
 def _string_call_arg(node: ast.Call) -> str | None:
+    if not node.args and node.keywords:
+        first_named = next((kw.value for kw in node.keywords if kw.arg == "name"), None)
+        if isinstance(first_named, ast.Constant) and isinstance(first_named.value, str):
+            return first_named.value
+        if first_named is None:
+            return None
+
     if not node.args:
         return None
     first = node.args[0]
