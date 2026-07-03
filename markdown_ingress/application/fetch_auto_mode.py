@@ -108,7 +108,7 @@ class _AutoModeSelector:
             render_doc = self._pipeline.execute_mode(
                 url, render_config, matched_domain_policy, budget
             )
-        except Exception as render_exc:
+        except _AUTO_FAST_FALLBACK_ERRORS as render_exc:
             raise exc from render_exc
         render_doc.metadata[AUTO_MODE_USED] = "render"
         render_doc.metadata[AUTO_MODE_REASON] = "fast_failed"
@@ -138,7 +138,7 @@ class _AutoModeSelector:
             render_doc = self._pipeline.execute_mode(
                 url, render_config, matched_domain_policy, budget
             )
-        except Exception as exc:
+        except _AUTO_FAST_FALLBACK_ERRORS as exc:
             if not _should_reuse_fast_result_after_render_failure(exc):
                 raise
             _logger.warning(
