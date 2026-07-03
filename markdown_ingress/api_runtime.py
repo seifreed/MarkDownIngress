@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine, Mapping
-from typing import Any, cast
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.config_models import DomainPolicy, IngestConfig, _validate_output_profile_name
 from markdown_ingress.config_validation import (
@@ -124,6 +124,129 @@ _DEFAULT_NONE_RUNTIME_VALUES: dict[str, object] = {
 _VALIDATED_RUNTIME_KEYS = frozenset(
     {"custom_patterns", "plugin_dirs", "output_profile", "domain_policies"}
 )
+
+_RUNTIME_CONFIG_OPTION_NAMES = (
+    "mode",
+    "strict",
+    "allow_local_urls",
+    "model",
+    "timeout",
+    "auto_render_threshold",
+    "stealth",
+    "disable_http2",
+    "extreme_mode",
+    "screenshot",
+    "extract_metadata",
+    "extract_links",
+    "advanced_security",
+    "use_llm",
+    "cache",
+    "cache_ttl",
+    "policy_name",
+    "custom_patterns",
+    "plugin_dirs",
+    "output_format",
+    "output_profile",
+    "output_formats",
+    "extract_blocks",
+    "chunking_strategy",
+    "chunk_size",
+    "chunk_overlap",
+    "detect_language",
+    "normalize_multilingual",
+    "include_security_explanation",
+    "include_observability",
+    "save_reports",
+    "reports_dir",
+    "fetcher_user_agent",
+    "domain_request_interval",
+    "circuit_breaker_threshold",
+    "circuit_breaker_open_seconds",
+    "render_cost_budget",
+    "domain_policies",
+)
+
+_RUNTIME_CONFIG_OPTION_DEFAULTS: dict[str, object] = {
+    "mode": None,
+    "strict": None,
+    "allow_local_urls": UNSET,
+    "model": None,
+    "timeout": None,
+    "auto_render_threshold": None,
+    "stealth": None,
+    "disable_http2": None,
+    "extreme_mode": None,
+    "screenshot": UNSET,
+    "extract_metadata": None,
+    "extract_links": None,
+    "advanced_security": None,
+    "use_llm": None,
+    "cache": UNSET,
+    "cache_ttl": UNSET,
+    "policy_name": None,
+    "custom_patterns": None,
+    "plugin_dirs": None,
+    "output_format": None,
+    "output_profile": None,
+    "output_formats": None,
+    "extract_blocks": None,
+    "chunking_strategy": None,
+    "chunk_size": None,
+    "chunk_overlap": None,
+    "detect_language": None,
+    "normalize_multilingual": None,
+    "include_security_explanation": None,
+    "include_observability": None,
+    "save_reports": None,
+    "reports_dir": None,
+    "fetcher_user_agent": None,
+    "domain_request_interval": None,
+    "circuit_breaker_threshold": None,
+    "circuit_breaker_open_seconds": None,
+    "render_cost_budget": UNSET,
+    "domain_policies": None,
+}
+
+
+class RuntimeConfigOptions(TypedDict, total=False):
+    mode: Mode | None
+    strict: bool | None
+    allow_local_urls: bool | None
+    model: str | None
+    timeout: float | None
+    auto_render_threshold: int | None
+    stealth: bool | None
+    disable_http2: bool | None
+    extreme_mode: bool | None
+    screenshot: bool | str | None
+    extract_metadata: bool | None
+    extract_links: bool | None
+    advanced_security: bool | None
+    use_llm: bool | None
+    cache: ICacheBackend | None
+    cache_ttl: int | None
+    policy_name: str | None
+    custom_patterns: list[str] | None
+    plugin_dirs: list[str] | None
+    output_format: OutputFormat | None
+    output_profile: str | None
+    output_formats: list[str] | None
+    extract_blocks: bool | None
+    chunking_strategy: ChunkingStrategy | None
+    chunk_size: int | None
+    chunk_overlap: int | None
+    detect_language: bool | None
+    normalize_multilingual: bool | None
+    include_security_explanation: bool | None
+    include_observability: bool | None
+    save_reports: bool | None
+    reports_dir: str | None
+    fetcher_user_agent: str | None
+    domain_request_interval: float | None
+    circuit_breaker_threshold: int | None
+    circuit_breaker_open_seconds: float | None
+    render_cost_budget: int | None
+    domain_policies: list[dict[str, object]] | list[DomainPolicy] | None
 
 
 class _IsolatedCacheBackend:
@@ -290,51 +413,43 @@ def _apply_explicit_runtime_overrides(
         setattr(runtime_config, key, value)
 
 
+def _normalize_runtime_config_options(
+    config: IngestConfig | FileConfig | None,
+    args: tuple[object, ...],
+    options: Mapping[str, object],
+) -> dict[str, object]:
+    if len(args) > len(_RUNTIME_CONFIG_OPTION_NAMES):
+        raise TypeError(
+            f"build_runtime_config() expected at most "
+            f"{len(_RUNTIME_CONFIG_OPTION_NAMES) + 1} arguments"
+        )
+
+    values = {"config": config, **_RUNTIME_CONFIG_OPTION_DEFAULTS}
+    valid_options = set(_RUNTIME_CONFIG_OPTION_NAMES)
+    for key in options:
+        if key not in valid_options:
+            raise TypeError(f"build_runtime_config() got an unexpected keyword argument '{key}'")
+
+    positional_values = dict(zip(_RUNTIME_CONFIG_OPTION_NAMES, args, strict=False))
+    duplicate_keys = positional_values.keys() & options.keys()
+    if duplicate_keys:
+        duplicate = next(iter(duplicate_keys))
+        raise TypeError(f"build_runtime_config() got multiple values for argument '{duplicate}'")
+
+    values.update(positional_values)
+    values.update(options)
+    return values
+
+
 # Public override bridge; it accepts legacy ingest kwargs then builds IngestConfig.
-def build_runtime_config(  # noqa: PLR0913
+def build_runtime_config(
     config: IngestConfig | FileConfig | None = None,
-    mode: Mode | None = None,
-    strict: bool | None = None,
-    allow_local_urls=UNSET,
-    model: str | None = None,
-    timeout: float | None = None,
-    auto_render_threshold: int | None = None,
-    stealth: bool | None = None,
-    disable_http2: bool | None = None,
-    extreme_mode: bool | None = None,
-    screenshot=UNSET,
-    extract_metadata: bool | None = None,
-    extract_links: bool | None = None,
-    advanced_security: bool | None = None,
-    use_llm: bool | None = None,
-    cache=UNSET,
-    cache_ttl=UNSET,
-    policy_name: str | None = None,
-    custom_patterns: list[str] | None = None,
-    plugin_dirs: list[str] | None = None,
-    output_format: OutputFormat | None = None,
-    output_profile: str | None = None,
-    output_formats: list[str] | None = None,
-    extract_blocks: bool | None = None,
-    chunking_strategy: ChunkingStrategy | None = None,
-    chunk_size: int | None = None,
-    chunk_overlap: int | None = None,
-    detect_language: bool | None = None,
-    normalize_multilingual: bool | None = None,
-    include_security_explanation: bool | None = None,
-    include_observability: bool | None = None,
-    save_reports: bool | None = None,
-    reports_dir: str | None = None,
-    fetcher_user_agent: str | None = None,
-    domain_request_interval: float | None = None,
-    circuit_breaker_threshold: int | None = None,
-    circuit_breaker_open_seconds: float | None = None,
-    render_cost_budget=UNSET,
-    domain_policies: list[dict] | list[DomainPolicy] | None = None,
+    *args: object,
+    **options: Unpack[RuntimeConfigOptions],
 ) -> IngestConfig:
     """Build an isolated runtime config from file/runtime config plus overrides."""
-    values = dict(locals())
-    normalized = normalize_runtime_config(config)
+    values = _normalize_runtime_config_options(config, args, options)
+    normalized = normalize_runtime_config(cast(IngestConfig | FileConfig | None, values["config"]))
     validated_values = _validate_runtime_override_values(values)
 
     if normalized is None:

@@ -487,6 +487,26 @@ def test_build_runtime_config_accepts_extended_runtime_fields():
     assert resolved.circuit_breaker_open_seconds == 12.5
 
 
+def test_build_runtime_config_keeps_legacy_positional_overrides():
+    resolved = build_runtime_config(None, "fast", False, True, "gpt-test", 12.0)
+
+    assert resolved.mode == "fast"
+    assert resolved.strict is False
+    assert resolved.allow_local_urls is True
+    assert resolved.model == "gpt-test"
+    assert resolved.timeout == 12.0
+
+
+def test_build_runtime_config_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'mode'"):
+        build_runtime_config(None, "fast", mode="render")
+
+
+def test_build_runtime_config_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'timeot'"):
+        build_runtime_config(timeot=30.0)
+
+
 def test_build_runtime_config_explicit_none_clears_inherited_allow_local_urls():
     config = IngestConfig(mode="fast", allow_local_urls=True)
 
