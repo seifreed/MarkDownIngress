@@ -39,8 +39,9 @@ from markdown_ingress.api_server_dependencies import (
 )
 from markdown_ingress.api_server_env import (
     _detect_multiworker_environment,
-    _read_positive_int_env,
     load_api_server_env_config,
+    load_api_server_listen_config,
+    load_api_server_rate_limit_config,
 )
 from markdown_ingress.api_server_handlers import (
     handle_batch_status,
@@ -125,6 +126,7 @@ OPTIONAL_API_KEY: str | None = None if API_KEY_CONFIG_ERROR else _RAW_API_KEY
 # ---------------------------------------------------------------------------
 # Rate limiting state (kept here so monkeypatch via api_server.* works)
 # ---------------------------------------------------------------------------
+_RATE_LIMIT_BACKEND: str = load_api_server_rate_limit_config().backend
 _request_counts: dict[str, RequestWindow] = {}
 
 
@@ -132,8 +134,6 @@ _rate_limit_lock = threading.Lock()
 _rate_limit_cleanup_counter: int = 0
 _RATE_LIMIT_CLEANUP_THRESHOLD: int = 1000
 _RATE_LIMIT_MAX_CLIENTS: int = 10000
-
-_RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
 
 if _detect_multiworker_environment():
     _logger.warning(
@@ -694,8 +694,7 @@ def main():
     """Run the server."""
     import uvicorn
 
-    host = os.getenv("MDI_HOST") or "127.0.0.1"
-    port = _read_positive_int_env("MDI_PORT", 8000)
+    host, port = load_api_server_listen_config()
     uvicorn.run("markdown_ingress.api_server:app", host=host, port=port, reload=False)
 
 

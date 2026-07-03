@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from typing import Any
 
-from markdown_ingress.api_server_env import _read_positive_int_env
+from markdown_ingress.api_server_env import APIRateLimitEnvConfig, load_api_server_rate_limit_config
 from markdown_ingress.runtime_helpers import load_optional_module
 
 _logger = logging.getLogger(__name__)
@@ -15,13 +14,13 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Rate limiting configuration
 # ---------------------------------------------------------------------------
+_RATE_LIMIT_ENV_CONFIG: APIRateLimitEnvConfig = load_api_server_rate_limit_config()
 
-RATE_LIMIT_REQUESTS: int = _read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100)
-RATE_LIMIT_WINDOW_SECONDS: int = _read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60)
+RATE_LIMIT_REQUESTS: int = _RATE_LIMIT_ENV_CONFIG.requests
+RATE_LIMIT_WINDOW_SECONDS: int = _RATE_LIMIT_ENV_CONFIG.window_seconds
 
-_RATE_LIMIT_BACKEND: str = os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower()
-_RATE_LIMIT_REDIS_URL: str = os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0")
-_RATE_LIMIT_REDIS_PREFIX: str = os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:")
+_RATE_LIMIT_REDIS_URL: str = _RATE_LIMIT_ENV_CONFIG.redis_url
+_RATE_LIMIT_REDIS_PREFIX: str = _RATE_LIMIT_ENV_CONFIG.redis_prefix
 _rate_limit_redis_client: Any | None = None
 _rate_limit_redis_lock = threading.Lock()
 

@@ -25,6 +25,28 @@ class APIServerEnvConfig:
     allow_local_webhooks: bool
 
 
+@dataclass(frozen=True)
+class APIRateLimitEnvConfig:
+    """Parsed API rate-limit environment configuration."""
+
+    requests: int
+    window_seconds: int
+    backend: str
+    redis_url: str
+    redis_prefix: str
+
+
+@dataclass(frozen=True)
+class APIServerModelValidationConfig:
+    """Parsed API request-model validation limits."""
+
+    max_batch_urls: int
+    max_timeout_seconds: int
+    max_chunk_size: int
+    max_custom_patterns: int
+    max_domain_policies: int
+
+
 def load_api_server_env_config() -> APIServerEnvConfig:
     """Build a typed API server configuration snapshot from environment values."""
     webhook_retry_delay = _read_optional_float_env(
@@ -42,6 +64,35 @@ def load_api_server_env_config() -> APIServerEnvConfig:
         ),
         allow_local_webhooks=_read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False),
     )
+
+
+def load_api_server_rate_limit_config() -> APIRateLimitEnvConfig:
+    """Build a typed rate-limit configuration snapshot from environment values."""
+    return APIRateLimitEnvConfig(
+        requests=_read_positive_int_env("MDI_API_RATE_LIMIT_REQUESTS", 100),
+        window_seconds=_read_positive_int_env("MDI_API_RATE_LIMIT_WINDOW", 60),
+        backend=os.getenv("MDI_RATE_LIMIT_BACKEND", "memory").strip().lower(),
+        redis_url=os.getenv("MDI_RATE_LIMIT_REDIS_URL", "redis://localhost:6379/0"),
+        redis_prefix=os.getenv("MDI_RATE_LIMIT_REDIS_PREFIX", "mdi:rl:"),
+    )
+
+
+def load_api_server_model_validation_config() -> APIServerModelValidationConfig:
+    """Build typed validation limit configuration for API request models."""
+    return APIServerModelValidationConfig(
+        max_batch_urls=_read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100),
+        max_timeout_seconds=_read_positive_int_env("MDI_API_MAX_TIMEOUT", 300),
+        max_chunk_size=_read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000),
+        max_custom_patterns=_read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000),
+        max_domain_policies=_read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000),
+    )
+
+
+def load_api_server_listen_config() -> tuple[str, int]:
+    """Build host/port configuration for API server startup."""
+    host = os.getenv("MDI_HOST", "127.0.0.1")
+    port = _read_positive_int_env("MDI_PORT", 8000)
+    return host, port
 
 
 def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:

@@ -6,7 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
-from markdown_ingress.api_server_env import _read_bool_env, _read_positive_int_env
+from markdown_ingress.api_server_env import (
+    APIServerEnvConfig,
+    APIServerModelValidationConfig,
+    load_api_server_env_config,
+    load_api_server_model_validation_config,
+)
 from markdown_ingress.api_server_model_validators import (
     validate_api_screenshot_value as _validate_api_screenshot_value,
 )
@@ -36,14 +41,19 @@ from markdown_ingress.config_models import (
 )
 from markdown_ingress.config_validation import ChunkingStrategy, Mode, OutputFormat
 
-MAX_BATCH_URLS = _read_positive_int_env("MDI_API_MAX_BATCH_URLS", 100)
-MAX_TIMEOUT_SECONDS = _read_positive_int_env("MDI_API_MAX_TIMEOUT", 300)
-MAX_CHUNK_SIZE = _read_positive_int_env("MDI_API_MAX_CHUNK_SIZE", 20000)
+_API_SERVER_ENV_CONFIG: APIServerEnvConfig = load_api_server_env_config()
+_API_SERVER_MODEL_VALIDATION_CONFIG: APIServerModelValidationConfig = (
+    load_api_server_model_validation_config()
+)
+
+MAX_BATCH_URLS = _API_SERVER_MODEL_VALIDATION_CONFIG.max_batch_urls
+MAX_TIMEOUT_SECONDS = _API_SERVER_MODEL_VALIDATION_CONFIG.max_timeout_seconds
+MAX_CHUNK_SIZE = _API_SERVER_MODEL_VALIDATION_CONFIG.max_chunk_size
 # Each custom_pattern triggers a regex compile plus a ReDoS scan, and each
 # domain policy is fully validated, so an uncapped list lets a small request
 # body amplify into large CPU work. Cap both at the HTTP boundary.
-MAX_CUSTOM_PATTERNS = _read_positive_int_env("MDI_API_MAX_CUSTOM_PATTERNS", 1000)
-MAX_DOMAIN_POLICIES = _read_positive_int_env("MDI_API_MAX_DOMAIN_POLICIES", 1000)
+MAX_CUSTOM_PATTERNS = _API_SERVER_MODEL_VALIDATION_CONFIG.max_custom_patterns
+MAX_DOMAIN_POLICIES = _API_SERVER_MODEL_VALIDATION_CONFIG.max_domain_policies
 
 __all__ = [
     "BatchIngestRequest",
@@ -62,7 +72,7 @@ __all__ = [
 
 
 def _allow_local_webhooks_enabled() -> bool:
-    return _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
+    return _API_SERVER_ENV_CONFIG.allow_local_webhooks
 
 
 class DomainPolicyModel(BaseModel):
