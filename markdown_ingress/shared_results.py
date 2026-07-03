@@ -25,12 +25,18 @@ class BatchErrorItem:
     @classmethod
     def from_exception(cls, index: int, url: str, exc: Exception) -> BatchErrorItem:
         """Build an error item from a caught exception, capturing type and traceback."""
+        error_type = getattr(exc, "error_type", None)
+        traceback_text = getattr(exc, "traceback_text", None)
         return cls(
             index=index,
             url=url,
             error=str(exc),
-            error_type=type(exc).__name__,
-            traceback=_traceback.format_exc(),
+            error_type=error_type if isinstance(error_type, str) else type(exc).__name__,
+            traceback=(
+                traceback_text
+                if isinstance(traceback_text, str) and traceback_text
+                else _traceback.format_exc()
+            ),
         )
 
 

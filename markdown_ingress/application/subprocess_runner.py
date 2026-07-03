@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import queue as queue_module
 import sys
+import traceback
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from markdown_ingress.application.exceptions import _copy_batch_exception, _make_picklable
@@ -22,6 +23,15 @@ _logger = logging.getLogger(__name__)
 _SUBPROCESS_JOIN_TIMEOUT_S: float = 0.5
 _BATCH_POLL_INTERVAL_S: float = 0.1
 _BATCH_WORKER_FAILURES = (Exception,)
+
+
+class _SubprocessWorkerError(RuntimeError):
+    """Error surfaced when worker exception cannot be pickled across process boundaries."""
+
+    def __init__(self, *, error_type: str, message: str, traceback_text: str) -> None:
+        super().__init__(f"{error_type}: {message}")
+        self.error_type = error_type
+        self.traceback_text = traceback_text
 
 
 def _execute_batch_ingest_in_subprocess(
@@ -40,7 +50,16 @@ def _execute_batch_ingest_in_subprocess(
         try:
             queue.put(("exception", _copy_batch_exception(exc)))
         except EXCEPTION_COPY_ERRORS:
-            queue.put(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
+            queue.put(
+                (
+                    "exception_payload",
+                    {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    },
+                )
+            )
 
 
 def _main_module_file() -> str | None:
@@ -108,9 +127,18 @@ def _raise_exception_payload(value: object, url: str) -> NoReturn:
         _raise_malformed_exception_payload(url)
     error_type = value.get("type")
     message = value.get("message")
+    traceback_text = value.get("traceback")
+    if traceback_text is None:
+        traceback_text = ""
+    elif not isinstance(traceback_text, str):
+        _raise_malformed_exception_payload(url)
     if not isinstance(error_type, str) or not isinstance(message, str):
         _raise_malformed_exception_payload(url)
-    raise RuntimeError(f"{error_type}: {message}")
+    raise _SubprocessWorkerError(
+        error_type=error_type,
+        message=message,
+        traceback_text=traceback_text,
+    )
 
 
 def _handle_subprocess_payload(process, payload: object, url: str) -> SafeDocument:

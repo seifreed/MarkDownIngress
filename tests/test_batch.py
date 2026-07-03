@@ -29,7 +29,7 @@ from markdown_ingress.core.config import Config
 from markdown_ingress.core.inflight import InFlightRegistry
 from markdown_ingress.core.orchestrator import IngestOrchestrator
 from markdown_ingress.models import FetchResult, SafeDocument
-from markdown_ingress.shared_results import BatchResult
+from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 from tests.local_http_server import serve_html
 
 
@@ -1481,9 +1481,25 @@ def test_subprocess_exception_fallback_keeps_untransferable_errors_observable(mo
         queue,
     )
 
-    assert queue.payloads == [
-        ("exception_payload", {"type": "_CopyBatchExceptionError", "message": "leader failed"})
-    ]
+    payload = queue.payloads[0]
+    assert payload[0] == "exception_payload"
+    assert payload[1]["type"] == "_CopyBatchExceptionError"
+    assert payload[1]["message"] == "leader failed"
+    assert "TypeError" in payload[1]["traceback"]
+
+
+def test_subprocess_exception_payload_preserves_error_type_for_batch_error_item():
+    from markdown_ingress.application.subprocess_runner import _SubprocessWorkerError
+
+    exc = _SubprocessWorkerError(
+        error_type="_CopyBatchExceptionError",
+        message="leader failed",
+        traceback_text="original-worker-traceback",
+    )
+    error_item = BatchErrorItem.from_exception(0, "https://unit.test/fail", exc)
+
+    assert error_item.error_type == "_CopyBatchExceptionError"
+    assert error_item.traceback == "original-worker-traceback"
 
 
 def test_inflight_followers_decremented_after_await():
