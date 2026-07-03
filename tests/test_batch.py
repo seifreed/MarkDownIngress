@@ -20,6 +20,7 @@ from markdown_ingress.adapters.cache.memory import MemoryCache
 from markdown_ingress.api_runtime import UNSET, resolve_batch_api_options
 from markdown_ingress.application.batch import BatchProcessor
 from markdown_ingress.application.subprocess_runner import (
+    _execute_batch_ingest_in_subprocess,
     _poll_subprocess_queue,
     _select_execution_strategy,
 )
@@ -1437,6 +1438,38 @@ def test_copy_batch_exception_sanitizes_args_and_attrs_for_pickle():
     # exception serialization, so the round trip succeeds and drops the cause.
     restored = pickle.loads(pickle.dumps(copied))
     assert restored.__cause__ is None
+
+
+def test_subprocess_exception_fallback_keeps_untransferable_errors_observable(monkeypatch):
+    class FailingUseCase:
+        def __init__(self, *, playwright_available):
+            pass
+
+        def execute(self, url, config):
+            raise _CopyBatchExceptionError("leader failed")
+
+    class FallbackQueue:
+        def __init__(self):
+            self.payloads = []
+
+        def put(self, payload):
+            if payload[0] == "exception":
+                raise TypeError("cannot transfer")
+            self.payloads.append(payload)
+
+    queue = FallbackQueue()
+    monkeypatch.setattr("markdown_ingress.application.use_cases.IngestUseCase", FailingUseCase)
+
+    _execute_batch_ingest_in_subprocess(
+        "https://unit.test/fail",
+        IngestConfig(),
+        False,
+        queue,
+    )
+
+    assert queue.payloads == [
+        ("exception_payload", {"type": "_CopyBatchExceptionError", "message": "leader failed"})
+    ]
 
 
 def test_inflight_followers_decremented_after_await():

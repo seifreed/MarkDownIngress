@@ -11,6 +11,7 @@ import sys
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from markdown_ingress.application.exceptions import _copy_batch_exception, _make_picklable
+from markdown_ingress.core.exception_copy import EXCEPTION_COPY_ERRORS
 
 if TYPE_CHECKING:
     from markdown_ingress.config_models import IngestConfig
@@ -37,7 +38,7 @@ def _execute_batch_ingest_in_subprocess(
     except Exception as exc:  # noqa: BLE001 - child process reports failures to parent
         try:
             queue.put(("exception", _copy_batch_exception(exc)))
-        except Exception:  # noqa: BLE001 - fallback keeps unpicklable errors observable
+        except EXCEPTION_COPY_ERRORS:
             queue.put(("exception_payload", {"type": type(exc).__name__, "message": str(exc)}))
 
 
