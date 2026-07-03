@@ -21,6 +21,7 @@ _logger = logging.getLogger(__name__)
 
 _SUBPROCESS_JOIN_TIMEOUT_S: float = 0.5
 _BATCH_POLL_INTERVAL_S: float = 0.1
+_BATCH_WORKER_FAILURES = (Exception,)
 
 
 def _execute_batch_ingest_in_subprocess(
@@ -35,7 +36,7 @@ def _execute_batch_ingest_in_subprocess(
         document = IngestUseCase(playwright_available=playwright_available).execute(url, config)
         document.metadata = cast(dict[str, Any], _make_picklable(document.metadata))
         queue.put(("result", document))
-    except Exception as exc:  # noqa: BLE001 - child process reports failures to parent
+    except _BATCH_WORKER_FAILURES as exc:
         try:
             queue.put(("exception", _copy_batch_exception(exc)))
         except EXCEPTION_COPY_ERRORS:
