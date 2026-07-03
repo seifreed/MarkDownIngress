@@ -109,7 +109,8 @@ def test_persistent_job_queue_rejects_duplicate_positional_option(tmp_path: Path
 
 def test_persistent_job_queue_rejects_unknown_option(tmp_path: Path):
     with pytest.raises(TypeError, match="unexpected keyword argument 'worker_cout'"):
-        PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_cout=1)
+        invalid_kwargs: dict[str, Any] = {"worker_cout": 1}
+        PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), **invalid_kwargs)
 
 
 @pytest.mark.parametrize(

@@ -13,8 +13,18 @@ class _TokenEstimator:
     def estimate(self, text: str) -> int:
         return len(text.split())
 
+    def estimate_savings(self, original_html: str, markdown: str) -> dict[str, object]:
+        return {
+            "original_tokens": len(original_html.split()),
+            "markdown_tokens": len(markdown.split()),
+        }
 
-register_token_estimator_factory(_TokenEstimator)
+
+def _token_estimator_factory() -> _TokenEstimator:
+    return _TokenEstimator()
+
+
+register_token_estimator_factory(_token_estimator_factory)
 
 HTML = """
 <html>
