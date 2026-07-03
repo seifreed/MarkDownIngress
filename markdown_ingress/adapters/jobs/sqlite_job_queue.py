@@ -12,7 +12,7 @@ from collections.abc import Callable
 from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.adapters.jobs.job_queue_cleanup import JobCleanupMixin
 from markdown_ingress.adapters.jobs.job_queue_execution import JobQueueExecutionMixin
@@ -51,6 +51,54 @@ SQLiteError = sqlite3.Error
 _STOP_WORKER = STOP_WORKER
 
 
+class PersistentJobQueueOptions(TypedDict, total=False):
+    worker_count: int
+    ttl_seconds: int
+    max_queued_jobs: int
+    webhook_max_retries: int
+    webhook_retry_delay_seconds: float
+    notifier: IWebhookNotifier | None
+    allow_local_webhooks: bool
+    job_timeout_seconds: float | None
+
+
+_PERSISTENT_JOB_QUEUE_OPTION_NAMES = (
+    "worker_count",
+    "ttl_seconds",
+    "max_queued_jobs",
+    "webhook_max_retries",
+    "webhook_retry_delay_seconds",
+    "notifier",
+    "allow_local_webhooks",
+    "job_timeout_seconds",
+)
+_PERSISTENT_JOB_QUEUE_OPTION_NAME_SET = frozenset(_PERSISTENT_JOB_QUEUE_OPTION_NAMES)
+
+
+def _normalize_persistent_job_queue_options(
+    args: tuple[object, ...],
+    options: PersistentJobQueueOptions,
+) -> PersistentJobQueueOptions:
+    if len(args) > len(_PERSISTENT_JOB_QUEUE_OPTION_NAMES):
+        raise TypeError(
+            f"PersistentJobQueue() expected at most "
+            f"{len(_PERSISTENT_JOB_QUEUE_OPTION_NAMES) + 1} arguments"
+        )
+
+    unexpected = set(options) - _PERSISTENT_JOB_QUEUE_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"PersistentJobQueue() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _PERSISTENT_JOB_QUEUE_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"PersistentJobQueue() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(PersistentJobQueueOptions, normalized)
+
+
 def _job_queue_notifier(
     notifier: IWebhookNotifier | None,
     *,
@@ -76,19 +124,22 @@ class PersistentJobQueue(
 ):
     """SQLite-backed worker queue for long-running API jobs."""
 
-    # Queue lifecycle constructor keeps operational limits explicit for callers.
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         db_path: str,
-        worker_count: int = 2,
-        ttl_seconds: int = 3600,
-        max_queued_jobs: int = 100,
-        webhook_max_retries: int = 2,
-        webhook_retry_delay_seconds: float = 0.25,
-        notifier: IWebhookNotifier | None = None,
-        allow_local_webhooks: bool = False,
-        job_timeout_seconds: float | None = None,
-    ):
+        *args: object,
+        **options: Unpack[PersistentJobQueueOptions],
+    ) -> None:
+        parsed = _normalize_persistent_job_queue_options(args, options)
+        worker_count = parsed.get("worker_count", 2)
+        ttl_seconds = parsed.get("ttl_seconds", 3600)
+        max_queued_jobs = parsed.get("max_queued_jobs", 100)
+        webhook_max_retries = parsed.get("webhook_max_retries", 2)
+        webhook_retry_delay_seconds = parsed.get("webhook_retry_delay_seconds", 0.25)
+        notifier = parsed.get("notifier")
+        allow_local_webhooks = parsed.get("allow_local_webhooks", False)
+        job_timeout_seconds = parsed.get("job_timeout_seconds")
+
         self.db_path = _validate_job_db_path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.worker_count = _validate_int_config("worker_count", worker_count, minimum=1)

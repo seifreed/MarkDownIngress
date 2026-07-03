@@ -92,6 +92,26 @@ def test_persistent_job_queue_preserves_minimum_limit_clamps(tmp_path: Path):
         queue.close()
 
 
+def test_persistent_job_queue_keeps_legacy_positional_options(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), 1, 120, 3, 1, 0.5)
+    try:
+        assert queue.worker_count == 1
+        assert queue.ttl_seconds == 120
+        assert queue.max_queued_jobs == 3
+    finally:
+        queue.close()
+
+
+def test_persistent_job_queue_rejects_duplicate_positional_option(tmp_path: Path):
+    with pytest.raises(TypeError, match="multiple values for argument 'worker_count'"):
+        PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), 1, worker_count=2)
+
+
+def test_persistent_job_queue_rejects_unknown_option(tmp_path: Path):
+    with pytest.raises(TypeError, match="unexpected keyword argument 'worker_cout'"):
+        PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_cout=1)
+
+
 @pytest.mark.parametrize(
     ("job_timeout_seconds", "match"),
     [
