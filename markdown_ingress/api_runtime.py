@@ -6,7 +6,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, cast
 
 from markdown_ingress.config_models import IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import collect_option_values, validate_positive_int
+from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -17,27 +17,23 @@ from markdown_ingress.core.config import (
 )
 from markdown_ingress.core.interfaces import ICacheBackend
 from markdown_ingress.models import SafeDocument
+from markdown_ingress.runtime_helpers import (
+    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
+)
+from markdown_ingress.runtime_helpers import (
+    validate_batch_max_concurrent,
+)
 
 UNSET = object()
 
-_INGEST_MANY_IN_LOOP_ERROR = (
-    "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
-)
-
 
 def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T]]) -> T:
-    """Run an ingest_many coroutine to completion from synchronous code.
+    """Run an ingest_many coroutine to completion from synchronous code."""
+    return _shared_run_ingest_many_blocking(coro_factory)
 
-    Raises if called while an event loop is already running, since asyncio.run
-    cannot nest.
-    """
-    import asyncio
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro_factory())
-    raise RuntimeError(_INGEST_MANY_IN_LOOP_ERROR)
+def _validate_batch_max_concurrent(value: object) -> int:
+    return validate_batch_max_concurrent(value)
 
 
 _NONE_EXPLICIT_RUNTIME_KEYS = (
@@ -194,10 +190,6 @@ def normalize_runtime_config(config: IngestConfig | FileConfig | None) -> Ingest
     if isinstance(config, FileConfig):
         return config.to_ingest_config()
     return config
-
-
-def _validate_batch_max_concurrent(value: object) -> int:
-    return validate_positive_int("max_concurrent", value)
 
 
 def resolve_batch_api_options(

@@ -9,10 +9,6 @@ from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import TypedDict, Unpack, cast
 
-from markdown_ingress.api_runtime import (
-    _validate_batch_max_concurrent as _validate_max_concurrent,
-)
-from markdown_ingress.api_runtime import run_ingest_many_blocking
 from markdown_ingress.application.async_tasks import gather_or_cancel
 from markdown_ingress.application.batch_ingest_use_case import BatchIngestUseCase
 from markdown_ingress.application.batch_state import PROGRESS_CALLBACK_ERRORS
@@ -20,12 +16,23 @@ from markdown_ingress.application.use_cases import IngestUseCase
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.models import SafeDocument
+from markdown_ingress.runtime_helpers import (
+    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
+)
+from markdown_ingress.runtime_helpers import (
+    validate_batch_max_concurrent,
+)
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
 _logger = logging.getLogger(__name__)
 
 RENDERER_AVAILABLE = find_spec("playwright") is not None
 _CUSTOM_BATCH_ITEM_FAILURES = (Exception,)
+run_ingest_many_blocking = _shared_run_ingest_many_blocking
+
+
+def _validate_batch_max_concurrent(value: object) -> int:
+    return validate_batch_max_concurrent(value)
 
 
 @dataclass
@@ -162,7 +169,7 @@ class BatchProcessor:
 
     async def process_batch_async(self, urls: list[str]) -> BatchResult:
         """Process multiple URLs concurrently while preserving input order."""
-        max_concurrent = _validate_max_concurrent(self.max_concurrent)
+        max_concurrent = _validate_batch_max_concurrent(self.max_concurrent)
         if self._uses_default_process_url():
             return await self._batch_use_case.execute(
                 urls,
