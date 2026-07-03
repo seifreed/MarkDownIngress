@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI
 
-from markdown_ingress.api_server_handler_errors import raise_runtime_http_error
+from markdown_ingress.api_server_handlers import _run_blocking
 from markdown_ingress.api_server_models import (
     BatchIngestRequest,
     BatchIngestResponse,
@@ -95,10 +95,11 @@ def _build_batch_ingest_endpoint(providers: ApiRouteProviders):
 
 
 def _resolve_batch_job_queue(providers: ApiRouteProviders):
-    try:
-        return providers.get_job_queue()()
-    except Exception as exc:
-        raise_runtime_http_error(exc)
+    return _run_blocking(
+        "Error resolving batch job queue",
+        providers,
+        func=lambda: providers.get_job_queue(),
+    )
 
 
 def _build_batch_job_submit(providers: ApiRouteProviders):
