@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import NoReturn
 
 from fastapi import HTTPException
 
 from markdown_ingress.core.policy import PolicyBlockedError
-from markdown_ingress.core.runtime_error_policy import map_runtime_exception_to_http
+from markdown_ingress.core.runtime_error_policy import (
+    is_queue_full_error as _is_queue_full_error,
+)
+from markdown_ingress.core.runtime_error_policy import (
+    is_queue_unavailable_error as _is_queue_unavailable_error,
+)
+from markdown_ingress.core.runtime_error_policy import (
+    map_runtime_exception_to_http,
+)
 
 INTERNAL_ERROR_DETAIL = "Internal server error"
 
@@ -44,23 +51,10 @@ def log_runtime_error(message: str, exc: Exception, *args: object) -> None:
 
 
 def is_queue_full_error(exc: Exception) -> bool:
-    """Return whether a RuntimeError from the job queue is the expected capacity denial."""
-    return str(exc) == "Job queue is full"
+    """Backward-compatible adapter for queue-capacity checks."""
+    return _is_queue_full_error(exc)
 
 
 def is_queue_unavailable_error(exc: Exception) -> bool:
-    """Return whether the queue is operationally unavailable but not internally broken."""
-    message = str(exc)
-    return (
-        isinstance(exc, sqlite3.Error)
-        or message
-        in {
-            "Job queue is unavailable",
-            "Job queue is closing",
-            "Job queue is closed",
-            "Job queue lease was lost; this instance can no longer accept or execute jobs",
-            "Job queue is unavailable because the DB is owned by another active instance",
-            "Job queue backend is temporarily unavailable because the current owner is busy",
-        }
-        or message.startswith("Job queue backend read failed:")
-    )
+    """Backward-compatible adapter for queue availability checks."""
+    return _is_queue_unavailable_error(exc)

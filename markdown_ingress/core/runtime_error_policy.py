@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 
 import httpx
@@ -41,6 +42,29 @@ def is_playwright_runtime_import_error(exc: ImportError) -> bool:
     )
 
 
+def is_queue_full_error(exc: Exception) -> bool:
+    """Return whether queue capacity has been reached."""
+    return str(exc) == "Job queue is full"
+
+
+def is_queue_unavailable_error(exc: Exception) -> bool:
+    """Return whether queue failures are operational and should be retriable."""
+    message = str(exc)
+    return (
+        isinstance(exc, sqlite3.Error)
+        or message
+        in {
+            "Job queue is unavailable",
+            "Job queue is closing",
+            "Job queue is closed",
+            "Job queue lease was lost; this instance can no longer accept or execute jobs",
+            "Job queue is unavailable because the DB is owned by another active instance",
+            "Job queue backend is temporarily unavailable because the current owner is busy",
+        }
+        or message.startswith("Job queue backend read failed:")
+    )
+
+
 def map_runtime_exception_to_http(exc: Exception) -> tuple[int, object] | None:
     """Map runtime ingestion exceptions to HTTP status and detail.
 
@@ -52,6 +76,11 @@ def map_runtime_exception_to_http(exc: Exception) -> tuple[int, object] | None:
     for match_types, status_code, detail in _RUNTIME_ERROR_MAP:
         if isinstance(exc, match_types):
             return status_code, detail(exc)
+
+    if is_queue_full_error(exc):
+        return 429, str(exc)
+    if is_queue_unavailable_error(exc):
+        return 503, str(exc)
 
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code

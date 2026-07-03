@@ -33,9 +33,18 @@ from markdown_ingress.api_server_support import (
     to_document_response,
     to_security_report_response,
 )
+from markdown_ingress.core.runtime_error_policy import map_runtime_exception_to_http
 
 _logger = logging.getLogger(__name__)
-_API_RUNTIME_FAILURES = (Exception,)
+
+
+def _http_from_runtime_error(exc: Exception) -> HTTPException:
+    """Translate a runtime exception into an HTTPException with defaulted internal detail."""
+    mapped = map_runtime_exception_to_http(exc)
+    if mapped is None:
+        return HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL)
+    status_code, detail = mapped
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
@@ -48,7 +57,7 @@ async def handle_ingest(request: IngestRequest, ingest_func) -> IngestResponse:
             **_common_ingest_kwargs(request),
         )
         return to_document_response(doc)
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         log_runtime_error("Error processing ingest request for %s", exc, request.url)
         raise_runtime_http_error(exc)
 
@@ -69,7 +78,7 @@ async def handle_retry_ingest(request: RetryIngestRequest, retry_ingest_func) ->
             max_timeout=request.max_timeout,
         )
         return to_document_response(doc)
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         log_runtime_error("Error processing retry ingest request for %s", exc, request.url)
         raise_runtime_http_error(exc)
 
@@ -77,7 +86,7 @@ async def handle_retry_ingest(request: RetryIngestRequest, retry_ingest_func) ->
 async def handle_sync_batch(request: BatchIngestRequest, ingest_many_func) -> BatchIngestResponse:
     try:
         return BatchIngestResponse(**await sync_batch_response(request, ingest_many_func))
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         log_runtime_error("Error processing sync batch request", exc)
         raise_runtime_http_error(exc)
 
@@ -94,15 +103,12 @@ async def handle_batch_submit(
             webhook_url=str(request.webhook_url) if request.webhook_url is not None else None,
             start_immediately=False,
         )
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         if is_queue_full_error(exc):
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         if is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail="Invalid request") from exc
-        _logger.exception("Unexpected batch submit error")
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from exc
+        raise _http_from_runtime_error(exc) from exc
 
     return BatchJobAccepted(
         job_id=job.job_id,
@@ -117,11 +123,10 @@ async def handle_batch_submit(
 async def handle_batch_status(job_id: str, job_source) -> BatchJobResponse:
     try:
         job = job_source(job_id) if callable(job_source) else job_source.get(job_id)
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         if is_queue_unavailable_error(exc):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        _logger.exception("Unexpected batch status error for %s", job_id)
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from exc
+        raise _http_from_runtime_error(exc) from exc
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return BatchJobResponse(
@@ -147,7 +152,7 @@ async def handle_security_report(
             **_common_ingest_kwargs(request),
         )
         return to_security_report_response(report)
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         raise_runtime_http_error(exc)
 
 
@@ -160,6 +165,6 @@ async def handle_extractor_comparison(
             compare_extractors_func, request.html, model=request.model
         )
         return ExtractorComparisonResponse(results=results)
-    except _API_RUNTIME_FAILURES as exc:
+    except Exception as exc:
         _logger.exception("Error processing extractor comparison request")
         raise HTTPException(status_code=500, detail=INTERNAL_ERROR_DETAIL) from exc

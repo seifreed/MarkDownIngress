@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import httpx
 import pytest
 from fastapi import HTTPException
@@ -16,6 +18,8 @@ from markdown_ingress.core.policy import (
 )
 from markdown_ingress.core.runtime_error_policy import (
     is_playwright_runtime_import_error,
+    is_queue_full_error,
+    is_queue_unavailable_error,
     is_retryable_runtime_exception,
     map_runtime_exception_to_http,
 )
@@ -112,3 +116,31 @@ def test_is_retryable_runtime_exception_matches_existing_retry_policy() -> None:
 
 def test_map_runtime_exception_to_http_returns_none_for_unknown_errors() -> None:
     assert map_runtime_exception_to_http(RuntimeError("boom")) is None
+
+
+@pytest.mark.parametrize(
+    ("exception, expected_status"),
+    [
+        (RuntimeError("Job queue is full"), 429),
+        (RuntimeError("Job queue is unavailable"), 503),
+        (RuntimeError("Job queue is closed"), 503),
+        (sqlite3.OperationalError("database is locked"), 503),
+    ],
+)
+def test_map_runtime_exception_to_http_includes_job_queue_errors(
+    exception: Exception,
+    expected_status: int,
+) -> None:
+    assert map_runtime_exception_to_http(exception) == (
+        expected_status,
+        str(exception),
+    )
+
+
+def test_queue_error_predicates_are_consistent_with_mapper() -> None:
+    unavailable_error = RuntimeError("Job queue backend read failed: malformed database schema")
+    assert is_queue_unavailable_error(unavailable_error)
+    assert map_runtime_exception_to_http(unavailable_error) is not None
+
+    assert is_queue_full_error(RuntimeError("Job queue is full"))
+    assert not is_queue_full_error(RuntimeError("not full"))
