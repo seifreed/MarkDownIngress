@@ -84,6 +84,96 @@ def _run_security_analysis(
     return security_engine, policy_engine, security_result
 
 
+def _build_content_pipeline_context(
+    *,
+    extractor,
+    md_converter,
+    structure_extractor,
+    chunk_builder,
+    orchestrator,
+    fetch_result: FetchResult,
+    config: IngestConfig,
+    matched_domain_policy: DomainPolicy | None,
+    operational_flags: list[str],
+    stage_timings: dict[str, float],
+    document_url: str,
+) -> ContentPipelineContext:
+    return ContentPipelineContext(
+        extractor=extractor,
+        md_converter=md_converter,
+        structure_extractor=structure_extractor,
+        chunk_builder=chunk_builder,
+        orchestrator=orchestrator,
+        fetch_result=fetch_result,
+        config=config,
+        matched_domain_policy=matched_domain_policy,
+        operational_flags=operational_flags,
+        stage_timings=stage_timings,
+        document_url=document_url,
+    )
+
+
+def _run_content_pipeline(context: ContentPipelineContext):
+    return run_content_pipeline(context)
+
+
+def _apply_custom_patterns_if_any(
+    context: CustomPatternAnalysisContext,
+    extra_patterns,
+) -> dict:
+    if not extra_patterns:
+        return context.security_result
+    return _apply_custom_pattern_analysis(extra_patterns, context)
+
+
+def _build_document(
+    *,
+    config: IngestConfig,
+    fetch_result: FetchResult,
+    extraction_result,
+    markdown: str,
+    structured_blocks,
+    chunks,
+    chunks_requested: bool,
+    enriched_metadata: dict,
+    links,
+    security_result: dict,
+    token_estimator,
+    hasher,
+    scorer,
+    matched_domain_policy: DomainPolicy | None,
+    operational_flags: list[str],
+    domain_rule_stats,
+    plugin_context: DocumentPluginContext,
+    stage_timings: dict[str, float],
+    policy_engine,
+) -> SafeDocument:
+    return _build_safe_document(
+        _SafeDocumentAssemblyContext(
+            config=config,
+            fetch_result=fetch_result,
+            extraction_result=extraction_result,
+            markdown=markdown,
+            structured_blocks=structured_blocks,
+            chunks=chunks,
+            chunks_requested=chunks_requested,
+            enriched_metadata=enriched_metadata,
+            links=links,
+            security_result=security_result,
+            token_estimator=token_estimator,
+            hasher=hasher,
+            scorer=scorer,
+            matched_domain_policy=matched_domain_policy,
+            operational_flags=operational_flags,
+            domain_rule_stats=domain_rule_stats,
+            extra_patterns=plugin_context.extra_patterns,
+            plugins_loaded=plugin_context.plugins_loaded,
+            stage_timings=stage_timings,
+            policy_engine=policy_engine,
+        )
+    )
+
+
 def process_fetched_content(
     orchestrator,
     fetch_result: FetchResult,
@@ -114,8 +204,8 @@ def process_fetched_content(
         operational_flags,
         domain_rule_stats,
         chunks_requested,
-    ) = run_content_pipeline(
-        ContentPipelineContext(
+    ) = _run_content_pipeline(
+        _build_content_pipeline_context(
             extractor=extractor,
             md_converter=md_converter,
             structure_extractor=structure_extractor,
@@ -135,54 +225,52 @@ def process_fetched_content(
         config, extraction_result, security_metadata, stage_timings, matched_domain_policy
     )
 
+    security_context = CustomPatternAnalysisContext(
+        security_result=security_result,
+        extraction_result=extraction_result,
+        security_metadata=security_metadata,
+        security_engine=security_engine,
+        policy_engine=policy_engine,
+        config=config,
+    )
+
     plugin_context = create_document_plugin_context(config.custom_patterns)
     try:
         load_document_plugins(plugin_context, config.plugin_dirs)
-
-        if plugin_context.extra_patterns:
-            security_result = _apply_custom_pattern_analysis(
-                plugin_context.extra_patterns,
-                CustomPatternAnalysisContext(
-                    security_result=security_result,
-                    extraction_result=extraction_result,
-                    security_metadata=security_metadata,
-                    security_engine=security_engine,
-                    policy_engine=policy_engine,
-                    config=config,
-                ),
-            )
+        security_result = _apply_custom_patterns_if_any(
+            security_context,
+            plugin_context.extra_patterns,
+        )
 
         try:
-            document = _build_safe_document(
-                _SafeDocumentAssemblyContext(
-                    config=config,
-                    fetch_result=fetch_result,
-                    extraction_result=extraction_result,
-                    markdown=markdown,
-                    structured_blocks=structured_blocks,
-                    chunks=chunks,
-                    chunks_requested=chunks_requested,
-                    enriched_metadata=enriched_metadata,
-                    links=links,
-                    security_result=security_result,
-                    token_estimator=token_estimator,
-                    hasher=hasher,
-                    scorer=scorer,
-                    matched_domain_policy=matched_domain_policy,
-                    operational_flags=operational_flags,
-                    domain_rule_stats=domain_rule_stats,
-                    extra_patterns=plugin_context.extra_patterns,
-                    plugins_loaded=plugin_context.plugins_loaded,
-                    stage_timings=stage_timings,
-                    policy_engine=policy_engine,
-                )
+            return _build_document(
+                config=config,
+                fetch_result=fetch_result,
+                extraction_result=extraction_result,
+                markdown=markdown,
+                structured_blocks=structured_blocks,
+                chunks=chunks,
+                chunks_requested=chunks_requested,
+                enriched_metadata=enriched_metadata,
+                links=links,
+                security_result=security_result,
+                token_estimator=token_estimator,
+                hasher=hasher,
+                scorer=scorer,
+                matched_domain_policy=matched_domain_policy,
+                operational_flags=operational_flags,
+                domain_rule_stats=domain_rule_stats,
+                plugin_context=plugin_context,
+                stage_timings=stage_timings,
+                policy_engine=policy_engine,
             )
         except PolicyBlockedError as exc:
             if exc.document is not None:
                 document = exc.document
             raise
-        return document
     finally:
         plugin_loader = plugin_context.loader if plugin_context is not None else None
         unload_document_plugins(plugin_loader, document, fetch_result)
         cleanup_screenshot_on_failure(document, fetch_result)
+
+    raise RuntimeError("Failed to produce SafeDocument")
