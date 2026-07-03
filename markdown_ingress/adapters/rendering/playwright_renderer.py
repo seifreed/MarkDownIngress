@@ -50,6 +50,8 @@ _RETRYABLE_NAVIGATION_ERRORS = (
     "err_network_io_suspended",
 )
 
+_RENDERER_EXECUTION_ERRORS = (RuntimeError, TimeoutError, OSError, _PLAYWRIGHT_ERROR)
+
 
 _PROGRESSIVE_RENDER_ERRORS = (
     OSError,
@@ -187,7 +189,7 @@ class Renderer(SharedRendererMixin, IRenderer):
 
         try:
             return await self._render_with_browser(validated_url)
-        except Exception as e:
+        except _RENDERER_EXECUTION_ERRORS as e:
             error_str = str(e)
             if self._is_retryable_navigation_error(e):
                 retry_result = await self._render_with_browser(validated_url)
@@ -220,7 +222,7 @@ class Renderer(SharedRendererMixin, IRenderer):
             raise
 
     @staticmethod
-    def _is_retryable_navigation_error(exc: Exception) -> bool:
+    def _is_retryable_navigation_error(exc: BaseException) -> bool:
         message = str(exc).lower()
         return any(token in message for token in _RETRYABLE_NAVIGATION_ERRORS)
 
