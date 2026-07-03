@@ -3,6 +3,7 @@
 import asyncio
 import time
 from threading import Lock
+from typing import TypedDict, Unpack, cast
 
 import httpx
 
@@ -35,6 +36,65 @@ __all__ = [
 ]
 
 
+class FetcherOptions(TypedDict, total=False):
+    timeout: float
+    user_agent: str | None
+    follow_redirects: bool
+    max_redirects: int
+    rotate_ua: bool
+    domain_request_interval: float
+    circuit_breaker_threshold: int
+    circuit_breaker_open_seconds: float
+    allow_ssl_bypass: bool
+    ca_bundle: str | None
+    allow_local_urls: bool | None
+    domain_state_ttl: float
+    max_hosts: int
+    max_response_size: int | None
+    failure_decay_seconds: float | None
+
+
+_FETCHER_OPTION_NAMES = (
+    "timeout",
+    "user_agent",
+    "follow_redirects",
+    "max_redirects",
+    "rotate_ua",
+    "domain_request_interval",
+    "circuit_breaker_threshold",
+    "circuit_breaker_open_seconds",
+    "allow_ssl_bypass",
+    "ca_bundle",
+    "allow_local_urls",
+    "domain_state_ttl",
+    "max_hosts",
+    "max_response_size",
+    "failure_decay_seconds",
+)
+_FETCHER_OPTION_NAME_SET = frozenset(_FETCHER_OPTION_NAMES)
+
+
+def _normalize_fetcher_options(
+    args: tuple[object, ...],
+    options: FetcherOptions,
+) -> FetcherOptions:
+    if len(args) > len(_FETCHER_OPTION_NAMES):
+        raise TypeError(f"Fetcher() expected at most {len(_FETCHER_OPTION_NAMES)} arguments")
+
+    unexpected = set(options) - _FETCHER_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"Fetcher() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _FETCHER_OPTION_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"Fetcher() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(FetcherOptions, normalized)
+
+
 class Fetcher(
     AsyncHttpxFetchMixin,
     SyncHttpxFetchMixin,
@@ -50,25 +110,27 @@ class Fetcher(
     DEFAULT_TIMEOUT = 30.0
     DEFAULT_DOMAIN_REQUEST_INTERVAL = 0.25
 
-    # Public configuration constructor; callers use these knobs independently.
-    def __init__(  # noqa: PLR0913
-        self,
-        timeout: float = DEFAULT_TIMEOUT,
-        user_agent: str | None = None,
-        follow_redirects: bool = True,
-        max_redirects: int = 10,
-        rotate_ua: bool = True,
-        domain_request_interval: float = DEFAULT_DOMAIN_REQUEST_INTERVAL,
-        circuit_breaker_threshold: int = 3,
-        circuit_breaker_open_seconds: float = 30.0,
-        allow_ssl_bypass: bool = False,
-        ca_bundle: str | None = None,
-        allow_local_urls: bool | None = None,
-        domain_state_ttl: float = _DEFAULT_DOMAIN_STATE_TTL,
-        max_hosts: int = _DEFAULT_MAX_HOSTS,
-        max_response_size: int | None = _DEFAULT_MAX_RESPONSE_SIZE,
-        failure_decay_seconds: float | None = 300.0,
-    ):
+    def __init__(self, *args: object, **options: Unpack[FetcherOptions]) -> None:
+        parsed = _normalize_fetcher_options(args, options)
+        timeout = parsed.get("timeout", self.DEFAULT_TIMEOUT)
+        user_agent = parsed.get("user_agent")
+        follow_redirects = parsed.get("follow_redirects", True)
+        max_redirects = parsed.get("max_redirects", 10)
+        rotate_ua = parsed.get("rotate_ua", True)
+        domain_request_interval = parsed.get(
+            "domain_request_interval",
+            self.DEFAULT_DOMAIN_REQUEST_INTERVAL,
+        )
+        circuit_breaker_threshold = parsed.get("circuit_breaker_threshold", 3)
+        circuit_breaker_open_seconds = parsed.get("circuit_breaker_open_seconds", 30.0)
+        allow_ssl_bypass = parsed.get("allow_ssl_bypass", False)
+        ca_bundle = parsed.get("ca_bundle")
+        allow_local_urls = parsed.get("allow_local_urls")
+        domain_state_ttl = parsed.get("domain_state_ttl", _DEFAULT_DOMAIN_STATE_TTL)
+        max_hosts = parsed.get("max_hosts", _DEFAULT_MAX_HOSTS)
+        max_response_size = parsed.get("max_response_size", _DEFAULT_MAX_RESPONSE_SIZE)
+        failure_decay_seconds = parsed.get("failure_decay_seconds", 300.0)
+
         self.timeout = timeout
         self._fixed_ua = user_agent
         self.rotate_ua = rotate_ua and user_agent is None

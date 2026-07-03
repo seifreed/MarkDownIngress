@@ -1103,6 +1103,27 @@ def test_fetcher_rejects_non_positive_max_response_size():
         Fetcher(max_response_size=0)
 
 
+def test_fetcher_rejects_duplicate_positional_option():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    with pytest.raises(TypeError, match="multiple values for argument 'timeout'"):
+        Fetcher(2.0, timeout=3.0)
+
+
+def test_fetcher_rejects_unknown_option():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'timeot'"):
+        Fetcher(timeot=2.0)
+
+
+def test_fetcher_rejects_too_many_positional_options():
+    from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
+
+    with pytest.raises(TypeError, match="expected at most 15 arguments"):
+        Fetcher(*range(16))
+
+
 def test_fetcher_host_key_ignores_userinfo_and_port():
     from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
 
