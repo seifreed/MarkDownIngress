@@ -7,6 +7,7 @@ This integration is optional and degrades safely when NOVA rules are not configu
 import contextlib
 import io
 import logging
+import time
 from pathlib import Path
 from typing import Any, TypedDict, Unpack, cast
 
@@ -122,6 +123,116 @@ def _coerce_rule_score(raw_score: object, rule_name: str) -> float:
     return score
 
 
+def _collect_allowed_rules_dirs(allowed_rules_dirs: list[str] | None) -> list[Path]:
+    collected: list[Path] = []
+    if allowed_rules_dirs:
+        for raw_dir in allowed_rules_dirs:
+            resolved = Path(raw_dir).resolve()
+            if resolved.is_dir():
+                collected.append(resolved)
+    bundled_dir = _BUNDLED_RULES_PATH.parent.resolve()
+    if bundled_dir not in collected:
+        collected.append(bundled_dir)
+    return collected
+
+
+def _build_disabled_scan_result() -> dict[str, Any]:
+    return {
+        "score": None,
+        "severity": "disabled",
+        "matched_rules": [],
+        "categories": [],
+        "scan_time_ms": 0.0,
+        "rules_loaded": 0,
+        "disabled_reason": "no_rules_configured",
+        "tiers_used": {"keywords": False, "semantics": False, "llm": False},
+    }
+
+
+def _build_matcher_score(result: dict[str, Any], rule_name: str) -> float:
+    if "confidence" in result:
+        return _coerce_rule_score(result["confidence"], rule_name)
+    if "score" in result:
+        return _coerce_rule_score(result["score"], rule_name)
+    logger.warning(
+        "Rule '%s' matched without confidence/score, defaulting to 0.5",
+        rule_name,
+    )
+    return 0.5
+
+
+def _run_matchers(matchers: list[Any], text: str) -> tuple[list[float], list[str], list[Any]]:
+    scores: list[float] = []
+    matched_rules: list[str] = []
+    categories: list[Any] = []
+
+    for matcher in matchers:
+        result = matcher.check_prompt(text)
+        if not result.get("matched"):
+            scores.append(0.0)
+            continue
+
+        rule_name = str(result.get("rule_name", "unknown"))
+        scores.append(_build_matcher_score(result, rule_name))
+        matched_rules.append(rule_name)
+        category = result.get("meta", {}).get("category")
+        if category is not None:
+            categories.append(category)
+
+    return scores, matched_rules, categories
+
+
+def _compute_nova_severity(score: float, *, high: float, medium: float) -> str:
+    if score >= high:
+        return "high"
+    if score >= medium:
+        return "medium"
+    return "low"
+
+
+def _build_scan_response(
+    score: float,
+    matched_rules: list[str],
+    categories: list[Any],
+    scan_time_ms: float,
+    rules_loaded: int,
+    *,
+    enable_keywords: bool,
+    enable_semantics: bool,
+    enable_llm: bool,
+    high: float,
+    medium: float,
+) -> dict[str, Any]:
+    return {
+        "score": score,
+        "severity": _compute_nova_severity(score, high=high, medium=medium),
+        "matched_rules": matched_rules,
+        "categories": categories,
+        "scan_time_ms": scan_time_ms,
+        "rules_loaded": rules_loaded,
+        "tiers_used": {
+            "keywords": enable_keywords,
+            "semantics": enable_semantics,
+            "llm": enable_llm,
+        },
+    }
+
+
+def _build_matchers_from_rules(
+    nova_matcher: Any,
+    rules: list[Any],
+    *,
+    create_llm_evaluator: bool,
+) -> list[Any]:
+    if not rules:
+        return []
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        return [
+            nova_matcher(rule=rule, create_llm_evaluator=create_llm_evaluator) for rule in rules
+        ]
+
+
 class NovaGuard:
     """Advanced prompt injection detection using Nova Framework."""
 
@@ -162,43 +273,27 @@ class NovaGuard:
         self.enable_llm = _ensure_bool("enable_llm", enable_llm)
         self.severity_high_threshold = severity_high_threshold
         self.severity_medium_threshold = severity_medium_threshold
-
-        # Define allowed directories for rules files
-        # Default allows bundled rules directory and optionally user-specified directories
-        self._allowed_rules_dirs: list[Path] = []
-        if allowed_rules_dirs:
-            for d in allowed_rules_dirs:
-                resolved = Path(d).resolve()
-                if resolved.is_dir():
-                    self._allowed_rules_dirs.append(resolved)
-
-        # Always allow the bundled rules directory
-        bundled_dir = _BUNDLED_RULES_PATH.parent.resolve()
-        if bundled_dir not in self._allowed_rules_dirs:
-            self._allowed_rules_dirs.append(bundled_dir)
+        self._allowed_rules_dirs = _collect_allowed_rules_dirs(allowed_rules_dirs)
 
         # Load NOVA rules
-        if rules_path:
-            # Security: Validate rules_path to prevent path traversal
-            self._validate_and_load_rules_path(rules_path)
-        else:
-            self.rules = self._load_bundled_rules()
-        self.matchers: list = []
-        if self.rules:
-            # NovaMatcher prints diagnostics to stdout on construction, which would
-            # corrupt machine-readable (--json) output. Suppress it.
-            with contextlib.redirect_stdout(io.StringIO()):
-                for rule in self.rules:
-                    self.matchers.append(
-                        self._nova_matcher(rule=rule, create_llm_evaluator=self.enable_llm)
-                    )
-        else:
+        self.rules = self._load_rules(rules_path)
+        self.matchers = _build_matchers_from_rules(
+            self._nova_matcher,
+            self.rules,
+            create_llm_evaluator=self.enable_llm,
+        )
+        if not self.matchers:
             logger.warning(
                 "Nova-tracer enabled but no rules were loaded. "
                 "Provide rules_path to activate semantic/LLM scanning."
             )
 
-    def _validate_and_load_rules_path(self, rules_path: str) -> None:
+    def _load_rules(self, rules_path: str | None) -> list[Any]:
+        if rules_path:
+            return self._load_rules_from_path(rules_path)
+        return self._load_bundled_rules()
+
+    def _load_rules_from_path(self, rules_path: str) -> list[Any]:
         """
         Validate rules_path for security and load rules.
 
@@ -209,17 +304,11 @@ class NovaGuard:
         - Check file exists before opening
 
         Args:
-            rules_path: Path to rules file
-
-        Raises:
-            ValueError: If path is invalid or outside allowed directories
-            FileNotFoundError: If rules file doesn't exist
         """
         raw_path = Path(rules_path)
         resolved_path = raw_path.resolve()
         reject_unsafe_rules_path(rules_path)
 
-        # Check if resolved path is within allowed directories
         if not self._is_path_allowed(resolved_path):
             raise ValueError(
                 f"Rules path must be within allowed directories. "
@@ -227,8 +316,6 @@ class NovaGuard:
                 f"Allowed directories: {[str(d) for d in self._allowed_rules_dirs]}"
             )
 
-        # Check for symlinks that resolve outside allowed directories (already done above)
-        # but also log if it's a symlink for transparency
         if raw_path.is_symlink():
             logger.debug(
                 "Rules path '%s' is a symlink resolving to '%s'",
@@ -241,7 +328,7 @@ class NovaGuard:
 
         try:
             file_content = read_rules_file_atomically(resolved_path)
-            self.rules = parse_rule_content(file_content, parser)
+            return parse_rule_content(file_content, parser)
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"Rules file not found: {rules_path}") from exc
         except IsADirectoryError as exc:
@@ -282,7 +369,7 @@ class NovaGuard:
             logger.warning("Unexpected error checking path permissions: %s", e)
         return False  # Default to deny on error
 
-    def _load_bundled_rules(self):
+    def _load_bundled_rules(self) -> list[Any]:
         """Load bundled NOVA rules for prompt injection detection."""
         if not _BUNDLED_RULES_PATH.exists():
             return []
@@ -313,75 +400,27 @@ class NovaGuard:
             When no rules are configured, returns a "disabled" result with
             score=null to indicate the scanner is inactive.
         """
-        import time
-
         start = time.time()
 
         if not self.matchers:
-            return {
-                "score": None,  # Explicitly None to indicate disabled state
-                "severity": "disabled",
-                "matched_rules": [],
-                "categories": [],
-                "scan_time_ms": 0.0,
-                "rules_loaded": 0,
-                "disabled_reason": "no_rules_configured",
-                "tiers_used": {
-                    "keywords": False,
-                    "semantics": False,
-                    "llm": False,
-                },
-            }
+            return _build_disabled_scan_result()
 
-        scores = []
-        matched_rules = []
-        categories = []
-        for matcher in self.matchers:
-            result = matcher.check_prompt(text)
-            if result.get("matched"):
-                rule_name = str(result.get("rule_name", "unknown"))
-                # Use confidence score if available, otherwise default to 0.5 (medium)
-                # This provides graduated scoring while avoiding false positives
-                # being treated as maximum severity
-                if "confidence" in result:
-                    score = _coerce_rule_score(result["confidence"], rule_name)
-                elif "score" in result:
-                    score = _coerce_rule_score(result["score"], rule_name)
-                else:
-                    # Log warning when score is missing, default to medium severity
-                    logger.warning(
-                        "Rule '%s' matched without confidence/score, defaulting to 0.5",
-                        rule_name,
-                    )
-                    score = 0.5
-                scores.append(score)
-                matched_rules.append(rule_name)
-                meta = result.get("meta", {})
-                if "category" in meta:
-                    categories.append(meta["category"])
-            else:
-                scores.append(0.0)
-
+        scores, matched_rules, categories = _run_matchers(self.matchers, text)
         score = max(scores) if scores else 0.0
         scan_time_ms = (time.time() - start) * 1000
 
-        return {
-            "score": score,
-            "severity": (
-                "high"
-                if score >= self.severity_high_threshold
-                else "medium" if score >= self.severity_medium_threshold else "low"
-            ),
-            "matched_rules": matched_rules,
-            "categories": categories,
-            "scan_time_ms": scan_time_ms,
-            "rules_loaded": len(self.rules),
-            "tiers_used": {
-                "keywords": self.enable_keywords,
-                "semantics": self.enable_semantics,
-                "llm": self.enable_llm,
-            },
-        }
+        return _build_scan_response(
+            score,
+            matched_rules,
+            categories,
+            scan_time_ms,
+            len(self.rules),
+            enable_keywords=self.enable_keywords,
+            enable_semantics=self.enable_semantics,
+            enable_llm=self.enable_llm,
+            high=self.severity_high_threshold,
+            medium=self.severity_medium_threshold,
+        )
 
     @staticmethod
     def is_available() -> bool:
