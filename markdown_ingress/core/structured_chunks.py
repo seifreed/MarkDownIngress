@@ -115,6 +115,8 @@ class ChunkBuilder:
             )
 
             overlap_prefix_len = len(overlap_text) + len("\n\n---\n\n")
+            original_char_start = curr_chunk.char_start
+            original_char_end = curr_chunk.char_end
             curr_chunk.metadata["original_char_start"] = curr_chunk.char_start
             curr_chunk.metadata["original_char_end"] = curr_chunk.char_end
             original_text_len = len(curr_chunk.text)
@@ -124,6 +126,8 @@ class ChunkBuilder:
             curr_chunk.metadata["text_includes_overlap"] = True
             curr_chunk.metadata["emitted_char_start"] = overlap_prefix_len
             curr_chunk.metadata["emitted_char_end"] = overlap_prefix_len + original_text_len
+            curr_chunk.char_start = original_char_start + overlap_prefix_len
+            curr_chunk.char_end = original_char_end + overlap_prefix_len
 
     def _group_blocks(
         self,

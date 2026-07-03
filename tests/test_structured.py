@@ -321,8 +321,12 @@ def test_chunk_builder_covers_none_heading_and_size_strategies():
     )
     assert size_chunks[1].metadata["emitted_char_start"] == overlap_prefix_len
     assert size_chunks[1].metadata["emitted_char_end"] == overlap_prefix_len + original_len
-    assert size_chunks[1].char_start == size_chunks[1].metadata["original_char_start"]
-    assert size_chunks[1].char_end == size_chunks[1].metadata["original_char_end"]
+    assert size_chunks[1].char_start == (
+        size_chunks[1].metadata["original_char_start"] + overlap_prefix_len
+    )
+    assert size_chunks[1].char_end == (
+        size_chunks[1].metadata["original_char_end"] + overlap_prefix_len
+    )
 
 
 def test_chunk_builder_preserves_nested_list_structure_in_chunk_text():

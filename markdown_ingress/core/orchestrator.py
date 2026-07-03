@@ -160,6 +160,12 @@ class IngestOrchestrator:
 
     clone_cached_document = staticmethod(clone_cached_document)
 
+    def close(self) -> None:
+        """Stop resources owned by this orchestrator instance."""
+        if self._default_inflight_registry is not None:
+            self._default_inflight_registry.stop_periodic_cleanup()
+            self._default_inflight_registry = None
+
     def timed_stage(self, stage: str, fn):
         """Execute a stage and record aggregate timing."""
         started = time.perf_counter()

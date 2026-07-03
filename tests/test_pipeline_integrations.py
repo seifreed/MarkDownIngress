@@ -80,6 +80,18 @@ def test_orchestrator_rejects_too_many_positional_options():
         IngestOrchestrator(*range(10))
 
 
+def test_in_use_case_close_stops_default_inflight_cleanup_thread():
+    use_case = IngestUseCase()
+    orchestrator = use_case.orchestrator
+    thread = orchestrator.inflight_registry._cleanup_thread
+    assert thread is not None and thread.is_alive()
+
+    use_case.close()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+
+
 def _start_counting_html_server(
     html: bytes,
     *,

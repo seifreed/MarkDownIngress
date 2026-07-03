@@ -147,6 +147,8 @@ class IngestUseCase:
     def close(self) -> None:
         """Close shared resources (fetcher, etc.)."""
         self._fetcher_mgr.close()
+        if hasattr(self.orchestrator, "close"):
+            self.orchestrator.close()
 
     @staticmethod
     def _matches_default_factory(
