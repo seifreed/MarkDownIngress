@@ -14,6 +14,12 @@ from markdown_ingress.application.batch_ingest_use_case import (
 )
 from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.bootstrap import (
+    default_fetcher_factory as _default_fetcher_factory_impl,
+)
+from markdown_ingress.application.bootstrap import (
+    default_renderer_factory as _default_renderer_factory_impl,
+)
+from markdown_ingress.application.bootstrap import (
     register_all_factories as _register_all_factories,
 )
 from markdown_ingress.application.cache_resolution import (
@@ -127,22 +133,11 @@ class IngestUseCase:
 
     @staticmethod
     def _default_fetcher_factory(config: IngestConfig) -> IFetcher:
-        from markdown_ingress.adapters.fetching.httpx_fetcher import Fetcher
-
-        return Fetcher(
-            timeout=config.timeout,
-            user_agent=getattr(config, "fetcher_user_agent", None),
-            allow_local_urls=config.allow_local_urls,
-            domain_request_interval=config.domain_request_interval,
-            circuit_breaker_threshold=config.circuit_breaker_threshold,
-            circuit_breaker_open_seconds=config.circuit_breaker_open_seconds,
-        )
+        return _default_fetcher_factory_impl(config)
 
     @staticmethod
     def _default_renderer_factory(config: RenderConfig) -> IRenderer:
-        from markdown_ingress.adapters.rendering.playwright_renderer import PlaywrightRenderer
-
-        return PlaywrightRenderer(config=config)
+        return _default_renderer_factory_impl(config)
 
     def close(self) -> None:
         """Close shared resources (fetcher, etc.)."""

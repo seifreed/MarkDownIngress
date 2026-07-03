@@ -14,14 +14,24 @@ from markdown_ingress.api_facade import (
     retry_ingest_impl,
 )
 from markdown_ingress.api_runtime import resolve_batch_api_options
+from markdown_ingress.application.bootstrap import (
+    default_benchmark_fetcher_factory,
+    default_compare_extractors_factory,
+)
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.core.config import Config as FileConfig
+from markdown_ingress.core.interfaces import IFetcher
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.runtime_helpers import is_dependency_available
 from markdown_ingress.shared_results import BatchResult
 
 PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
+
+
+def benchmark_fetcher_factory() -> Callable[[], IFetcher]:
+    """Return the default benchmark fetcher constructor."""
+    return default_benchmark_fetcher_factory()
 
 
 class RetryIngestOptions(TypedDict, total=False):
@@ -280,9 +290,8 @@ def generate_security_report(
 
 def compare_extractors(html: str, model: str = "gpt-4") -> dict[str, dict[str, Any]]:
     """Public API for extractor comparison benchmark inputs."""
-    from markdown_ingress.adapters.extractors.comparison import (
-        compare_extractors as _compare_extractors,
-    )
     from markdown_ingress.application.use_cases import CompareExtractorsUseCase
 
-    return CompareExtractorsUseCase(_compare_extractors).execute(html, model=model)
+    return CompareExtractorsUseCase(
+        default_compare_extractors_factory(),
+    ).execute(html, model=model)
