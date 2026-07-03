@@ -148,15 +148,34 @@ def _build_extractor_comparison_endpoint(providers: ApiRouteProviders):
     return extractor_comparison_endpoint
 
 
+def _build_snapshot_endpoint(
+    providers: ApiRouteProviders,
+    build_payload: Callable[..., Any],
+    *,
+    with_ingest_stats: bool = False,
+):
+    async def snapshot_endpoint():
+        """Fetch a snapshot and map it into the desired payload shape."""
+        snapshot = providers.snapshot_job_subsystem()(start_repair=False)
+        payload_kwargs = {
+            "api_version": providers.api_version(),
+            "snapshot": snapshot,
+        }
+        if with_ingest_stats:
+            payload_kwargs["ingest_stats"] = providers.get_ingest_stats()()
+        return build_payload(**payload_kwargs)
+
+    return snapshot_endpoint
+
+
 def _build_stats_endpoint(providers: ApiRouteProviders):
     async def stats_endpoint():
         """Expose process-level observability stats."""
-        snapshot = providers.snapshot_job_subsystem()(start_repair=False)
-        return providers.build_stats_payload()(
-            api_version=providers.api_version(),
-            ingest_stats=providers.get_ingest_stats()(),
-            snapshot=snapshot,
-        )
+        return await _build_snapshot_endpoint(
+            providers,
+            providers.build_stats_payload(),
+            with_ingest_stats=True,
+        )()
 
     return stats_endpoint
 
@@ -164,11 +183,10 @@ def _build_stats_endpoint(providers: ApiRouteProviders):
 def _build_health(providers: ApiRouteProviders):
     async def health():
         """Public health check endpoint - does not expose internal paths/state."""
-        snapshot = providers.snapshot_job_subsystem()(start_repair=False)
-        return providers.build_health_payload()(
-            api_version=providers.api_version(),
-            snapshot=snapshot,
-        )
+        return await _build_snapshot_endpoint(
+            providers,
+            providers.build_health_payload(),
+        )()
 
     return health
 
@@ -176,11 +194,10 @@ def _build_health(providers: ApiRouteProviders):
 def _build_health_detailed(providers: ApiRouteProviders):
     async def health_detailed():
         """Authenticated health check with full job-queue observability."""
-        snapshot = providers.snapshot_job_subsystem()(start_repair=False)
-        return providers.build_detailed_health_payload()(
-            api_version=providers.api_version(),
-            snapshot=snapshot,
-        )
+        return await _build_snapshot_endpoint(
+            providers,
+            providers.build_detailed_health_payload(),
+        )()
 
     return health_detailed
 
