@@ -17,6 +17,8 @@ from markdown_ingress.core.ssrf import (
     validate_http_url_no_ssrf,
 )
 
+_VALIDATE_WEBHOOK_URL_ERRORS: tuple[type[Exception], ...] = (OSError, TypeError, ValueError)
+
 
 def validate_int_config(field_name: str, value: object, *, minimum: int) -> int:
     return max(minimum, ensure_int(field_name, value))
@@ -163,7 +165,7 @@ def validate_webhook_url(url: str | None, *, allow_local: bool = False) -> None:
         raise ValueError("webhook_url exceeds maximum length of 2048 characters")
     try:
         validate_http_url_no_ssrf(url, allow_local=allow_local, resolve_dns=True)
-    except Exception as exc:
+    except _VALIDATE_WEBHOOK_URL_ERRORS as exc:
         message = str(exc)
         if "valid network location" in message or "valid host" in message:
             raise ValueError("webhook_url must include a hostname") from exc

@@ -52,30 +52,25 @@ def build_json_output(doc, args):
 
 def cmd_ingest(args):
     """Handle single URL ingestion."""
-    try:
-        runtime_config = load_runtime_config(args)
-        params = prepare_ingest_params(args, runtime_config=runtime_config)
-        doc = ingest(**params)
-        output_format = _resolve_output_format(args, runtime_config.output_format)
-        if output_format == "json":
-            output_data = build_json_output(doc, args)
-            save_json_output(output_data, args)
-        elif output_format == "markdown":
-            if not args.no_content:
-                print(doc.markdown)
-            save_markdown_output(doc, args)
-        else:
-            display_rich_output(doc, args, __version__)
-            save_markdown_output(doc, args)
-        sys.exit(0)
-    except Exception as exc:
-        console.print(f"[red]Error: {exc}")
-        _logger.debug(
-            "Error in cmd_ingest for %s",
-            getattr(args, "url", "unknown"),
-            exc_info=True,
-        )
-        sys.exit(1)
+    run_cli_command(_execute_ingest_command, args, command_name="ingest")
+
+
+def _execute_ingest_command(args):
+    runtime_config = load_runtime_config(args)
+    params = prepare_ingest_params(args, runtime_config=runtime_config)
+    doc = ingest(**params)
+    output_format = _resolve_output_format(args, runtime_config.output_format)
+    if output_format == "json":
+        output_data = build_json_output(doc, args)
+        save_json_output(output_data, args)
+    elif output_format == "markdown":
+        if not args.no_content:
+            print(doc.markdown)
+        save_markdown_output(doc, args)
+    else:
+        display_rich_output(doc, args, __version__)
+        save_markdown_output(doc, args)
+    sys.exit(0)
 
 
 def _resolve_output_format(args, config_output_format: str | None) -> str:
@@ -290,3 +285,20 @@ def cmd_benchmark(args):
         Path(args.output).write_text(report, encoding="utf-8")
     else:
         console.print(report)
+
+
+def run_cli_command(command, args, *, command_name: str):
+    """Run a CLI command with a single standardized exit/error path."""
+    try:
+        command(args)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Error: {exc}")
+        _logger.debug(
+            "Error in %s for %s",
+            command_name,
+            getattr(args, "url", "unknown"),
+            exc_info=True,
+        )
+        raise SystemExit(1)

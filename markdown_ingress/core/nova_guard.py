@@ -13,6 +13,7 @@ from typing import Any, TypedDict, Unpack, cast
 
 from markdown_ingress.config_validation import collect_option_values
 from markdown_ingress.core.nova_rules import (
+    RULE_PARSE_ERRORS,
     parse_bundled_rule_content,
     parse_rule_content,
     read_rules_file_atomically,
@@ -343,7 +344,7 @@ class NovaGuard:
             raise ValueError(f"Rules file must be UTF-8 encoded: {exc}") from exc
         except OSError as exc:
             raise ValueError(f"Cannot read rules file: {exc}") from exc
-        except Exception as exc:
+        except RULE_PARSE_ERRORS as exc:
             raise ValueError(f"Failed to parse rules file: {exc}") from exc
 
     def _is_path_allowed(self, resolved_path: Path) -> bool:

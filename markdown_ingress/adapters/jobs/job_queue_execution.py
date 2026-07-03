@@ -28,6 +28,7 @@ JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+_WEBHOOK_IP_PARSE_ERRORS: tuple[type[Exception], ...] = (AttributeError, TypeError, ValueError)
 JOB_QUEUE_WORKER_FAILURES = (Exception,)
 JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     OSError,
@@ -181,7 +182,7 @@ class JobQueueExecutionMixin:
         try:
             parsed = urlparse(webhook_url)
             hostname = parsed.hostname
-        except Exception as e:
+        except _WEBHOOK_IP_PARSE_ERRORS as e:
             _logger.warning("Failed to parse webhook URL: %s", str(e)[:100])
             self._mark_webhook_failed(job_id, f"Invalid webhook URL: {e}")
             raise RuntimeError(f"Invalid webhook URL: {e}") from e

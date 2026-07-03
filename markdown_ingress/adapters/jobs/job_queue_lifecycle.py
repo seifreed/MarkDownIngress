@@ -17,6 +17,12 @@ _logger = logging.getLogger(__name__)
 _LEASE_LOST_ERROR = "Job queue lease was lost; this instance can no longer accept or execute jobs"
 _INLINE_JOBS_DID_NOT_STOP_ERROR = "Job queue inline jobs did not stop before lease release"
 _WORKERS_DID_NOT_STOP_ERROR = "Job queue workers did not stop before lease release"
+_HEARTBEAT_FATAL_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    sqlite3.Error,
+    ValueError,
+)
 
 
 class JobQueueLifecycleMixin:
@@ -167,7 +173,7 @@ class JobQueueLifecycleMixin:
                     if self._heartbeat_stop.wait(timeout=delay):
                         break
                     skip_interval = True
-                except Exception:  # pragma: no cover
+                except _HEARTBEAT_FATAL_ERRORS:  # pragma: no cover
                     _logger.critical("Heartbeat loop fatal error, shutting down", exc_info=True)
                     self._mark_lease_lost_and_stop_workers()
                     return

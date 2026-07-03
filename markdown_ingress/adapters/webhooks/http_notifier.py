@@ -34,6 +34,13 @@ _RETRYABLE_STANDARD_DELIVERY_ERRORS: tuple[type[Exception], ...] = (
     RuntimeError,
     TimeoutError,
 )
+_PINNED_SOCKET_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    RuntimeError,
+    ssl.SSLError,
+    TimeoutError,
+    ValueError,
+)
 
 
 @dataclass(frozen=True)
@@ -75,7 +82,7 @@ class _PinnedHTTPSConnection(HTTPSConnection):
         )
         try:
             self.sock = context.wrap_socket(raw_sock, server_hostname=self.host)
-        except Exception:
+        except _PINNED_SOCKET_ERRORS:
             raw_sock.close()
             raise
 

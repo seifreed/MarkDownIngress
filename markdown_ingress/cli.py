@@ -54,15 +54,9 @@ def main():
 
 
 def _run_command(command, args):
-    try:
-        command(args)
-    except SystemExit:
-        raise
-    except Exception as exc:
-        from markdown_ingress.cli_console import console
+    from markdown_ingress.cli_commands import run_cli_command
 
-        console.print(f"[red]Error: {exc}")
-        sys.exit(1)
+    return run_cli_command(command, args, command_name=getattr(command, "__name__", "command"))
 
 
 if __name__ == "__main__":
