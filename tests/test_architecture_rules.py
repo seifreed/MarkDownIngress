@@ -147,3 +147,36 @@ def test_layer_import_rules_are_honored() -> None:
                     violations.append((module, imported, bad_prefix))
 
     assert not violations
+
+
+def test_dynamic_import_detection_is_covered() -> None:
+    source = """
+import importlib
+from importlib import import_module as imported_module
+
+__import__("markdown_ingress.core")
+__import__(name="markdown_ingress.api")
+importlib.import_module("markdown_ingress.adapters")
+importlib.import_module(name="markdown_ingress.application")
+imported_module("markdown_ingress.cli")
+imported_module(name="markdown_ingress.api_server")
+object().import_module("markdown_ingress.runtime")
+"""
+
+    tree = ast.parse(source)
+    aliases = _collect_importlib_aliases(tree)
+    observed = {
+        target
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (target := _dynamic_import_target(node, aliases)) is not None
+    }
+
+    assert observed == {
+        "markdown_ingress.core",
+        "markdown_ingress.api",
+        "markdown_ingress.adapters",
+        "markdown_ingress.application",
+        "markdown_ingress.cli",
+        "markdown_ingress.api_server",
+    }
