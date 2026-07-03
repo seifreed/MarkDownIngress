@@ -22,6 +22,7 @@ from markdown_ingress.api_server_env import _parse_iso_datetime_utc
 from markdown_ingress.api_server_external_owner_queue import (
     _ExternalOwnerJobQueue as _ExternalOwnerJobQueue,
 )
+from markdown_ingress.api_server_job_queue_states import STATE_EXTERNAL_OWNER
 from markdown_ingress.api_server_queue_ttl import (
     _job_record_within_api_ttl as _job_record_within_api_ttl,
 )
@@ -67,7 +68,7 @@ def _is_stale_heartbeat(heartbeat_at: str) -> bool:
 def _close_queue_for_repair(queue: object) -> None:
     close = getattr(queue, "close", None)
     if not callable(close):
-        if getattr(queue, "state", None) == "external_owner":
+        if getattr(queue, "state", None) == STATE_EXTERNAL_OWNER:
             return
         raise RuntimeError("Job queue cannot be closed for repair")
     try:

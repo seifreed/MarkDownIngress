@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, TypedDict, cast
 
+from markdown_ingress.api_server_job_queue_states import STATE_OPEN
 from markdown_ingress.api_server_queue import _legacy_unknown_ttl_expires_at
 
 
@@ -143,7 +144,7 @@ def build_job_subsystem_snapshot(
             legacy_db_paths.append(legacy_db_path)
 
     return {
-        "status": "healthy" if current_state == "open" and not pending_unknown else "degraded",
+        "status": "healthy" if current_state == STATE_OPEN and not pending_unknown else "degraded",
         "current_state": current_state,
         "current_db_path": str(getattr(current_queue, "db_path", inputs.job_db_path)),
         "current_ttl_seconds": current_ttl_seconds,

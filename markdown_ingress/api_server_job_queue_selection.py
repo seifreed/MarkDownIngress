@@ -6,6 +6,8 @@ from collections.abc import Set
 from dataclasses import dataclass
 from typing import Any
 
+from markdown_ingress.api_server_job_queue_states import STATE_EXTERNAL_OWNER
+
 
 @dataclass(frozen=True)
 class JobQueueSelection:
@@ -20,7 +22,7 @@ def select_job_queue_for_use(queue: Any | None, repairable_states: Set[str]) -> 
     state = getattr(queue, "state", None)
     if state not in repairable_states:
         return JobQueueSelection(queue_to_return=queue, queue_to_repair=None)
-    if state == "external_owner":
+    if state == STATE_EXTERNAL_OWNER:
         return JobQueueSelection(
             queue_to_return=queue,
             queue_to_repair=None,

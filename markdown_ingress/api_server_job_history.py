@@ -5,13 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, cast
 
+from markdown_ingress.api_server_job_queue_states import STATE_EXTERNAL_OWNER
+
 
 def remember_job_queue(history: list[Any], lock: Any, queue: Any | None) -> None:
     """Record a job queue in history for cleanup tracking."""
     if queue is None:
         return
     with lock:
-        if getattr(queue, "state", None) == "external_owner":
+        if getattr(queue, "state", None) == STATE_EXTERNAL_OWNER:
             return
         if any(existing is queue for existing in history):
             return

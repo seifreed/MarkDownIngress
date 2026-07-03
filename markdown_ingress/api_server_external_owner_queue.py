@@ -8,7 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from markdown_ingress.adapters.jobs.sqlite_job_queue import JobRecord, PersistentJobQueue
-from markdown_ingress.api_server_job_queue_states import ACTIVE_JOB_STATUSES
+from markdown_ingress.api_server_job_queue_states import (
+    ACTIVE_JOB_STATUSES,
+    STATE_BACKEND_ERROR,
+    STATE_EXTERNAL_OWNER,
+)
 from markdown_ingress.api_server_queue_ttl import (
     _completed_row_with_ttl_is_expired,
     _completed_row_without_ttl_is_expired,
@@ -20,7 +24,7 @@ class _ExternalOwnerJobQueue:
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
-        self.state = "external_owner"
+        self.state = STATE_EXTERNAL_OWNER
 
     def _raise_backend_read_error(self, exc: sqlite3.Error) -> None:
         message = str(exc).lower()
@@ -28,7 +32,7 @@ class _ExternalOwnerJobQueue:
             raise RuntimeError(
                 "Job queue backend is temporarily unavailable because the current owner is busy"
             )
-        self.state = "backend_error"
+        self.state = STATE_BACKEND_ERROR
         raise RuntimeError(f"Job queue backend read failed: {exc}")
 
     def _db_uri(self) -> str:
@@ -40,7 +44,7 @@ class _ExternalOwnerJobQueue:
         return conn
 
     def submit(self, *_args, **_kwargs):
-        if self.state == "backend_error":
+        if self.state == STATE_BACKEND_ERROR:
             raise RuntimeError("Job queue backend read failed: external owner backend is unhealthy")
         raise RuntimeError(
             "Job queue is unavailable because the DB is owned by another active instance"
