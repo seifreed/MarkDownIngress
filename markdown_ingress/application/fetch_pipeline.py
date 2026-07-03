@@ -42,6 +42,7 @@ from markdown_ingress.models import FetchResult, SafeDocument
 _logger = logging.getLogger(__name__)
 
 _RENDER_COST_BUDGET_CEILING: int = 5
+_RENDER_FAILURES = (Exception,)
 
 
 @dataclass(frozen=True)
@@ -202,7 +203,7 @@ class _FetchPipeline:
                 context.timed_stage("fetch_render", lambda: renderer.render_sync(context.url)),
             )
             self._reconcile_temp_screenshot(context, fetch_result)
-        except Exception as render_exc:  # noqa: BLE001 - render mode returns structured failure
+        except _RENDER_FAILURES as render_exc:
             return self._handle_render_failure(context, render_exc)
         else:
             return fetch_result
