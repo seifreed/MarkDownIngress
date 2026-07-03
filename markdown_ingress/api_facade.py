@@ -162,31 +162,31 @@ async def ingest_many_async_impl(
     url_list = list(urls)
     runtime_config = build_runtime_config(**runtime_kwargs)
     with _lazy_class("IngestUseCase")(playwright_available=playwright_available) as use_case:
-        batch_use_case = _lazy_class("BatchIngestUseCase")(ingest_use_case=use_case)
-        result = await batch_use_case.execute(
-            url_list,
-            config_builder=runtime_config.clone,
-            max_concurrent=max_concurrent,
-            on_progress=on_progress,
-        )
-        if runtime_config.save_reports:
-            for index, doc in enumerate(result.documents):
-                if doc is None:
-                    continue
-                try:
-                    await asyncio.to_thread(
-                        _persist_report_for_document,
-                        doc,
-                        runtime_config.reports_dir,
-                    )
-                except _REPORT_PERSIST_ERRORS as exc:
-                    target_url = url_list[index] if index < len(url_list) else "<unknown>"
-                    logger.warning(
-                        "Failed to persist security report for %s: %s",
-                        target_url,
-                        exc,
-                    )
-        return cast(BatchResult, result)
+        with _lazy_class("BatchIngestUseCase")(ingest_use_case=use_case) as batch_use_case:
+            result = await batch_use_case.execute(
+                url_list,
+                config_builder=runtime_config.clone,
+                max_concurrent=max_concurrent,
+                on_progress=on_progress,
+            )
+            if runtime_config.save_reports:
+                for index, doc in enumerate(result.documents):
+                    if doc is None:
+                        continue
+                    try:
+                        await asyncio.to_thread(
+                            _persist_report_for_document,
+                            doc,
+                            runtime_config.reports_dir,
+                        )
+                    except _REPORT_PERSIST_ERRORS as exc:
+                        target_url = url_list[index] if index < len(url_list) else "<unknown>"
+                        logger.warning(
+                            "Failed to persist security report for %s: %s",
+                            target_url,
+                            exc,
+                        )
+            return cast(BatchResult, result)
 
 
 def ingest_many_sync_impl(

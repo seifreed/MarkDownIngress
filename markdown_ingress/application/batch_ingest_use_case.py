@@ -48,6 +48,7 @@ class BatchIngestUseCase:
     """Concurrent batch ingestion on top of the single-item ingestion use case."""
 
     def __init__(self, ingest_use_case: _IngestUseCaseLike | None = None) -> None:
+        self._owns_ingest_use_case = ingest_use_case is None
         if ingest_use_case is None:
             from markdown_ingress.application.use_cases import IngestUseCase
 
@@ -58,6 +59,20 @@ class BatchIngestUseCase:
             "_auto_fetcher_user_agent",
             _select_stable_fetcher_user_agent(),
         )
+
+    def __enter__(self) -> BatchIngestUseCase:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc: object | None,
+        tb: object | None,
+    ) -> None:
+        if self._owns_ingest_use_case:
+            close = getattr(self.ingest_use_case, "close", None)
+            if callable(close):
+                close()
 
     def _prepare_request(
         self,

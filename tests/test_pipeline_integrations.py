@@ -101,6 +101,15 @@ def test_in_use_case_context_manager_closes_default_inflight_thread():
     assert not thread.is_alive()
 
 
+def test_batch_ingest_use_case_context_manager_closes_default_ingest_resources():
+    with BatchIngestUseCase() as batch_use_case:
+        thread = batch_use_case.ingest_use_case.orchestrator.inflight_registry._cleanup_thread
+        assert thread is not None and thread.is_alive()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+
+
 def _start_counting_html_server(
     html: bytes,
     *,
