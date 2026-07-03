@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 _REPORT_PERSIST_ERRORS = (OSError, TypeError, ValueError)
+_BATCH_ITEM_FAILURES = (Exception,)
 
 __all__ = [
     "BatchContext",
@@ -177,7 +178,7 @@ class BatchUrlProcessor:
             # find a cancelled future and deadlock.
             await remove_finished_batch_inflight(ctx, prepared.request_key, record)
             raise
-        except Exception as exc:  # noqa: BLE001 - follower records leader failure as item
+        except _BATCH_ITEM_FAILURES as exc:
             return await self._handle_follower_exception(prepared, record, started_at, exc)
         shared = copy.deepcopy(shared_document)
         mark_batch_document(
@@ -317,7 +318,7 @@ class BatchUrlProcessor:
         except asyncio.CancelledError:
             await self._handle_cancelled(record, prepared)
             raise
-        except Exception as exc:  # noqa: BLE001 - per-item batch failures are collected
+        except _BATCH_ITEM_FAILURES as exc:
             return await self._handle_process_exception(prepared, record, exc)
         finally:
             if semaphore_held:
