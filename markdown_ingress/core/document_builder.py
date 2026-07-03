@@ -31,9 +31,6 @@ from markdown_ingress.core.document_security_patterns import (
     CustomPatternAnalysisContext,
     _apply_custom_pattern_analysis,
 )
-from markdown_ingress.core.document_security_patterns import (
-    _dedupe_preserving_order as _dedupe_preserving_order_impl,
-)
 from markdown_ingress.core.ingest_stats import timed_stage_with_snapshot
 from markdown_ingress.core.interfaces import IExtractor, IMarkdownConverter, ITokenEstimator
 from markdown_ingress.core.policy import PolicyBlockedError
@@ -82,11 +79,6 @@ def _run_security_analysis(
         ),
     )
     return security_engine, policy_engine, security_result
-
-
-def _dedupe_preserving_order(values: list[str]) -> list[str]:
-    """Compatibility helper retained for existing internal imports/tests."""
-    return _dedupe_preserving_order_impl(values)
 
 
 def _build_content_pipeline_context(
