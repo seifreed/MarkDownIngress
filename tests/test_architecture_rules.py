@@ -188,6 +188,13 @@ def test_package_facade_is_not_an_internal_import_target() -> None:
             continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == PACKAGE_PREFIX:
+                        raise AssertionError(
+                            f"{path}: avoid importing package root directly; import from "
+                            f"specific submodules instead."
+                        )
             if isinstance(node, ast.ImportFrom) and node.module == "markdown_ingress":
                 raise AssertionError(
                     f"{path}: avoid importing from package facade; import from "
