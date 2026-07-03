@@ -27,7 +27,7 @@ def _start_server(handler_cls: type[BaseHTTPRequestHandler]) -> tuple[ThreadingH
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-class _FakeSSLFailureError(Exception):
+class _FakeSSLFailureError(OSError):
     pass
 
 
@@ -491,7 +491,7 @@ def test_ssl_bypass_policy_requires_first_ssl_verification_failure():
         ssl_bypass_retry_delay,
     )
 
-    class FakeSSLFailureError(Exception):
+    class FakeSSLFailureError(OSError):
         pass
 
     ssl_error = FakeSSLFailureError("handshake failed")
@@ -1357,7 +1357,7 @@ def test_sync_ssl_bypass_preserves_sni_after_dns_pinning(monkeypatch):
 
     captured: dict[str, object] = {}
 
-    class FakeSSLFailureError(Exception):
+    class FakeSSLFailureError(OSError):
         pass
 
     class MainClient:

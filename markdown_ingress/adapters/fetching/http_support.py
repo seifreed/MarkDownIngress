@@ -26,6 +26,12 @@ MAX_RETRIES = 3
 DEFAULT_DOMAIN_STATE_TTL = 3600
 DEFAULT_MAX_HOSTS = 10000
 DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024
+FETCH_ATTEMPT_ERRORS: tuple[type[Exception], ...] = (
+    httpx.HTTPError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+)
 
 _HTML_CONTENT_TYPES = (
     "text/html",

@@ -16,6 +16,7 @@ from markdown_ingress.adapters.fetching.http_fetch_state import (
     HttpFetchState,
 )
 from markdown_ingress.adapters.fetching.http_support import (
+    FETCH_ATTEMPT_ERRORS,
     MAX_RETRIES,
     RETRYABLE_STATUS,
     ResponseSizeLimitError,
@@ -79,7 +80,7 @@ class AsyncHttpxFetchMixin(HttpxFetchSharedMixin, FetchAttemptSharedMixin):
             await self._handle_async_status_error(state, exc)
         except (DomainCircuitOpenError, httpx.TooManyRedirects):
             raise
-        except Exception as exc:  # noqa: BLE001 - fetch errors become failed attempts
+        except FETCH_ATTEMPT_ERRORS as exc:
             self._handle_generic_fetch_error(state, exc)
         return None
 
