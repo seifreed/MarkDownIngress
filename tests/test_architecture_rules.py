@@ -60,7 +60,36 @@ def _iter_imports(path: Path) -> list[str]:
     imports: list[str] = []
     for node in ast.walk(tree):
         imports.extend(_imported_modules(node, path))
+        if isinstance(node, ast.Call):
+            imported = _dynamic_import_target(node)
+            if imported:
+                imports.append(imported)
     return imports
+
+
+def _dynamic_import_target(node: ast.Call) -> str | None:
+    """Return top-level module imported via string-based dynamic import, if any."""
+    if isinstance(node.func, ast.Name) and node.func.id == "__import__":
+        return _string_call_arg(node)
+
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "import_module"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "importlib"
+    ):
+        return _string_call_arg(node)
+
+    return None
+
+
+def _string_call_arg(node: ast.Call) -> str | None:
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
 
 
 def _module_of(path: Path) -> str:
