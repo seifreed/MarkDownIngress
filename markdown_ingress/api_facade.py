@@ -283,7 +283,11 @@ def _handle_retry_failure(
     return float(wait_time)
 
 
-def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
+def retry_ingest_impl(
+    request: RetryIngestRequest,
+    *,
+    ingest_fn: Callable[..., SafeDocument] = ingest_impl,
+) -> SafeDocument:
     """Implementation for retrying ingestion with escalating timeout and stealth."""
     validated_max_retries = validate_positive_int("max_retries", request.max_retries)
     validated_initial_timeout = _validate_retry_timeout("initial_timeout", request.initial_timeout)
@@ -298,8 +302,6 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
     last_exception: Exception | None = None
     for attempt in range(validated_max_retries):
         try:
-            from markdown_ingress.api import ingest as public_ingest
-
             timeout, use_stealth, use_extreme = _compute_retry_attempt_params(
                 attempt,
                 validated_max_retries,
@@ -318,7 +320,7 @@ def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:
                     "Timeout: %ss, Stealth: %s, Extreme: %s", timeout, use_stealth, use_extreme
                 )
 
-            doc = public_ingest(
+            doc = ingest_fn(
                 request.url,
                 mode=request.mode,
                 strict=request.strict,

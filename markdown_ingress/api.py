@@ -11,7 +11,6 @@ from markdown_ingress.api_facade import (
     ingest_impl,
     ingest_many_async_impl,
     ingest_many_sync_impl,
-    ingest_resolved,
     retry_ingest_impl,
 )
 from markdown_ingress.api_runtime import resolve_batch_api_options
@@ -23,7 +22,6 @@ from markdown_ingress.runtime_helpers import is_dependency_available
 from markdown_ingress.shared_results import BatchResult
 
 PLAYWRIGHT_AVAILABLE = is_dependency_available("playwright")
-_ingest_resolved = ingest_resolved
 
 
 class RetryIngestOptions(TypedDict, total=False):
@@ -253,7 +251,8 @@ def retry_ingest(
             enable_stealth=parsed.get("enable_stealth", True),
             initial_timeout=parsed.get("initial_timeout", 60.0),
             max_timeout=parsed.get("max_timeout"),
-        )
+        ),
+        ingest_fn=ingest,
     )
 
 
