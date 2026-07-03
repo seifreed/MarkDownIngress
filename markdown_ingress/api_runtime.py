@@ -18,22 +18,17 @@ from markdown_ingress.core.config import (
 from markdown_ingress.core.interfaces import ICacheBackend
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.runtime_helpers import (
-    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
-)
-from markdown_ingress.runtime_helpers import (
+    UNSET,
     validate_batch_max_concurrent,
 )
-
-UNSET = object()
+from markdown_ingress.runtime_helpers import (
+    run_ingest_many_blocking as _run_ingest_many_blocking,
+)
 
 
 def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T]]) -> T:
     """Run an ingest_many coroutine to completion from synchronous code."""
-    return _shared_run_ingest_many_blocking(coro_factory)
-
-
-def _validate_batch_max_concurrent(value: object) -> int:
-    return validate_batch_max_concurrent(value)
+    return _run_ingest_many_blocking(coro_factory)
 
 
 _NONE_EXPLICIT_RUNTIME_KEYS = (
@@ -213,7 +208,7 @@ def resolve_batch_api_options(
         if max_concurrent is UNSET:
             resolved_max_concurrent = getattr(config, "batch_max_concurrent", 5)
 
-    return resolved_timeout, _validate_batch_max_concurrent(resolved_max_concurrent)
+    return resolved_timeout, validate_batch_max_concurrent(resolved_max_concurrent)
 
 
 def clone_ingest_config(config: IngestConfig) -> IngestConfig:

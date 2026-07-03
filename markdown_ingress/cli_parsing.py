@@ -30,6 +30,7 @@ from markdown_ingress.cli_ingest_args import add_common_ingest_args as add_commo
 from markdown_ingress.cli_ingest_args import create_batch_parser as create_batch_parser
 from markdown_ingress.cli_ingest_args import create_ingest_parser as create_ingest_parser
 from markdown_ingress.cli_support import load_domain_policies
+from markdown_ingress.runtime_helpers import UNSET
 
 if TYPE_CHECKING:
     from markdown_ingress.core.config import Config
@@ -104,7 +105,6 @@ def _resolve_strict_arg(args):
 def _resolve_screenshot_arg(args):
     if hasattr(args, "screenshot") and args.screenshot:
         return args.screenshot
-    from markdown_ingress.api_runtime import UNSET
 
     return UNSET
 

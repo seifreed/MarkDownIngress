@@ -31,10 +31,6 @@ _CUSTOM_BATCH_ITEM_FAILURES = (Exception,)
 run_ingest_many_blocking = _shared_run_ingest_many_blocking
 
 
-def _validate_batch_max_concurrent(value: object) -> int:
-    return validate_batch_max_concurrent(value)
-
-
 @dataclass
 class _CustomBatchState:
     total: int
@@ -169,7 +165,7 @@ class BatchProcessor:
 
     async def process_batch_async(self, urls: list[str]) -> BatchResult:
         """Process multiple URLs concurrently while preserving input order."""
-        max_concurrent = _validate_batch_max_concurrent(self.max_concurrent)
+        max_concurrent = validate_batch_max_concurrent(self.max_concurrent)
         if self._uses_default_process_url():
             return await self._batch_use_case.execute(
                 urls,

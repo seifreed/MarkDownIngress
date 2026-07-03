@@ -13,7 +13,6 @@ from typing import Any, cast
 
 from markdown_ingress.api_runtime import (
     UNSET,
-    _validate_batch_max_concurrent,
     build_runtime_config,
     run_ingest_many_blocking,
 )
@@ -28,6 +27,7 @@ from markdown_ingress.reporting import (
 from markdown_ingress.reporting import (
     persist_security_report as _persist_security_report,
 )
+from markdown_ingress.runtime_helpers import validate_batch_max_concurrent
 from markdown_ingress.shared_results import BatchResult
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ async def ingest_many_async_impl(
     **runtime_kwargs,
 ) -> BatchResult:
     """Concurrent batch ingestion using the same runtime contract as ingest()."""
-    max_concurrent = _validate_batch_max_concurrent(max_concurrent)
+    max_concurrent = validate_batch_max_concurrent(max_concurrent)
 
     url_list = list(urls)
     runtime_config = build_runtime_config(**runtime_kwargs)

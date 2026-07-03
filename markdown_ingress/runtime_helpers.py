@@ -7,6 +7,7 @@ from typing import Any
 
 from markdown_ingress.config_validation import validate_positive_int
 
+UNSET = object()
 _INGEST_MANY_IN_LOOP_ERROR = (
     "ingest_many() cannot run inside an active event loop; use ingest_many_async() instead"
 )

@@ -13,7 +13,6 @@ from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 from rich.table import Table
 
 from markdown_ingress import __version__, compare_extractors, ingest, ingest_many_async
-from markdown_ingress.api_runtime import UNSET
 from markdown_ingress.cli_parsing import (
     _extract_cli_feature_flags,
     determine_mode,
@@ -36,6 +35,7 @@ from markdown_ingress.cli_support import (
     save_markdown_output,
 )
 from markdown_ingress.core.benchmark import Benchmark
+from markdown_ingress.runtime_helpers import UNSET
 
 _logger = logging.getLogger(__name__)
 

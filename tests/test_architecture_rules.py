@@ -25,6 +25,9 @@ FORBIDDEN_IMPORTS = {
         "markdown_ingress.api",
         "markdown_ingress.api_runtime",
     },
+    "markdown_ingress.cli": {
+        "markdown_ingress.api_runtime",
+    },
 }
 
 
