@@ -1,9 +1,11 @@
 """Advanced stealth Playwright renderer — implements IRenderer protocol."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
-from typing import cast
+from typing import Any, cast
 
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.adapters.rendering.renderer_navigation import WaitUntil
@@ -31,6 +33,32 @@ _ensure_bool = config_validation.ensure_bool
 _ensure_finite_float = config_validation.ensure_finite_float
 _ensure_optional_bool = config_validation.ensure_optional_bool
 _ensure_str = config_validation.ensure_str
+
+
+def _advanced_stealth_renderer_from_options(
+    args: tuple[object, ...],
+    options: dict[str, Any],
+) -> AdvancedStealthRenderer:
+    if len(args) > 2:
+        raise TypeError("expected at most 2 positional arguments after url")
+    parsed = dict(options)
+    positional_names = ("timeout", "headless")
+    for index, value in enumerate(args):
+        name = positional_names[index]
+        if name in parsed:
+            raise TypeError(f"got multiple values for argument '{name}'")
+        parsed[name] = value
+    return AdvancedStealthRenderer(
+        timeout=parsed.get("timeout", 30.0),
+        headless=parsed.get("headless", True),
+        allow_local_urls=parsed.get("allow_local_urls"),
+        block_resources=parsed.get("block_resources", True),
+        block_images=parsed.get("block_images", True),
+        block_fonts=parsed.get("block_fonts", True),
+        block_media=parsed.get("block_media", True),
+        block_ads=parsed.get("block_ads", True),
+        block_trackers=parsed.get("block_trackers", True),
+    )
 
 
 class AdvancedStealthRenderer(SharedRendererMixin):
@@ -215,67 +243,28 @@ class AdvancedStealthRenderer(SharedRendererMixin):
                 await _close_async_resource(browser, "browser")
 
 
-# Compatibility helper mirrors AdvancedStealthRenderer keyword options.
-async def render_with_advanced_stealth(  # noqa: PLR0913
+# Compatibility helper accepts AdvancedStealthRenderer keyword options.
+async def render_with_advanced_stealth(
     url: str,
-    timeout: float = 30.0,
-    headless: bool = True,
-    *,
-    allow_local_urls: bool | None = None,
-    block_resources: bool = True,
-    block_images: bool = True,
-    block_fonts: bool = True,
-    block_media: bool = True,
-    block_ads: bool = True,
-    block_trackers: bool = True,
+    *args: object,
+    **options: Any,
 ) -> FetchResult:
     """Convenience function to render a URL with advanced stealth."""
-    renderer = AdvancedStealthRenderer(
-        timeout=timeout,
-        headless=headless,
-        allow_local_urls=allow_local_urls,
-        block_resources=block_resources,
-        block_images=block_images,
-        block_fonts=block_fonts,
-        block_media=block_media,
-        block_ads=block_ads,
-        block_trackers=block_trackers,
-    )
+    renderer = _advanced_stealth_renderer_from_options(args, options)
     return await renderer.render(url)
 
 
 # Synchronous compatibility helper mirrors the async helper signature.
-def render_with_advanced_stealth_sync(  # noqa: PLR0913
+def render_with_advanced_stealth_sync(
     url: str,
-    timeout: float = 30.0,
-    headless: bool = True,
-    *,
-    allow_local_urls: bool | None = None,
-    block_resources: bool = True,
-    block_images: bool = True,
-    block_fonts: bool = True,
-    block_media: bool = True,
-    block_ads: bool = True,
-    block_trackers: bool = True,
+    *args: object,
+    **options: Any,
 ) -> FetchResult:
     """Synchronous convenience function for advanced stealth rendering."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(
-            render_with_advanced_stealth(
-                url,
-                timeout,
-                headless,
-                allow_local_urls=allow_local_urls,
-                block_resources=block_resources,
-                block_images=block_images,
-                block_fonts=block_fonts,
-                block_media=block_media,
-                block_ads=block_ads,
-                block_trackers=block_trackers,
-            )
-        )
+        return asyncio.run(render_with_advanced_stealth(url, *args, **options))
 
     raise RuntimeError(
         "render_with_advanced_stealth_sync() cannot run inside an active event loop; "
