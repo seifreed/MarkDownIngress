@@ -6,7 +6,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from typing import Any, cast
 
 from markdown_ingress.config_models import IngestConfig, _validate_output_profile_name
-from markdown_ingress.config_validation import validate_positive_int
+from markdown_ingress.config_validation import collect_option_values, validate_positive_int
 from markdown_ingress.core.config import (
     Config as FileConfig,
 )
@@ -332,24 +332,16 @@ def _normalize_runtime_config_options(
     options: Mapping[str, object],
 ) -> dict[str, object]:
     option_names = tuple(_RUNTIME_CONFIG_OPTION_DEFAULTS)
-    if len(args) > len(option_names):
-        raise TypeError(
-            f"build_runtime_config() expected at most {len(option_names) + 1} arguments"
-        )
-
     values = {"config": config, **_RUNTIME_CONFIG_OPTION_DEFAULTS}
-    for key in options:
-        if key not in _RUNTIME_CONFIG_OPTION_DEFAULTS:
-            raise TypeError(f"build_runtime_config() got an unexpected keyword argument '{key}'")
-
-    positional_values = dict(zip(option_names, args, strict=False))
-    duplicate_keys = positional_values.keys() & options.keys()
-    if duplicate_keys:
-        duplicate = next(iter(duplicate_keys))
-        raise TypeError(f"build_runtime_config() got multiple values for argument '{duplicate}'")
-
-    values.update(positional_values)
-    values.update(options)
+    values.update(
+        collect_option_values(
+            "build_runtime_config()",
+            option_names,
+            args,
+            options,
+            positional_offset=1,
+        )
+    )
     return values
 
 
