@@ -136,6 +136,17 @@ class IngestUseCase:
         self._auto_fetcher_user_agent = _select_stable_fetcher_user_agent()
         self._cache_resolver = _CacheResolutionHelper(self.orchestrator)
 
+    def __enter__(self) -> IngestUseCase:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc: object | None,
+        tb: object | None,
+    ) -> None:
+        self.close()
+
     @staticmethod
     def _default_fetcher_factory(config: IngestConfig) -> IFetcher:
         return _default_fetcher_factory_impl(config)
@@ -147,8 +158,7 @@ class IngestUseCase:
     def close(self) -> None:
         """Close shared resources (fetcher, etc.)."""
         self._fetcher_mgr.close()
-        if hasattr(self.orchestrator, "close"):
-            self.orchestrator.close()
+        self.orchestrator.close()
 
     @staticmethod
     def _matches_default_factory(

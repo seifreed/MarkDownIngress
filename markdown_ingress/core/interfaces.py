@@ -307,3 +307,5 @@ class IIngestOrchestrator(Protocol):
         matched_domain_policy: Any = None,
         operational_flags: Any = None,
     ) -> Any: ...  # pragma: no cover
+
+    def close(self) -> None: ...  # pragma: no cover

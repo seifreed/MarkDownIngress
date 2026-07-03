@@ -104,11 +104,8 @@ def ingest_resolved(
     playwright_available: bool = PLAYWRIGHT_AVAILABLE,
 ) -> SafeDocument:
     """Execute ingestion using a fully resolved runtime config."""
-    use_case = _lazy_class("IngestUseCase")(playwright_available=playwright_available)
-    try:
+    with _lazy_class("IngestUseCase")(playwright_available=playwright_available) as use_case:
         return cast(SafeDocument, use_case.execute(url, config))
-    finally:
-        use_case.close()
 
 
 def ingest_impl(
@@ -164,8 +161,7 @@ async def ingest_many_async_impl(
 
     url_list = list(urls)
     runtime_config = build_runtime_config(**runtime_kwargs)
-    use_case = _lazy_class("IngestUseCase")(playwright_available=playwright_available)
-    try:
+    with _lazy_class("IngestUseCase")(playwright_available=playwright_available) as use_case:
         batch_use_case = _lazy_class("BatchIngestUseCase")(ingest_use_case=use_case)
         result = await batch_use_case.execute(
             url_list,
@@ -191,8 +187,6 @@ async def ingest_many_async_impl(
                         exc,
                     )
         return cast(BatchResult, result)
-    finally:
-        use_case.close()
 
 
 def ingest_many_sync_impl(
@@ -363,16 +357,14 @@ def retry_ingest_impl(
 def generate_security_report_impl(url: str, **runtime_kwargs) -> SecurityReport:
     """Generate a detailed security report through the dedicated use case."""
     config = build_runtime_config(**runtime_kwargs)
-    use_case = _lazy_class("IngestUseCase")(playwright_available=PLAYWRIGHT_AVAILABLE)
-    try:
+
+    with _lazy_class("IngestUseCase")(playwright_available=PLAYWRIGHT_AVAILABLE) as use_case:
         report = cast(
             SecurityReport,
             _lazy_class("GenerateSecurityReportUseCase")(ingest_use_case=use_case).execute(
                 url, config
             ),
         )
-    finally:
-        use_case.close()
     if config.save_reports:
         try:
             _persist_security_report(report, config.reports_dir)
