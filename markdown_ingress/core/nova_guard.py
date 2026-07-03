@@ -293,6 +293,10 @@ class NovaGuard:
             return self._load_rules_from_path(rules_path)
         return self._load_bundled_rules()
 
+    def _validate_and_load_rules_path(self, rules_path: str) -> list[Any]:
+        """Compatibility wrapper retained for existing internal callers/tests."""
+        return self._load_rules_from_path(rules_path)
+
     def _load_rules_from_path(self, rules_path: str) -> list[Any]:
         """
         Validate rules_path for security and load rules.

@@ -6,8 +6,42 @@ import datetime
 import logging
 import math
 import os
+from dataclasses import dataclass
 
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class APIServerEnvConfig:
+    """Parsed API server environment configuration."""
+
+    job_ttl_seconds: int
+    job_db_path: str
+    job_workers: int
+    max_queued_jobs: int
+    webhook_max_retries: int
+    webhook_retry_delay_seconds: float
+    execution_timeout_seconds: float | None
+    allow_local_webhooks: bool
+
+
+def load_api_server_env_config() -> APIServerEnvConfig:
+    """Build a typed API server configuration snapshot from environment values."""
+    webhook_retry_delay = _read_optional_float_env(
+        "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
+    )
+    return APIServerEnvConfig(
+        job_ttl_seconds=_read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600),
+        job_db_path=os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3"),
+        job_workers=_read_positive_int_env("MDI_API_JOB_WORKERS", 2),
+        max_queued_jobs=_read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100),
+        webhook_max_retries=_read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2),
+        webhook_retry_delay_seconds=0.25 if webhook_retry_delay is None else webhook_retry_delay,
+        execution_timeout_seconds=_read_optional_float_env(
+            "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
+        ),
+        allow_local_webhooks=_read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False),
+    )
 
 
 def _read_positive_int_env(name: str, default: int, *, minimum: int = 1) -> int:

@@ -39,9 +39,8 @@ from markdown_ingress.api_server_dependencies import (
 )
 from markdown_ingress.api_server_env import (
     _detect_multiworker_environment,
-    _read_bool_env,
-    _read_optional_float_env,
     _read_positive_int_env,
+    load_api_server_env_config,
 )
 from markdown_ingress.api_server_handlers import (
     handle_batch_status,
@@ -175,21 +174,15 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
     return allowed, retry_after
 
 
-JOB_TTL_SECONDS = _read_positive_int_env("MDI_API_JOB_TTL_SECONDS", 3600)
-JOB_DB_PATH = os.getenv("MDI_API_JOB_DB_PATH", "artifacts/api_jobs/jobs.sqlite3")
-JOB_WORKERS = _read_positive_int_env("MDI_API_JOB_WORKERS", 2)
-MAX_QUEUED_JOBS = _read_positive_int_env("MDI_API_MAX_QUEUED_JOBS", 100)
-JOB_WEBHOOK_MAX_RETRIES = _read_positive_int_env("MDI_API_WEBHOOK_MAX_RETRIES", 2)
-_job_webhook_retry_delay = _read_optional_float_env(
-    "MDI_API_WEBHOOK_RETRY_DELAY_SECONDS", minimum=0.0
-)
-JOB_WEBHOOK_RETRY_DELAY_SECONDS = (
-    0.25 if _job_webhook_retry_delay is None else _job_webhook_retry_delay
-)
-JOB_EXECUTION_TIMEOUT_SECONDS = _read_optional_float_env(
-    "MDI_API_JOB_TIMEOUT_SECONDS", minimum=0.0, exclusive_minimum=True
-)
-ALLOW_LOCAL_WEBHOOKS = _read_bool_env("MDI_API_ALLOW_LOCAL_WEBHOOKS", False)
+_API_SERVER_ENV_CONFIG = load_api_server_env_config()
+JOB_TTL_SECONDS = _API_SERVER_ENV_CONFIG.job_ttl_seconds
+JOB_DB_PATH = _API_SERVER_ENV_CONFIG.job_db_path
+JOB_WORKERS = _API_SERVER_ENV_CONFIG.job_workers
+MAX_QUEUED_JOBS = _API_SERVER_ENV_CONFIG.max_queued_jobs
+JOB_WEBHOOK_MAX_RETRIES = _API_SERVER_ENV_CONFIG.webhook_max_retries
+JOB_WEBHOOK_RETRY_DELAY_SECONDS = _API_SERVER_ENV_CONFIG.webhook_retry_delay_seconds
+JOB_EXECUTION_TIMEOUT_SECONDS = _API_SERVER_ENV_CONFIG.execution_timeout_seconds
+ALLOW_LOCAL_WEBHOOKS = _API_SERVER_ENV_CONFIG.allow_local_webhooks
 
 app = FastAPI(
     title="MarkDownIngress API",
