@@ -17,10 +17,8 @@ from markdown_ingress.config_validation import Mode, collect_option_values
 from markdown_ingress.models import SafeDocument
 from markdown_ingress.runtime_helpers import (
     is_dependency_available,
+    run_ingest_many_blocking,
     validate_batch_max_concurrent,
-)
-from markdown_ingress.runtime_helpers import (
-    run_ingest_many_blocking as _shared_run_ingest_many_blocking,
 )
 from markdown_ingress.shared_results import BatchErrorItem, BatchResult
 
@@ -28,7 +26,6 @@ _logger = logging.getLogger(__name__)
 
 RENDERER_AVAILABLE = is_dependency_available("playwright")
 _CUSTOM_BATCH_ITEM_FAILURES = (Exception,)
-run_ingest_many_blocking = _shared_run_ingest_many_blocking
 
 
 @dataclass

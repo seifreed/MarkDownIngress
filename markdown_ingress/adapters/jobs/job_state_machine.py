@@ -7,6 +7,12 @@ from contextlib import closing
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import JobAlreadyRunningError, utcnow
+from markdown_ingress.adapters.jobs.job_queue_states import (
+    JOB_STATUS_COMPLETED,
+    JOB_STATUS_FAILED,
+    JOB_STATUS_QUEUED,
+    JOB_STATUS_RUNNING,
+)
 
 
 class JobStateMachineMixin:
@@ -31,18 +37,18 @@ class JobStateMachineMixin:
         with closing(self._connect()) as conn:
             cursor = conn.execute(
                 "UPDATE jobs SET status = ?, started_at = ? WHERE job_id = ? AND status = ?",
-                ("running", utcnow(), job_id, "queued"),
+                (JOB_STATUS_RUNNING, utcnow(), job_id, JOB_STATUS_QUEUED),
             )
             conn.commit()
             if cursor.rowcount == 0:
                 status = self._job_status(conn, job_id)
                 if status is None:
                     raise RuntimeError(f"Job {job_id} not found")
-                if status == "running":
+                if status == JOB_STATUS_RUNNING:
                     raise JobAlreadyRunningError(
                         f"Job {job_id} is already running and cannot be executed twice"
                     )
-                raise self._invalid_transition(job_id, status, "queued")
+                raise self._invalid_transition(job_id, status, JOB_STATUS_QUEUED)
 
     def _mark_completed(self: Any, job_id: str, result: dict[str, Any]) -> None:
         """Transition job from 'running' to 'completed'."""
@@ -53,16 +59,16 @@ class JobStateMachineMixin:
                 SET status = ?, completed_at = ?, result_json = ?, error = NULL
                 WHERE job_id = ? AND status = ?
                 """,
-                ("completed", utcnow(), json.dumps(result), job_id, "running"),
+                (JOB_STATUS_COMPLETED, utcnow(), json.dumps(result), job_id, JOB_STATUS_RUNNING),
             )
             conn.commit()
             if cursor.rowcount == 0:
                 status = self._job_status(conn, job_id)
                 if status is None:
                     raise RuntimeError(f"Job {job_id} not found")
-                if status == "completed":
+                if status == JOB_STATUS_COMPLETED:
                     return
-                raise self._invalid_transition(job_id, status, "running")
+                raise self._invalid_transition(job_id, status, JOB_STATUS_RUNNING)
 
     def _mark_failed(self: Any, job_id: str, error: str) -> None:
         """Transition job from 'queued' or 'running' to 'failed'."""
@@ -71,16 +77,23 @@ class JobStateMachineMixin:
                 """
                 UPDATE jobs
                 SET status = ?, completed_at = ?, result_json = NULL, error = ?
-                WHERE job_id = ? AND status IN ('queued', 'running')
+                WHERE job_id = ? AND status IN (?, ?)
                 """,
-                ("failed", utcnow(), error, job_id),
+                (
+                    JOB_STATUS_FAILED,
+                    utcnow(),
+                    error,
+                    job_id,
+                    JOB_STATUS_QUEUED,
+                    JOB_STATUS_RUNNING,
+                ),
             )
             conn.commit()
             if cursor.rowcount == 0:
                 status = self._job_status(conn, job_id)
                 if status is None:
                     return
-                if status == "failed":
+                if status == JOB_STATUS_FAILED:
                     return
                 raise RuntimeError(
                     f"Invalid state transition: job {job_id} is '{status}', "
@@ -94,18 +107,18 @@ class JobStateMachineMixin:
                 """
                 UPDATE jobs
                 SET status = ?, error = ?
-                WHERE job_id = ? AND status = 'completed'
+                WHERE job_id = ? AND status = ?
                 """,
-                ("failed", error, job_id),
+                (JOB_STATUS_FAILED, error, job_id, JOB_STATUS_COMPLETED),
             )
             conn.commit()
             if cursor.rowcount == 0:
                 status = self._job_status(conn, job_id)
                 if status is None:
                     return
-                if status == "failed":
+                if status == JOB_STATUS_FAILED:
                     return
-                raise self._invalid_transition(job_id, status, "completed")
+                raise self._invalid_transition(job_id, status, JOB_STATUS_COMPLETED)
 
     def _mark_completed_preserve_result(
         self: Any, job_id: str, result: dict[str, Any], error: str
@@ -117,9 +130,16 @@ class JobStateMachineMixin:
                 """
                 UPDATE jobs
                 SET status = ?, completed_at = ?, result_json = ?, error = ?
-                WHERE job_id = ? AND status = 'running'
+                WHERE job_id = ? AND status = ?
                 """,
-                ("failed", utcnow(), result_json, error, job_id),
+                (
+                    JOB_STATUS_FAILED,
+                    utcnow(),
+                    result_json,
+                    error,
+                    job_id,
+                    JOB_STATUS_RUNNING,
+                ),
             )
             conn.commit()
             if cursor.rowcount == 0:

@@ -40,6 +40,11 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
 from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_webhook_url as _validate_webhook_url,
 )
+from markdown_ingress.adapters.jobs.job_queue_states import (
+    JOB_STATUS_ACTIVE,
+    JOB_STATUS_QUEUED,
+    QUEUE_STATE_BACKEND_ERROR,
+)
 from markdown_ingress.adapters.jobs.job_state_machine import JobStateMachineMixin
 from markdown_ingress.adapters.webhooks.http_notifier import HTTPWebhookNotifier
 from markdown_ingress.config_validation import collect_option_values
@@ -276,7 +281,7 @@ class PersistentJobQueue(
         job_id = str(uuid.uuid4())
         record = JobRecord(
             job_id=job_id,
-            status="queued",
+            status=JOB_STATUS_QUEUED,
             created_at=_utcnow(),
             webhook_url=webhook_url,
             ttl_seconds=self.ttl_seconds,
@@ -300,7 +305,8 @@ class PersistentJobQueue(
                         "or execute jobs"
                     )
                 row = conn.execute(
-                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
+                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN (?, ?)",
+                    JOB_STATUS_ACTIVE,
                 ).fetchone()
                 pending = int(row["count"]) if row else 0
                 if pending >= self.max_queued_jobs:
@@ -348,7 +354,8 @@ class PersistentJobQueue(
             self.cleanup_expired()
         with closing(self._connect()) as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')"
+                "SELECT COUNT(*) AS count FROM jobs WHERE status IN (?, ?)",
+                JOB_STATUS_ACTIVE,
             ).fetchone()
         return int(row["count"]) if row else 0
 
@@ -421,7 +428,7 @@ def check_external_owner_still_owns(
         if isinstance(exc, sqlite3.OperationalError) and ("locked" in message or "busy" in message):
             return True
         if on_backend_error is not None:
-            on_backend_error("backend_error")
+            on_backend_error(QUEUE_STATE_BACKEND_ERROR)
         raise RuntimeError(f"Job queue backend read failed during repair: {exc}") from exc
     if row is None:
         return False

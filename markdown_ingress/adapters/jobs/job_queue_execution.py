@@ -19,6 +19,12 @@ from markdown_ingress.adapters.jobs.job_queue_models import (
     utcnow,
 )
 from markdown_ingress.adapters.jobs.job_queue_security import validate_positive_finite_float
+from markdown_ingress.adapters.jobs.job_queue_states import (
+    JOB_STATUS_COMPLETED,
+    JOB_STATUS_FAILED,
+    JOB_STATUS_QUEUED,
+    JOB_STATUS_RUNNING,
+)
 
 _logger = logging.getLogger(__name__)
 JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
@@ -67,7 +73,7 @@ class JobQueueExecutionMixin:
     def _mark_worker_job_failed(self: Any, job_id: str, exc: Exception) -> None:
         try:
             job = self.get(job_id, cleanup_expired=False)
-            if job is not None and job.status not in {"failed", "completed"}:
+            if job is not None and job.status not in {JOB_STATUS_FAILED, JOB_STATUS_COMPLETED}:
                 self._mark_failed(job_id, str(exc))
         except JOB_QUEUE_STATE_ERRORS as mark_exc:
             _logger.warning(
@@ -82,9 +88,16 @@ class JobQueueExecutionMixin:
         try:
             with closing(self._connect()) as conn:
                 conn.execute(
-                    "UPDATE jobs SET status='failed', error=?, "
-                    "completed_at=? WHERE job_id=? AND status='running'",
-                    (error, utcnow(), job_id),
+                    "UPDATE jobs "
+                    "SET status=?, error=?, "
+                    "completed_at=? WHERE job_id=? AND status=?",
+                    (
+                        JOB_STATUS_FAILED,
+                        error,
+                        utcnow(),
+                        job_id,
+                        JOB_STATUS_RUNNING,
+                    ),
                 )
                 conn.commit()
         except JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS as fallback_exc:
@@ -99,8 +112,11 @@ class JobQueueExecutionMixin:
         """Remove a queued job that was persisted but never successfully accepted."""
         with closing(self._connect()) as conn:
             conn.execute(
-                "DELETE FROM jobs WHERE job_id = ? AND status = 'queued'",
-                (job_id,),
+                "DELETE FROM jobs WHERE job_id = ? AND status = ?",
+                (
+                    job_id,
+                    JOB_STATUS_QUEUED,
+                ),
             )
             conn.commit()
 

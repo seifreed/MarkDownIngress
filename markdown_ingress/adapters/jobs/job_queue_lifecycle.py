@@ -11,6 +11,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import STOP_WORKER, utcnow
+from markdown_ingress.adapters.jobs.job_queue_states import (
+    JOB_STATUS_ACTIVE,
+    JOB_STATUS_FAILED,
+    JOB_STATUS_RUNNING,
+    QUEUE_STATE_CLOSED,
+    QUEUE_STATE_CLOSING,
+    QUEUE_STATE_LEASE_LOST,
+    QUEUE_STATE_OPEN,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -34,12 +43,12 @@ class JobQueueLifecycleMixin:
     def state(self: Any) -> str:
         """Expose the queue lifecycle state for callers coordinating shutdown/retry."""
         if self._lease_lost:
-            return "lease_lost"
+            return QUEUE_STATE_LEASE_LOST
         if self._shutdown_complete or self._closed:
-            return "closed"
+            return QUEUE_STATE_CLOSED
         if self._closing:
-            return "closing"
-        return "open"
+            return QUEUE_STATE_CLOSING
+        return QUEUE_STATE_OPEN
 
     def _parse_iso(self: Any, value: str) -> datetime:
         """Parse an ISO datetime string and normalize it to UTC."""
@@ -315,20 +324,26 @@ class JobQueueLifecycleMixin:
             conn.execute(
                 """
                 UPDATE jobs
-                SET status = 'failed',
+                SET status = ?,
                     completed_at = ?,
                     result_json = NULL,
                     ttl_seconds = COALESCE(ttl_seconds, ?),
                     error = CASE
-                        WHEN status = 'running'
+                        WHEN status = ?
                             THEN 'Job interrupted by process restart; persisted task '
                                  || 'payload is not recoverable'
                         ELSE 'Job abandoned after process restart; persisted task '
                              || 'payload is not recoverable'
                     END
-                WHERE status IN ('queued', 'running')
+                WHERE status IN (?, ?)
                 """,
-                (utcnow(), self.ttl_seconds),
+                (
+                    JOB_STATUS_FAILED,
+                    utcnow(),
+                    self.ttl_seconds,
+                    JOB_STATUS_RUNNING,
+                    *JOB_STATUS_ACTIVE,
+                ),
             )
             conn.commit()
         self._recovered_orphaned_jobs = True

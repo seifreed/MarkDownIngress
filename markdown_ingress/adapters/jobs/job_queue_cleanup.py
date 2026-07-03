@@ -7,6 +7,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import LEGACY_UNKNOWN_TTL_SECONDS, utcnow
+from markdown_ingress.adapters.jobs.job_queue_states import (
+    JOB_STATUS_ACTIVE,
+    JOB_STATUS_FINISHED,
+)
 
 
 class JobCleanupMixin:
@@ -16,7 +20,7 @@ class JobCleanupMixin:
         conn.execute(
             """
             DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
+            WHERE status NOT IN (?, ?)
               AND ttl_seconds IS NOT NULL
               AND (
                   completed_at IS NULL
@@ -24,25 +28,28 @@ class JobCleanupMixin:
                   OR julianday(?) > julianday(completed_at) + (ttl_seconds / 86400.0)
               )
             """,
-            (now_iso,),
+            (*JOB_STATUS_ACTIVE, now_iso),
         )
 
     def _delete_corrupt_ttl_jobs(self, conn: Any) -> None:
-        conn.execute("""
+        conn.execute(
+            """
             DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
+            WHERE status NOT IN (?, ?)
               AND ttl_seconds IS NOT NULL
               AND (
                   typeof(ttl_seconds) != 'integer'
                   OR ttl_seconds <= 0
               )
-            """)
+            """,
+            (*JOB_STATUS_ACTIVE,),
+        )
 
     def _delete_legacy_expired_jobs(self, conn: Any, now_iso: str) -> None:
         conn.execute(
             """
             DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
+            WHERE status NOT IN (?, ?)
               AND ttl_seconds IS NULL
               AND legacy_expires_at IS NOT NULL
               AND (
@@ -50,29 +57,35 @@ class JobCleanupMixin:
                   OR julianday(?) > julianday(legacy_expires_at)
               )
             """,
-            (now_iso,),
+            (*JOB_STATUS_ACTIVE, now_iso),
         )
 
     def _delete_corrupt_legacy_jobs(self, conn: Any) -> None:
-        conn.execute("""
+        conn.execute(
+            """
             DELETE FROM jobs
-            WHERE status NOT IN ('queued', 'running')
+            WHERE status NOT IN (?, ?)
               AND ttl_seconds IS NULL
               AND legacy_expires_at IS NULL
               AND (completed_at IS NULL OR julianday(completed_at) IS NULL)
-            """)
+            """,
+            (*JOB_STATUS_ACTIVE,),
+        )
 
     def _compute_legacy_ttl_updates(
         self: Any, conn: Any, now_dt: datetime
     ) -> tuple[list[tuple[int, str, str]], list[str]]:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT job_id, completed_at
             FROM jobs
-            WHERE status NOT IN ('queued', 'running')
+            WHERE status IN (?, ?)
               AND completed_at IS NOT NULL
               AND ttl_seconds IS NULL
               AND legacy_expires_at IS NULL
-            """).fetchall()
+            """,
+            JOB_STATUS_FINISHED,
+        ).fetchall()
         updates: list[tuple[int, str, str]] = []
         expired_ids: list[str] = []
         for row in rows:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Mapping
 from typing import Any, cast
 
 from markdown_ingress.config_models import IngestConfig, _validate_output_profile_name
@@ -25,10 +25,8 @@ from markdown_ingress.runtime_helpers import (
     run_ingest_many_blocking as _run_ingest_many_blocking,
 )
 
-
-def run_ingest_many_blocking[T](coro_factory: Callable[[], Coroutine[Any, Any, T]]) -> T:
-    """Run an ingest_many coroutine to completion from synchronous code."""
-    return _run_ingest_many_blocking(coro_factory)
+# Public API bridge kept for compatibility with callers importing here.
+run_ingest_many_blocking = _run_ingest_many_blocking
 
 
 _NONE_EXPLICIT_RUNTIME_KEYS = (
