@@ -20,6 +20,7 @@ from markdown_ingress.api_runtime import (
 from markdown_ingress.config_models import IngestConfig
 from markdown_ingress.config_validation import Mode, validate_positive_int
 from markdown_ingress.core.policy import PolicyBlockedError
+from markdown_ingress.core.runtime_error_policy import is_retryable_runtime_exception
 from markdown_ingress.models import SafeDocument, SecurityReport
 from markdown_ingress.reporting import (
     persist_report_for_document as _persist_report_for_document,
@@ -84,9 +85,6 @@ def _maybe_persist(doc: SafeDocument | None, config: IngestConfig, url: str) -> 
         _persist_report_for_document(doc, config.reports_dir)
     except _REPORT_PERSIST_ERRORS as exc:
         logger.warning("Failed to persist security report for %s: %s", url, exc)
-
-
-_RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
 
 def _validate_retry_timeout(field_name: str, value: object) -> float:
@@ -237,18 +235,7 @@ def _compute_retry_attempt_params(
 
 def _is_retryable_error(exc: Exception) -> bool:
     """Return True if the exception warrants another retry attempt."""
-    import httpx
-
-    if isinstance(exc, PolicyBlockedError):
-        return False
-    if isinstance(
-        exc, (TimeoutError, httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)
-    ):
-        return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in _RETRYABLE_HTTP_STATUSES
-    retryable_names = {"ConnectTimeout", "ReadTimeout", "ConnectionError", "TargetClosedError"}
-    return type(exc).__name__ in retryable_names
+    return is_retryable_runtime_exception(exc)
 
 
 def retry_ingest_impl(request: RetryIngestRequest) -> SafeDocument:

@@ -7,13 +7,17 @@ import pytest
 from fastapi import HTTPException
 
 from markdown_ingress.api_server_handler_errors import (
-    is_playwright_runtime_import_error,
     raise_runtime_http_error,
 )
 from markdown_ingress.core.policy import (
     DomainCircuitOpenError,
     PolicyBlockedError,
     UnsupportedContentTypeError,
+)
+from markdown_ingress.core.runtime_error_policy import (
+    is_playwright_runtime_import_error,
+    is_retryable_runtime_exception,
+    map_runtime_exception_to_http,
 )
 from markdown_ingress.models import SafeDocument
 
@@ -91,3 +95,20 @@ def test_raise_runtime_http_error_falls_back_to_internal_error() -> None:
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Internal server error"
+
+
+def test_is_retryable_runtime_exception_matches_existing_retry_policy() -> None:
+    request = httpx.Request("GET", "https://example.com")
+    assert is_retryable_runtime_exception(httpx.TimeoutException("timeout"))
+    assert is_retryable_runtime_exception(
+        httpx.HTTPStatusError(
+            "status",
+            request=request,
+            response=httpx.Response(status_code=503, request=request),
+        )
+    )
+    assert not is_retryable_runtime_exception(PolicyBlockedError("blocked"))
+
+
+def test_map_runtime_exception_to_http_returns_none_for_unknown_errors() -> None:
+    assert map_runtime_exception_to_http(RuntimeError("boom")) is None
