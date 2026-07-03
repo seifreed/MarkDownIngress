@@ -29,7 +29,7 @@ JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
 )
 _WEBHOOK_IP_PARSE_ERRORS: tuple[type[Exception], ...] = (AttributeError, TypeError, ValueError)
-JOB_QUEUE_WORKER_FAILURES = (Exception,)
+JOB_QUEUE_WORKER_FAILURES = (BaseException,)
 JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     OSError,
     RuntimeError,
@@ -37,7 +37,9 @@ JOB_QUEUE_WORKER_MARK_FAILED_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
-JOB_QUEUE_THREAD_BRIDGE_FAILURES = (Exception,)
+# Keep control-flow exceptions visible to task callers while preserving
+# ponytail: explicit tuple avoids hidden SystemExit/KeyboardInterrupt rewrites.
+JOB_QUEUE_THREAD_BRIDGE_FAILURES = (BaseException,)
 
 
 class JobQueueExecutionMixin:

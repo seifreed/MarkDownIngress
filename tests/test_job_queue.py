@@ -912,6 +912,18 @@ def test_execute_with_timeout_returns_near_deadline(tmp_path: Path):
     assert after <= before
 
 
+def test_execute_with_timeout_propagates_control_flow_exceptions(tmp_path: Path):
+    queue = PersistentJobQueue(str(tmp_path / "jobs.sqlite3"), worker_count=1, ttl_seconds=3600)
+
+    def aborting_task() -> dict[str, bool]:
+        raise SystemExit("timeout task aborted")
+
+    with pytest.raises(SystemExit, match="timeout task aborted"):
+        queue._execute_with_timeout(aborting_task, 1.0)
+
+    queue.close()
+
+
 @pytest.mark.parametrize(
     ("timeout_seconds", "match"),
     [
