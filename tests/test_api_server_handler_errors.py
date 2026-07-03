@@ -1,0 +1,93 @@
+"""Unit tests for API server runtime error mapping."""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+from fastapi import HTTPException
+
+from markdown_ingress.api_server_handler_errors import (
+    is_playwright_runtime_import_error,
+    raise_runtime_http_error,
+)
+from markdown_ingress.core.policy import (
+    DomainCircuitOpenError,
+    PolicyBlockedError,
+    UnsupportedContentTypeError,
+)
+from markdown_ingress.models import SafeDocument
+
+
+def _safe_document() -> SafeDocument:
+    return SafeDocument(
+        markdown="",
+        metadata={"policy_action": "block"},
+        token_estimate=0,
+        content_hash="hash",
+        injection_score=1.0,
+        flags=["policy_blocked"],
+    )
+
+
+def test_is_playwright_runtime_import_error_messages() -> None:
+    assert is_playwright_runtime_import_error(ImportError("Playwright is not installed."))
+    assert is_playwright_runtime_import_error(ImportError("Render mode requires Playwright"))
+    assert not is_playwright_runtime_import_error(ImportError("other import"))
+
+
+@pytest.mark.parametrize(
+    "exc,expected_code,expected_detail",
+    [
+        (ImportError("Playwright is not installed."), 400, "Render mode requires Playwright"),
+        (UnsupportedContentTypeError("text/plain"), 415, "text/plain"),
+        (DomainCircuitOpenError("Circuit open"), 429, "Circuit open"),
+        (httpx.InvalidURL("bad"), 400, "bad"),
+        (httpx.TimeoutException("timeout"), 504, "Upstream fetch timed out"),
+        (httpx.RequestError("down"), 502, "Upstream fetch failed"),
+        (ValueError("bad value"), 400, "Invalid request"),
+    ],
+)
+def test_raise_runtime_http_error_mappings(
+    exc: Exception,
+    expected_code: int,
+    expected_detail: str,
+) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_runtime_http_error(exc)
+
+    assert exc_info.value.status_code == expected_code
+    assert exc_info.value.detail == expected_detail
+
+
+def test_raise_runtime_http_error_http_status_error_mapping() -> None:
+    request = httpx.Request("GET", "https://example.com")
+    upstream_error = httpx.HTTPStatusError(
+        "upstream",
+        request=request,
+        response=httpx.Response(status_code=502, request=request),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        raise_runtime_http_error(upstream_error)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Upstream fetch returned an HTTP error"
+
+
+def test_raise_runtime_http_error_policy_blocked_error() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_runtime_http_error(PolicyBlockedError("blocked", document=_safe_document()))
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == {
+        "type": "policy_blocked",
+        "message": "Content blocked by security policy",
+    }
+
+
+def test_raise_runtime_http_error_falls_back_to_internal_error() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        raise_runtime_http_error(RuntimeError("boom"))
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Internal server error"
