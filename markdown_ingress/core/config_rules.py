@@ -73,6 +73,27 @@ def _coerce_config_fields(config: Any) -> None:
         )
 
 
+def _validate_minimum(name: str, value: float, minimum: float, *, strict: bool = True) -> None:
+    if strict:
+        if value <= minimum:
+            raise ValueError(f"{name} must be > {minimum}, got {value}")
+        return
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+
+
+def _validate_range(name: str, value: float, minimum: float, maximum: float) -> None:
+    if not (minimum <= value <= maximum):
+        raise ValueError(f"{name} must be between {minimum} and {maximum}, got {value}")
+
+
+def _validate_overlap(chunk_size: int, chunk_overlap: int) -> None:
+    if chunk_overlap >= chunk_size:
+        raise ValueError(
+            f"chunk_overlap ({chunk_overlap}) must be less than chunk_size ({chunk_size})"
+        )
+
+
 def _validate_literal_fields(config: Any) -> None:
     if config.mode not in VALID_MODES:
         raise ValueError(f"Invalid mode '{config.mode}'. Must be one of: {', '.join(VALID_MODES)}")
@@ -98,33 +119,15 @@ def _validate_literal_fields(config: Any) -> None:
 
 
 def _validate_numeric_ranges(config: Any) -> None:
-    if config.timeout <= 0 or config.timeout > _MAX_TIMEOUT_SECONDS:
+    _validate_minimum("timeout", config.timeout, 0)
+    if config.timeout > _MAX_TIMEOUT_SECONDS:
         raise ValueError(f"timeout must be > 0 and <= {_MAX_TIMEOUT_SECONDS}, got {config.timeout}")
-    if config.auto_render_threshold < 1:
-        raise ValueError(
-            "auto_render_threshold must be >= 1, " f"got {config.auto_render_threshold}"
-        )
-    if config.batch_max_concurrent < _MIN_BATCH_CONCURRENCY:
-        raise ValueError(
-            f"batch_max_concurrent must be >= {_MIN_BATCH_CONCURRENCY}, "
-            f"got {config.batch_max_concurrent}"
-        )
-    if config.batch_timeout <= 0:
-        raise ValueError(f"batch_timeout must be positive, got {config.batch_timeout}")
-    if config.cache_ttl < _MIN_CACHE_TTL:
-        raise ValueError(f"cache_ttl must be positive, got {config.cache_ttl}")
-    if config.chunk_size < _MIN_CHUNK_SIZE or config.chunk_size > _MAX_CHUNK_SIZE:
-        raise ValueError(
-            f"chunk_size must be between {_MIN_CHUNK_SIZE} and {_MAX_CHUNK_SIZE}, "
-            f"got {config.chunk_size}"
-        )
-    if config.chunk_overlap < _MIN_CHUNK_OVERLAP or config.chunk_overlap > _MAX_CHUNK_OVERLAP:
-        raise ValueError(
-            f"chunk_overlap must be between {_MIN_CHUNK_OVERLAP} and "
-            f"{_MAX_CHUNK_OVERLAP}, got {config.chunk_overlap}"
-        )
-    if config.chunk_overlap >= config.chunk_size:
-        raise ValueError(
-            f"chunk_overlap ({config.chunk_overlap}) must be less than "
-            f"chunk_size ({config.chunk_size})"
-        )
+    _validate_minimum("auto_render_threshold", config.auto_render_threshold, 1, strict=False)
+    _validate_minimum(
+        "batch_max_concurrent", config.batch_max_concurrent, _MIN_BATCH_CONCURRENCY, strict=False
+    )
+    _validate_minimum("batch_timeout", config.batch_timeout, 0)
+    _validate_minimum("cache_ttl", config.cache_ttl, _MIN_CACHE_TTL, strict=False)
+    _validate_range("chunk_size", config.chunk_size, _MIN_CHUNK_SIZE, _MAX_CHUNK_SIZE)
+    _validate_range("chunk_overlap", config.chunk_overlap, _MIN_CHUNK_OVERLAP, _MAX_CHUNK_OVERLAP)
+    _validate_overlap(config.chunk_size, config.chunk_overlap)
