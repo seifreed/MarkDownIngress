@@ -28,6 +28,8 @@ JOB_QUEUE_STATE_ERRORS: tuple[type[Exception], ...] = (
     TypeError,
     ValueError,
 )
+JOB_QUEUE_WORKER_FAILURES = (Exception,)
+JOB_QUEUE_THREAD_BRIDGE_FAILURES = (BaseException,)
 
 
 class JobQueueExecutionMixin:
@@ -45,7 +47,7 @@ class JobQueueExecutionMixin:
                 self._execute_job(job_id, task)
             except JobAlreadyRunningError as exc:
                 _logger.info("Skipping duplicate execution for job %s: %s", job_id, exc)
-            except Exception as exc:  # noqa: BLE001 - worker boundary marks jobs failed
+            except JOB_QUEUE_WORKER_FAILURES as exc:
                 _logger.warning("Worker loop exception for job %s: %s", job_id, exc)
                 if job_id is not None:
                     self._mark_worker_job_failed(job_id, exc)
@@ -222,7 +224,7 @@ class JobQueueExecutionMixin:
         def run_task() -> None:
             try:
                 result_container[0] = task()
-            except BaseException as e:  # noqa: BLE001 - thread bridge preserves caller errors
+            except JOB_QUEUE_THREAD_BRIDGE_FAILURES as e:
                 exception_container[0] = e
 
         thread = threading.Thread(target=run_task, daemon=True)
