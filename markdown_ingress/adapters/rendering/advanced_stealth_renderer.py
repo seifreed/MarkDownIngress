@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, cast
+from typing import Any, TypedDict, Unpack, cast
 
 import markdown_ingress.config_validation as config_validation
 from markdown_ingress.adapters.rendering.renderer_navigation import WaitUntil
@@ -35,6 +35,65 @@ _ensure_optional_bool = config_validation.ensure_optional_bool
 _ensure_str = config_validation.ensure_str
 
 
+class AdvancedStealthRendererOptions(TypedDict, total=False):
+    timeout: float
+    wait_until: str
+    headless: bool
+    randomize_fingerprint: bool
+    disable_http2: bool
+    stealth_config: AdvancedStealthConfig | None
+    allow_local_urls: bool | None
+    block_resources: bool
+    block_images: bool
+    block_fonts: bool
+    block_media: bool
+    block_ads: bool
+    block_trackers: bool
+
+
+_ADVANCED_STEALTH_OPTION_NAMES = (
+    "timeout",
+    "wait_until",
+    "headless",
+    "randomize_fingerprint",
+    "disable_http2",
+    "stealth_config",
+    "allow_local_urls",
+    "block_resources",
+    "block_images",
+    "block_fonts",
+    "block_media",
+    "block_ads",
+    "block_trackers",
+)
+_ADVANCED_STEALTH_POSITIONAL_NAMES = _ADVANCED_STEALTH_OPTION_NAMES[:6]
+_ADVANCED_STEALTH_OPTION_NAME_SET = frozenset(_ADVANCED_STEALTH_OPTION_NAMES)
+
+
+def _normalize_advanced_stealth_options(
+    args: tuple[object, ...],
+    options: AdvancedStealthRendererOptions,
+) -> AdvancedStealthRendererOptions:
+    if len(args) > len(_ADVANCED_STEALTH_POSITIONAL_NAMES):
+        raise TypeError(
+            f"AdvancedStealthRenderer() expected at most "
+            f"{len(_ADVANCED_STEALTH_POSITIONAL_NAMES)} arguments"
+        )
+
+    unexpected = set(options) - _ADVANCED_STEALTH_OPTION_NAME_SET
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"AdvancedStealthRenderer() got an unexpected keyword argument '{name}'")
+
+    normalized = dict(options)
+    for index, value in enumerate(args):
+        name = _ADVANCED_STEALTH_POSITIONAL_NAMES[index]
+        if name in normalized:
+            raise TypeError(f"AdvancedStealthRenderer() got multiple values for argument '{name}'")
+        normalized[name] = value
+    return cast(AdvancedStealthRendererOptions, normalized)
+
+
 def _advanced_stealth_renderer_from_options(
     args: tuple[object, ...],
     options: dict[str, Any],
@@ -48,17 +107,7 @@ def _advanced_stealth_renderer_from_options(
         if name in parsed:
             raise TypeError(f"got multiple values for argument '{name}'")
         parsed[name] = value
-    return AdvancedStealthRenderer(
-        timeout=parsed.get("timeout", 30.0),
-        headless=parsed.get("headless", True),
-        allow_local_urls=parsed.get("allow_local_urls"),
-        block_resources=parsed.get("block_resources", True),
-        block_images=parsed.get("block_images", True),
-        block_fonts=parsed.get("block_fonts", True),
-        block_media=parsed.get("block_media", True),
-        block_ads=parsed.get("block_ads", True),
-        block_trackers=parsed.get("block_trackers", True),
-    )
+    return AdvancedStealthRenderer(**parsed)
 
 
 class AdvancedStealthRenderer(SharedRendererMixin):
@@ -83,24 +132,26 @@ class AdvancedStealthRenderer(SharedRendererMixin):
     DEFAULT_TIMEOUT = 30000  # milliseconds
     DEFAULT_WAIT_UNTIL = "networkidle"
 
-    # Renderer configuration constructor mirrors the public render knobs.
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
-        timeout: float = 30.0,
-        wait_until: str = "networkidle",
-        headless: bool = True,
-        randomize_fingerprint: bool = True,
-        disable_http2: bool = False,
-        stealth_config: AdvancedStealthConfig | None = None,
-        *,
-        allow_local_urls: bool | None = None,
-        block_resources: bool = True,
-        block_images: bool = True,
-        block_fonts: bool = True,
-        block_media: bool = True,
-        block_ads: bool = True,
-        block_trackers: bool = True,
-    ):
+        *args: object,
+        **options: Unpack[AdvancedStealthRendererOptions],
+    ) -> None:
+        parsed = _normalize_advanced_stealth_options(args, options)
+        timeout = parsed.get("timeout", 30.0)
+        wait_until = parsed.get("wait_until", "networkidle")
+        headless = parsed.get("headless", True)
+        randomize_fingerprint = parsed.get("randomize_fingerprint", True)
+        disable_http2 = parsed.get("disable_http2", False)
+        stealth_config = parsed.get("stealth_config")
+        allow_local_urls = parsed.get("allow_local_urls")
+        block_resources = parsed.get("block_resources", True)
+        block_images = parsed.get("block_images", True)
+        block_fonts = parsed.get("block_fonts", True)
+        block_media = parsed.get("block_media", True)
+        block_ads = parsed.get("block_ads", True)
+        block_trackers = parsed.get("block_trackers", True)
+
         timeout = _ensure_finite_float("timeout", timeout)
         if timeout <= 0.0:
             raise ValueError(f"timeout must be > 0.0, got {timeout}")

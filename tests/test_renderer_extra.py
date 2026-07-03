@@ -370,6 +370,21 @@ def test_advanced_stealth_init_no_config():
     assert renderer.timeout == 30_000
 
 
+def test_advanced_stealth_rejects_duplicate_positional_option():
+    with pytest.raises(TypeError, match="multiple values for argument 'timeout'"):
+        AdvancedStealthRenderer(5.0, timeout=7.0)
+
+
+def test_advanced_stealth_rejects_unknown_option():
+    with pytest.raises(TypeError, match="unexpected keyword argument 'timeot'"):
+        AdvancedStealthRenderer(timeot=5.0)
+
+
+def test_advanced_stealth_rejects_too_many_positional_options():
+    with pytest.raises(TypeError, match="expected at most 6 arguments"):
+        AdvancedStealthRenderer(*range(7))
+
+
 def test_advanced_stealth_init_with_config():
     """AdvancedStealthRenderer init with explicit stealth_config (lines 101-102)."""
 
