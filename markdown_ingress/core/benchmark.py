@@ -82,98 +82,74 @@ class Benchmark:
         self._compare_fn = compare_fn
         self.failures: list[tuple[str, str]] = []
 
+    @staticmethod
+    def _safe_percent(value: float, total: float) -> float:
+        return max(0.0, min(100.0, (value / total * 100.0) if total > 0 else 0.0))
+
+    def _run_iteration(self, url: str, mode: Mode) -> tuple[SafeDocument, float]:
+        start = time.perf_counter()
+        doc = self._ingest_func(url, mode=mode, model=self.model)
+        end = time.perf_counter()
+        return doc, (end - start) * 1000  # Convert to ms
+
     def _create_comparison_fetcher(self) -> IFetcher:
         if self._fetcher_factory is None:
             raise RuntimeError("No fetcher_factory provided to Benchmark.")
         return self._fetcher_factory()
 
-    def run_single(
-        self,
-        url: str,
-        mode: Mode = "fast",
-        iterations: int = 3,
-        compare_extractors_enabled: bool = False,
-    ) -> BenchmarkResult:
-        """
-        Benchmark a single URL.
-
-        Args:
-            url: URL to benchmark
-            mode: Processing mode ('fast' or 'render')
-            iterations: Number of runs to average
-
-        Returns:
-            BenchmarkResult with metrics
-        """
-        timings = []
-        last_doc = None
+    def _collect_iterations(
+        self, url: str, mode: Mode, iterations: int
+    ) -> tuple[list[float], SafeDocument, int]:
+        timings: list[float] = []
+        last_doc: SafeDocument | None = None
         errors = 0
         last_error: str | None = None
 
-        # Run multiple iterations
         for _ in range(iterations):
             try:
-                start = time.perf_counter()
-                doc = self._ingest_func(url, mode=mode, model=self.model)
-                end = time.perf_counter()
-
-                timings.append((end - start) * 1000)  # Convert to ms
+                doc, duration_ms = self._run_iteration(url, mode)
+                timings.append(duration_ms)
                 last_doc = doc
-
-            except BENCHMARK_ERRORS as e:
+            except BENCHMARK_ERRORS as exc:
                 errors += 1
-                last_error = str(e)
-                _logger.debug("Benchmark iteration failed: %s", e)
+                last_error = str(exc)
+                _logger.debug("Benchmark iteration failed: %s", exc)
 
-        if not timings or not last_doc:
+        if not timings or last_doc is None:
             detail = f": {last_error}" if last_error else ""
             raise ValueError(f"All benchmark iterations failed for {url}{detail}")
 
-        # Calculate timing stats
+        return timings, last_doc, errors
+
+    def _build_result(
+        self,
+        url: str,
+        mode: Mode,
+        iterations: int,
+        timings: list[float],
+        last_doc: SafeDocument,
+        errors: int,
+        extractor_comparison: dict[str, dict] | None,
+    ) -> BenchmarkResult:
         avg_time = statistics.mean(timings)
         min_time = min(timings)
         max_time = max(timings)
         std_dev = statistics.stdev(timings) if len(timings) > 1 else 0.0
 
-        # Get token metrics from last successful run
         token_savings = last_doc.metadata.get("token_savings", {})
         original_tokens = token_savings.get("html_tokens", 0)
         cleaned_tokens = last_doc.token_estimate
-
-        # Ensure tokens_saved is always non-negative, whether from metadata or calculated
         tokens_saved = max(0, token_savings.get("saved_tokens", original_tokens - cleaned_tokens))
-        # Ensure reduction_percent is always non-negative, cap at 100%
-        raw_percent = token_savings.get(
-            "savings_percent",
-            (tokens_saved / original_tokens * 100) if original_tokens > 0 else 0.0,
+        fallback_percent = tokens_saved / original_tokens * 100 if original_tokens > 0 else 0.0
+        reduction_percent = max(
+            0.0, min(100.0, float(token_savings.get("savings_percent", fallback_percent)))
         )
-        reduction_percent = max(0.0, min(100.0, raw_percent))
 
-        # Size metrics
         original_size = last_doc.metadata.get("original_size_bytes", 0)
         cleaned_size = last_doc.metadata.get(
             "cleaned_size_bytes", len(last_doc.markdown.encode("utf-8"))
         )
-        size_reduction = max(
-            0.0,
-            (original_size - cleaned_size) / original_size * 100 if original_size > 0 else 0.0,
-        )
-        extractor_comparison = None
-        if compare_extractors_enabled:
-            if self._compare_fn is None:
-                _logger.warning("compare_extractors not available (no compare_fn provided)")
-            else:
-                try:
-                    fetcher = self._create_comparison_fetcher()
-                    try:
-                        fetch_result = fetcher.fetch_sync(url)
-                    finally:
-                        close = getattr(fetcher, "close", None)
-                        if callable(close):
-                            close()
-                    extractor_comparison = self._compare_fn(fetch_result.html, self.model)
-                except BENCHMARK_ERRORS as e:
-                    _logger.debug("Extractor comparison failed: %s", e)
+        size_reduction = self._safe_percent(original_size - cleaned_size, original_size)
 
         return BenchmarkResult(
             url=url,
@@ -194,6 +170,54 @@ class Benchmark:
             iterations=iterations,
             errors=errors,
             extractor_comparison=extractor_comparison,
+        )
+
+    def _compare_extractors(self, url: str) -> dict[str, dict] | None:
+        if self._compare_fn is None:
+            _logger.warning("compare_extractors not available (no compare_fn provided)")
+            return None
+        try:
+            fetcher = self._create_comparison_fetcher()
+            try:
+                fetch_result = fetcher.fetch_sync(url)
+            finally:
+                close = getattr(fetcher, "close", None)
+                if callable(close):
+                    close()
+            return self._compare_fn(fetch_result.html, self.model)
+        except BENCHMARK_ERRORS as exc:
+            _logger.debug("Extractor comparison failed: %s", exc)
+            return None
+
+    def run_single(
+        self,
+        url: str,
+        mode: Mode = "fast",
+        iterations: int = 3,
+        compare_extractors_enabled: bool = False,
+    ) -> BenchmarkResult:
+        """
+        Benchmark a single URL.
+
+        Args:
+            url: URL to benchmark
+            mode: Processing mode ('fast' or 'render')
+            iterations: Number of runs to average
+
+        Returns:
+            BenchmarkResult with metrics
+        """
+        timings, last_doc, errors = self._collect_iterations(url, mode, iterations)
+        extractor_comparison = self._compare_extractors(url) if compare_extractors_enabled else None
+
+        return self._build_result(
+            url,
+            mode,
+            iterations,
+            timings,
+            last_doc,
+            errors,
+            extractor_comparison,
         )
 
     def run_batch(
