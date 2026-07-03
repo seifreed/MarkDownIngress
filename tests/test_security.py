@@ -201,6 +201,26 @@ def test_copy_exception_for_transfer_preserves_policy_block_document():
     assert copied.document.metadata["policy_action"] == "block"
 
 
+def test_copy_exception_for_transfer_falls_back_when_exception_cannot_be_rebuilt():
+    class UncopyableError(Exception):
+        def __init__(self, message="broken"):
+            if message == "broken":
+                raise RuntimeError("cannot rebuild")
+            super().__init__(message)
+
+        def __deepcopy__(self, memo):
+            raise TypeError("cannot copy")
+
+    source = Exception.__new__(UncopyableError)
+    Exception.__init__(source, "broken")
+
+    copied = copy_exception_for_transfer(source)
+
+    assert isinstance(copied, RuntimeError)
+    assert copied.args == ("UncopyableError: broken",)
+    assert copied.__cause__ is source
+
+
 def test_injection_count_floor_escalates_repeated_low_weight_matches(monkeypatch):
     """Security fix (S6): stacking a single low-weight (0.3) pattern many
     times must escalate the score to at least the warn threshold, even when
