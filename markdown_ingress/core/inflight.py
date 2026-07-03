@@ -23,12 +23,21 @@ from markdown_ingress.core.inflight_entry import (
     notify_entries_inactive,
 )
 from markdown_ingress.core.inflight_identity import (
-    build_request_identity as build_request_identity,
+    build_request_identity as _build_request_identity,
 )
 from markdown_ingress.core.inflight_identity import (
-    make_request_key as make_request_key,
+    make_request_key as _make_request_key,
+)
+from markdown_ingress.core.metadata_keys import (
+    CACHE_HIT,
+    INFLIGHT_DEDUPLICATED,
+    INFLIGHT_SHARED_COUNT,
 )
 from markdown_ingress.models import SafeDocument
+
+# Backward-compatible public API exports.
+build_request_identity = _build_request_identity
+make_request_key = _make_request_key
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +295,7 @@ class InFlightRegistry:
             try:
                 entry.document = copy.deepcopy(document) if document is not None else None
                 if entry.document is not None:
-                    entry.document.metadata["inflight_shared_count"] = shared_count
+                    entry.document.metadata[INFLIGHT_SHARED_COUNT] = shared_count
                 if error is not None:
                     entry.error = copy_exception_for_transfer(error)
             except EXCEPTION_COPY_ERRORS as exc:
@@ -354,7 +363,7 @@ def release_inflight(
 def clone_cached_document(document: SafeDocument) -> SafeDocument:
     """Return an isolated cached document copy with cache metadata reset."""
     cached_copy = copy.deepcopy(document)
-    cached_copy.metadata["cache_hit"] = True
-    cached_copy.metadata["inflight_deduplicated"] = False
-    cached_copy.metadata["inflight_shared_count"] = 0
+    cached_copy.metadata[CACHE_HIT] = True
+    cached_copy.metadata[INFLIGHT_DEDUPLICATED] = False
+    cached_copy.metadata[INFLIGHT_SHARED_COUNT] = 0
     return cached_copy

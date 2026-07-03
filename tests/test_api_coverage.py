@@ -1173,6 +1173,44 @@ def test_orchestrator_render_mode_no_playwright(local_server):
         )
 
 
+def test_inflight_error_cleanup_keeps_control_flow_exceptions_visible():
+    """Control-flow exceptions release inflight slots before propagating."""
+
+    class TrackingOrchestrator:
+        def __init__(self):
+            self.released: list[tuple[str, str]] = []
+
+        def make_request_key(self, _url: str, *_args, **_kwargs) -> str:
+            return "job-control-flow"
+
+        def release_inflight(self, request_key: str, error: BaseException | None = None) -> None:
+            self.released.append((request_key, str(error) if error is not None else ""))
+
+    orchestrator = TrackingOrchestrator()
+
+    use_case = IngestUseCase(orchestrator=orchestrator)
+
+    def _mark_as_leader(_self, _url: str, context):
+        context.request_key = orchestrator.make_request_key("https://example.com", None, None)
+        context.leader_slot_acquired = True
+
+    def _raise_control_flow(_self, _url: str, _context):
+        raise SystemExit("abort before ingest")
+
+    with pytest.raises(SystemExit, match="abort before ingest"):
+        with (
+            patch.object(
+                IngestUseCase,
+                "_resolve_cache_or_inflight",
+                _mark_as_leader,
+            ),
+            patch.object(IngestUseCase, "_execute_uncached", _raise_control_flow),
+        ):
+            use_case.execute("https://example.com", IngestConfig(mode="fast"))
+
+    assert orchestrator.released == [("job-control-flow", "abort before ingest")]
+
+
 # ── IngestUseCase: auto mode – fast fails, Playwright fallback ────────────────
 
 

@@ -219,7 +219,7 @@ class IngestUseCase:
                 return early_return
             bump_ingest_stat("leader_executions")
             document = self._execute_uncached(url, context)
-        except Exception as exc:
+        except BaseException as exc:
             if context.request_key is not None and context.leader_slot_acquired:
                 with suppress(KeyError):
                     self.orchestrator.release_inflight(context.request_key, error=exc)
