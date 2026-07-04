@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
+from markdown_ingress.adapters.jobs.job_queue_states import JOB_STATUS_QUEUED
 from markdown_ingress.api_server_handler_errors import (
     log_runtime_error,
     raise_runtime_http_error,
@@ -165,7 +166,7 @@ async def handle_batch_submit(
 
     return BatchJobAccepted(
         job_id=job.job_id,
-        status="queued",
+        status=JOB_STATUS_QUEUED,
         created_at=job.created_at,
         poll_url=f"/api/v1/jobs/{job.job_id}",
         expires_in_seconds=job_ttl_seconds,
