@@ -36,7 +36,7 @@
 - `2b9bd7e`: Centraliza estados de job en `core/job_status.py`, reutilizados desde
   `adapters/jobs/job_queue_states.py` y `api_server_response_models.py`.
 - `2b9bd7e`: Centraliza contratos SQL de queue lifecycle y migración (`jobs`/`queue_leases`) en `job_queue_sql.py`.
-- `UNCOMMITTED`: Centraliza el SQL de transacción `BEGIN IMMEDIATE` y agrega prueba de contrato en
+- `7513357`: Centraliza el SQL de transacción `BEGIN IMMEDIATE` y agrega prueba de contrato en
   `tests/test_job_queue_sql_contracts.py` para evitar regresiones.
 
 ## Bloques para seguir hasta 10
