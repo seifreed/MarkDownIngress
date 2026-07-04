@@ -9,8 +9,8 @@ import threading
 
 from fastapi import Depends, FastAPI
 
+import markdown_ingress.api_server_queue_runtime_hooks as _job_queue_runtime
 from markdown_ingress.adapters.jobs.sqlite_job_queue import (
-    LEGACY_UNKNOWN_TTL_SECONDS,
     PersistentJobQueue,
 )
 from markdown_ingress.api import (
@@ -49,16 +49,8 @@ from markdown_ingress.api_server_handlers import (
     handle_security_report,
     handle_sync_batch,
 )
-from markdown_ingress.api_server_job_queue_states import (
-    RECOVERABLE_QUEUE_STATES,
-    REPAIRABLE_QUEUE_STATES,
-)
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
-from markdown_ingress.api_server_queue import (
-    _close_queue_for_repair,
-    _ExternalOwnerJobQueue,
-    _find_job_record_in_queues,
-)
+from markdown_ingress.api_server_queue import _find_job_record_in_queues
 from markdown_ingress.api_server_rate_limit import (
     MemoryRateLimitPolicy,
     MemoryRateLimitState,
@@ -74,8 +66,6 @@ from markdown_ingress.api_server_responses import (
 from markdown_ingress.api_server_routes import ApiRouteProviders, register_api_routes
 from markdown_ingress.api_server_support import validate_batch_request_ssrf_async
 from markdown_ingress.core.orchestrator import get_ingest_stats
-
-from . import api_server_job_queue_runtime as _job_queue_runtime
 
 _logger = logging.getLogger(__name__)
 
@@ -170,16 +160,18 @@ _JOB_QUEUE_WATCHDOG_THREAD: threading.Thread | None = None
 _JOB_QUEUE_WATCHDOG_STOP: threading.Event | None = None
 _JOB_QUEUE_HISTORY: list[PersistentJobQueue] = []
 
-_RECOVERABLE_QUEUE_STATES = RECOVERABLE_QUEUE_STATES
-_REPAIRABLE_QUEUE_STATES = REPAIRABLE_QUEUE_STATES
 _EXTERNAL_OWNER_REPAIR_RETRY_SECONDS = 5.0
 _BACKEND_ERROR_REPAIR_RETRY_SECONDS = 5.0
 
 # Compatibility exports for tests and monkeypatching hooks.
-_legacy_unknown_ttl_seconds = LEGACY_UNKNOWN_TTL_SECONDS
-_external_owner_job_queue_impl = _ExternalOwnerJobQueue
-_close_queue_for_repair_impl = _close_queue_for_repair
-
+LEGACY_UNKNOWN_TTL_SECONDS = _job_queue_runtime.LEGACY_UNKNOWN_TTL_SECONDS
+_RECOVERABLE_QUEUE_STATES = _job_queue_runtime._RECOVERABLE_QUEUE_STATES
+_REPAIRABLE_QUEUE_STATES = _job_queue_runtime._REPAIRABLE_QUEUE_STATES
+_legacy_unknown_ttl_seconds = _job_queue_runtime._legacy_unknown_ttl_seconds
+_external_owner_job_queue_impl = _job_queue_runtime._external_owner_job_queue_impl
+_close_queue_for_repair_impl = _job_queue_runtime._close_queue_for_repair_impl
+_close_queue_for_repair = _job_queue_runtime._close_queue_for_repair
+_ExternalOwnerJobQueue = _job_queue_runtime._ExternalOwnerJobQueue
 
 _build_job_queue = _job_queue_runtime._build_job_queue
 _remember_job_queue = _job_queue_runtime._remember_job_queue
@@ -212,7 +204,6 @@ _stop_reloaded_job_queue_control_threads = (
 _reset_job_queue_control_thread_refs = _job_queue_runtime._reset_job_queue_control_thread_refs
 _fallback_queue_for_init_build_error = _job_queue_runtime._fallback_queue_for_init_build_error
 _init_job_queue = _job_queue_runtime._init_job_queue
-
 JOB_QUEUE: PersistentJobQueue | None = None
 _job_queue_initialized = False
 _job_queue_init_failed_at: float | None = None

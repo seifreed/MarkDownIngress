@@ -1,0 +1,66 @@
+"""Compatibility hooks shared by runtime internals and test monkeypatches."""
+
+from __future__ import annotations
+
+import markdown_ingress.api_server_job_queue_runtime as _job_queue_runtime
+from markdown_ingress.adapters.jobs.sqlite_job_queue import LEGACY_UNKNOWN_TTL_SECONDS
+from markdown_ingress.api_server_job_queue_states import (
+    RECOVERABLE_QUEUE_STATES,
+    REPAIRABLE_QUEUE_STATES,
+)
+from markdown_ingress.api_server_queue import (
+    _close_queue_for_repair,
+    _ExternalOwnerJobQueue,
+)
+
+LEGACY_UNKNOWN_TTL_SECONDS = LEGACY_UNKNOWN_TTL_SECONDS
+_legacy_unknown_ttl_seconds = LEGACY_UNKNOWN_TTL_SECONDS
+
+_build_job_queue = _job_queue_runtime._build_job_queue
+_build_replacement_queue_or_current = _job_queue_runtime._build_replacement_queue_or_current
+_clear_job_queue_repair_state = _job_queue_runtime._clear_job_queue_repair_state
+_clear_job_queue_repair_state_locked = _job_queue_runtime._clear_job_queue_repair_state_locked
+_current_queue_after_repair_close_failure = (
+    _job_queue_runtime._current_queue_after_repair_close_failure
+)
+_current_queue_after_superseded_replacement = (
+    _job_queue_runtime._current_queue_after_superseded_replacement
+)
+_current_recoverable_job_queue = _job_queue_runtime._current_recoverable_job_queue
+_current_queue_if_expected_changed = _job_queue_runtime._current_queue_if_expected_changed
+_ensure_job_queue_initialized = _job_queue_runtime._ensure_job_queue_initialized
+_external_owner_backend_still_owned = _job_queue_runtime._external_owner_backend_still_owned
+_fallback_queue_for_init_build_error = _job_queue_runtime._fallback_queue_for_init_build_error
+_finish_repair_if_replaced_or_terminal = _job_queue_runtime._finish_repair_if_replaced_or_terminal
+_get_job_queue = _job_queue_runtime._get_job_queue
+_init_job_queue = _job_queue_runtime._init_job_queue
+_job_queue_init_backoff_active = _job_queue_runtime._job_queue_init_backoff_active
+_job_queue_repair_loop = _job_queue_runtime._job_queue_repair_loop
+_job_queue_watchdog_tick = _job_queue_runtime._job_queue_watchdog_tick
+_maybe_start_job_queue_repair = _job_queue_runtime._maybe_start_job_queue_repair
+_maybe_wait_for_external_owner_backend = _job_queue_runtime._maybe_wait_for_external_owner_backend
+_prune_job_queue_history = _job_queue_runtime._prune_job_queue_history
+_queue_if_expected_state = _job_queue_runtime._queue_if_expected_state
+_promote_external_owner_queue = _job_queue_runtime._promote_external_owner_queue
+_remember_job_queue = _job_queue_runtime._remember_job_queue
+_replacement_for_runtime_build_error = _job_queue_runtime._replacement_for_runtime_build_error
+_reset_job_queue_control_thread_refs = _job_queue_runtime._reset_job_queue_control_thread_refs
+_replace_job_queue_if_current = _job_queue_runtime._replace_job_queue_if_current
+_run_job_queue_repair_attempt = _job_queue_runtime._run_job_queue_repair_attempt
+_select_job_queue_for_use = _job_queue_runtime._select_job_queue_for_use
+_snapshot_job_queue_state = _job_queue_runtime._snapshot_job_queue_state
+_snapshot_job_subsystem = _job_queue_runtime._snapshot_job_subsystem
+_start_job_queue_repair_loop = _job_queue_runtime._start_job_queue_repair_loop
+_start_job_queue_watchdog = _job_queue_runtime._start_job_queue_watchdog
+_stop_reloaded_job_queue_control_threads = (
+    _job_queue_runtime._stop_reloaded_job_queue_control_threads
+)
+_wait_for_next_job_queue_repair_attempt = _job_queue_runtime._wait_for_next_job_queue_repair_attempt
+
+# Canonical compatibility names expected by api_server and tests.
+_external_owner_job_queue_impl = _ExternalOwnerJobQueue
+_close_queue_for_repair_impl = _close_queue_for_repair
+_close_queue_for_repair = _close_queue_for_repair_impl
+
+_RECOVERABLE_QUEUE_STATES = RECOVERABLE_QUEUE_STATES
+_REPAIRABLE_QUEUE_STATES = REPAIRABLE_QUEUE_STATES
