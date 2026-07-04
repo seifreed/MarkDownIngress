@@ -210,3 +210,39 @@ def test_package_facade_is_not_an_internal_import_target() -> None:
                     f"{path}: avoid importing from package facade; import from "
                     f"specific modules instead."
                 )
+
+
+def test_job_queue_state_constants_are_canonicalized() -> None:
+    from markdown_ingress.adapters.jobs.job_queue_states import (
+        ACTIVE_JOB_STATUSES,
+        JOB_STATUS_ACTIVE,
+        QUEUE_STATE_BACKEND_ERROR,
+        QUEUE_STATE_CLOSED,
+        QUEUE_STATE_CLOSING,
+        QUEUE_STATE_EXTERNAL_OWNER,
+        QUEUE_STATE_LEASE_LOST,
+        QUEUE_STATE_OPEN,
+    )
+    from markdown_ingress.api_server_job_queue_states import (
+        ACTIVE_JOB_STATUSES as API_ACTIVE_JOB_STATUSES,
+    )
+    from markdown_ingress.api_server_job_queue_states import (
+        JOB_STATUS_ACTIVE as API_JOB_STATUS_ACTIVE,
+    )
+    from markdown_ingress.api_server_job_queue_states import (
+        STATE_BACKEND_ERROR,
+        STATE_CLOSED,
+        STATE_CLOSING,
+        STATE_EXTERNAL_OWNER,
+        STATE_LEASE_LOST,
+        STATE_OPEN,
+    )
+
+    assert API_ACTIVE_JOB_STATUSES == ACTIVE_JOB_STATUSES
+    assert API_JOB_STATUS_ACTIVE == JOB_STATUS_ACTIVE
+    assert STATE_OPEN == QUEUE_STATE_OPEN
+    assert STATE_CLOSED == QUEUE_STATE_CLOSED
+    assert STATE_CLOSING == QUEUE_STATE_CLOSING
+    assert STATE_LEASE_LOST == QUEUE_STATE_LEASE_LOST
+    assert STATE_EXTERNAL_OWNER == QUEUE_STATE_EXTERNAL_OWNER
+    assert STATE_BACKEND_ERROR == QUEUE_STATE_BACKEND_ERROR
