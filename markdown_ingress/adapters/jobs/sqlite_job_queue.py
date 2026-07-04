@@ -41,12 +41,20 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_webhook_url as _validate_webhook_url,
 )
 from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_ADD_LEGACY_EXPIRES_AT_COLUMN,
+    SQL_JOBS_ADD_TTL_SECONDS_COLUMN,
     SQL_JOBS_INSERT,
+    SQL_JOBS_LEGACY_EXPIRES_AT_COLUMN_EXISTS,
+    SQL_JOBS_PRAGMA_TABLE_INFO,
     SQL_JOBS_SELECT_ACTIVE_COUNT,
     SQL_JOBS_SELECT_BY_ID,
+    SQL_JOBS_SELECT_LEGACY_TTL_ROWS,
+    SQL_JOBS_TABLE_SCHEMA,
+    SQL_JOBS_TTL_COLUMN_EXISTS,
     SQL_JOBS_UPDATE_LEGACY_TTL,
     SQL_LEASE_SELECT_OWNER,
     SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
+    SQL_LEASE_TABLE_SCHEMA,
 )
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_ACTIVE,
@@ -212,41 +220,16 @@ class PersistentJobQueue(
     def _init_db(self) -> None:
         with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    started_at TEXT,
-                    completed_at TEXT,
-                    result_json TEXT,
-                    error TEXT,
-                    webhook_url TEXT,
-                    ttl_seconds INTEGER,
-                    legacy_expires_at TEXT
-                )
-                """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS queue_leases (
-                    lease_name TEXT PRIMARY KEY,
-                    owner_id TEXT NOT NULL,
-                    heartbeat_at TEXT NOT NULL
-                )
-                """)
+            conn.execute(SQL_JOBS_TABLE_SCHEMA)
+            conn.execute(SQL_LEASE_TABLE_SCHEMA)
             job_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+                row["name"] for row in conn.execute(SQL_JOBS_PRAGMA_TABLE_INFO).fetchall()
             }
-            if "ttl_seconds" not in job_columns:
-                conn.execute("ALTER TABLE jobs ADD COLUMN ttl_seconds INTEGER")
-            if "legacy_expires_at" not in job_columns:
-                conn.execute("ALTER TABLE jobs ADD COLUMN legacy_expires_at TEXT")
-            legacy_rows = conn.execute("""
-                SELECT job_id, completed_at
-                FROM jobs
-                WHERE completed_at IS NOT NULL
-                  AND ttl_seconds IS NULL
-                  AND legacy_expires_at IS NULL
-                """).fetchall()
+            if SQL_JOBS_TTL_COLUMN_EXISTS not in job_columns:
+                conn.execute(SQL_JOBS_ADD_TTL_SECONDS_COLUMN)
+            if SQL_JOBS_LEGACY_EXPIRES_AT_COLUMN_EXISTS not in job_columns:
+                conn.execute(SQL_JOBS_ADD_LEGACY_EXPIRES_AT_COLUMN)
+            legacy_rows = conn.execute(SQL_JOBS_SELECT_LEGACY_TTL_ROWS).fetchall()
             if legacy_rows:
                 updates = []
                 for row in legacy_rows:

@@ -30,6 +30,13 @@ SQL_LEASE_DELETE_BY_NAME_AND_OWNER: Final[str] = (
 # ---------------------------------------------------------------------------
 
 SQL_JOBS_SELECT_BY_ID: Final[str] = "SELECT * FROM jobs WHERE job_id = ?"
+SQL_JOBS_SELECT_LEGACY_TTL_ROWS: Final[str] = """
+SELECT job_id, completed_at
+FROM jobs
+WHERE completed_at IS NOT NULL
+  AND ttl_seconds IS NULL
+  AND legacy_expires_at IS NULL
+"""
 SQL_JOBS_SELECT_STATUS_TTL_FIELDS: Final[str] = (
     "SELECT status, completed_at, ttl_seconds, legacy_expires_at FROM jobs"
 )
@@ -127,3 +134,36 @@ WHERE status NOT IN (?, ?)
   AND (completed_at IS NULL OR julianday(completed_at) IS NULL)
 """
 SQL_JOBS_DELETE_BY_ID: Final[str] = "DELETE FROM jobs WHERE job_id = ?"
+
+# ---------------------------------------------------------------------------
+# DDL / migration statements
+# ---------------------------------------------------------------------------
+
+SQL_JOBS_TABLE_SCHEMA: Final[str] = """
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    result_json TEXT,
+    error TEXT,
+    webhook_url TEXT,
+    ttl_seconds INTEGER,
+    legacy_expires_at TEXT
+)
+"""
+SQL_JOBS_TTL_COLUMN_EXISTS: Final[str] = "ttl_seconds"
+SQL_JOBS_LEGACY_EXPIRES_AT_COLUMN_EXISTS: Final[str] = "legacy_expires_at"
+SQL_LEASE_TABLE_SCHEMA: Final[str] = """
+CREATE TABLE IF NOT EXISTS queue_leases (
+    lease_name TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL
+)
+"""
+SQL_JOBS_ADD_TTL_SECONDS_COLUMN: Final[str] = "ALTER TABLE jobs ADD COLUMN ttl_seconds INTEGER"
+SQL_JOBS_ADD_LEGACY_EXPIRES_AT_COLUMN: Final[str] = (
+    "ALTER TABLE jobs ADD COLUMN legacy_expires_at TEXT"
+)
+SQL_JOBS_PRAGMA_TABLE_INFO: Final[str] = "PRAGMA table_info(jobs)"
