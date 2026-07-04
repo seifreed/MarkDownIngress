@@ -6,7 +6,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-JobStatus = Literal["queued", "running", "completed", "failed"]
+from markdown_ingress.core.job_status import (
+    JobStatus as CoreJobStatus,
+)
+
+JobStatus = CoreJobStatus
 
 
 class IngestResponse(BaseModel):

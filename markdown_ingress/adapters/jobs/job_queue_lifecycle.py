@@ -11,6 +11,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import STOP_WORKER, utcnow
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_UPDATE_ORPHANED,
+    SQL_LEASE_DELETE_BY_NAME_AND_OWNER,
+    SQL_LEASE_INSERT,
+    SQL_LEASE_SELECT_OWNER,
+    SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
+    SQL_LEASE_UPDATE_HEARTBEAT,
+    SQL_LEASE_UPSERT_OWNER,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_ACTIVE,
     JOB_STATUS_FAILED,
@@ -81,7 +90,7 @@ class JobQueueLifecycleMixin:
     def _still_owns_lease(self: Any) -> bool:
         with closing(self._connect()) as conn:
             row = conn.execute(
-                "SELECT owner_id FROM queue_leases WHERE lease_name = ?",
+                SQL_LEASE_SELECT_OWNER,
                 ("default",),
             ).fetchone()
         return row is not None and row["owner_id"] == self.instance_id
@@ -94,14 +103,13 @@ class JobQueueLifecycleMixin:
                 with closing(self._connect()) as conn:
                     conn.execute("BEGIN IMMEDIATE")
                     row = conn.execute(
-                        "SELECT owner_id, heartbeat_at FROM queue_leases WHERE lease_name = ?",
+                        SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
                         ("default",),
                     ).fetchone()
                     now_iso = utcnow()
                     if row is None:
                         conn.execute(
-                            "INSERT INTO queue_leases "
-                            "(lease_name, owner_id, heartbeat_at) VALUES (?, ?, ?)",
+                            SQL_LEASE_INSERT,
                             ("default", self.instance_id, now_iso),
                         )
                     else:
@@ -115,8 +123,7 @@ class JobQueueLifecycleMixin:
                             )
                         self._recovered_orphaned_jobs = owner_id == self.instance_id
                         conn.execute(
-                            "UPDATE queue_leases "
-                            "SET owner_id = ?, heartbeat_at = ? WHERE lease_name = ?",
+                            SQL_LEASE_UPSERT_OWNER,
                             (self.instance_id, now_iso, "default"),
                         )
                     conn.commit()
@@ -138,11 +145,7 @@ class JobQueueLifecycleMixin:
     def _refresh_lease(self: Any) -> None:
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
-                UPDATE queue_leases
-                SET heartbeat_at = ?
-                WHERE lease_name = ? AND owner_id = ?
-                """,
+                SQL_LEASE_UPDATE_HEARTBEAT,
                 (utcnow(), "default", self.instance_id),
             )
             conn.commit()
@@ -276,7 +279,7 @@ class JobQueueLifecycleMixin:
         with closing(self._connect()) as conn:
             if not self._lease_lost:
                 conn.execute(
-                    "DELETE FROM queue_leases WHERE lease_name = ? AND owner_id = ?",
+                    SQL_LEASE_DELETE_BY_NAME_AND_OWNER,
                     ("default", self.instance_id),
                 )
             conn.commit()
@@ -322,21 +325,7 @@ class JobQueueLifecycleMixin:
             return
         with closing(self._connect()) as conn:
             conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?,
-                    completed_at = ?,
-                    result_json = NULL,
-                    ttl_seconds = COALESCE(ttl_seconds, ?),
-                    error = CASE
-                        WHEN status = ?
-                            THEN 'Job interrupted by process restart; persisted task '
-                                 || 'payload is not recoverable'
-                        ELSE 'Job abandoned after process restart; persisted task '
-                             || 'payload is not recoverable'
-                    END
-                WHERE status IN (?, ?)
-                """,
+                SQL_JOBS_UPDATE_ORPHANED,
                 (
                     JOB_STATUS_FAILED,
                     utcnow(),

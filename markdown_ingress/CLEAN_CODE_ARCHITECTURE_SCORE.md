@@ -1,7 +1,7 @@
 # Clean Code / Clean Architecture Score (2026-07-04)
 
 ## Resultado global
-**7.9 / 10**
+**8.1 / 10**
 
 ## Diagnóstico por dimensión (evidencia)
 
@@ -11,14 +11,15 @@
   - `mypy markdown_ingress` ✅
   - `bandit -r markdown_ingress` ✅
 
-- **Arquitectura por capas: 8/10**
+- **Arquitectura por capas: 8.5/10**
   - Estructura de carpetas limpia (`api_server`, `adapters`, `application`, `core`).
   - Se redujo acoplamiento de estados de cola API creando `api_server_job_queue_states.py`.
-  - Algunas piezas de orquestación siguen concentradas en `api_server.py` (~723 líneas).
+  - Se centralizaron estados de job en `core/job_status.py` y se eliminaron literales duplicados en API.
+  - Algunas piezas de orquestación siguen concentradas en `api_server.py`.
 
-- **Clean Code local: 8/10**
+- **Clean Code local: 8.2/10**
   - Nombres y contratos consistentes; constantes centralizadas en módulos por dominio.
-  - Quedan duplicados relevantes de estados y literales SQL en capa de jobs.
+  - Persisten patrones SQL repetidos en `adapters/jobs`, aunque sin divergencias de estado.
 
 - **Prueba y seguridad: 7.5/10**
   - Gates de calidad pasan.
@@ -26,13 +27,16 @@
   - Cobertura no homogénea: módulos críticos bien cubiertos vs. otros con bajo ejercicio (no indicador de ruptura, sí de deuda).
 
 ## ¿Cumple clean code / clean architecture 10?
-**No.** No llegó a 10 aún; falta deuda acumulada en acoplamiento e histórico de módulos monolíticos y duplicación de estados en capa adapters.
+**No.** Falta deuda residual en orquestación de `api_server.py` y consolidación de SQL de ciclo de vida de queue.
 
 ## Cambios recientes (avance)
 - `a651bd0`: Centraliza `api_server_job_queue_states`.
 - `aee6322`: Usa esas constantes en todos los helpers API de cola relevantes (`external_owner`, `backend_error`, `open`).
+- `3f87a74`: Extrae hooks de runtime de cola en `api_server_queue_runtime_hooks.py`.
+- `UNCOMMITTED`: Centraliza estados de job en `core/job_status.py`, reutilizados desde
+  `adapters/jobs/job_queue_states.py` y `api_server_response_models.py`.
 
 ## Bloques para seguir hasta 10
-1. Extraer el resto de estado/constantes de cola en `adapters/jobs` y unificar estado/valores de dominio.
-2. Reducir responsabilidades de `api_server.py` separando orquestación/estado de rutas.
-3. Añadir pruebas de contrato de estado de cola en adapters/jobs para evitar regresiones de estado.
+1. Reducir responsabilidades de `api_server.py` separando orquestación/estado de rutas.
+2. Consolidar contratos SQL del ciclo de vida de queue (lease / cleanup) para minimizar duplicación.
+3. Añadir pruebas de contrato adicionales para estado de cola en `adapters/jobs`.

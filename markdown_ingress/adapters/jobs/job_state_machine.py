@@ -7,6 +7,14 @@ from contextlib import closing
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import JobAlreadyRunningError, utcnow
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_SELECT_STATUS,
+    SQL_JOBS_UPDATE_COMPLETE_PRESERVE_RESULT,
+    SQL_JOBS_UPDATE_FAIL_STANDARD,
+    SQL_JOBS_UPDATE_RUNNING,
+    SQL_JOBS_UPDATE_RUNNING_TO_COMPLETED,
+    SQL_JOBS_UPDATE_WEBHOOK_FAILED,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_COMPLETED,
     JOB_STATUS_FAILED,
@@ -21,7 +29,7 @@ class JobStateMachineMixin:
     @staticmethod
     def _job_status(conn: Any, job_id: str) -> str | None:
         row = conn.execute(
-            "SELECT status FROM jobs WHERE job_id = ?",
+            SQL_JOBS_SELECT_STATUS,
             (job_id,),
         ).fetchone()
         return None if row is None else row["status"]
@@ -36,7 +44,7 @@ class JobStateMachineMixin:
         """Transition job from 'queued' to 'running'."""
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                "UPDATE jobs SET status = ?, started_at = ? WHERE job_id = ? AND status = ?",
+                SQL_JOBS_UPDATE_RUNNING,
                 (JOB_STATUS_RUNNING, utcnow(), job_id, JOB_STATUS_QUEUED),
             )
             conn.commit()
@@ -54,11 +62,7 @@ class JobStateMachineMixin:
         """Transition job from 'running' to 'completed'."""
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = ?, error = NULL
-                WHERE job_id = ? AND status = ?
-                """,
+                SQL_JOBS_UPDATE_RUNNING_TO_COMPLETED,
                 (JOB_STATUS_COMPLETED, utcnow(), json.dumps(result), job_id, JOB_STATUS_RUNNING),
             )
             conn.commit()
@@ -74,11 +78,7 @@ class JobStateMachineMixin:
         """Transition job from 'queued' or 'running' to 'failed'."""
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = NULL, error = ?
-                WHERE job_id = ? AND status IN (?, ?)
-                """,
+                SQL_JOBS_UPDATE_FAIL_STANDARD,
                 (
                     JOB_STATUS_FAILED,
                     utcnow(),
@@ -104,11 +104,7 @@ class JobStateMachineMixin:
         """Transition completed job to failed while preserving result_json."""
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, error = ?
-                WHERE job_id = ? AND status = ?
-                """,
+                SQL_JOBS_UPDATE_WEBHOOK_FAILED,
                 (JOB_STATUS_FAILED, error, job_id, JOB_STATUS_COMPLETED),
             )
             conn.commit()
@@ -127,11 +123,7 @@ class JobStateMachineMixin:
         result_json = json.dumps(result) if result is not None else None
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, completed_at = ?, result_json = ?, error = ?
-                WHERE job_id = ? AND status = ?
-                """,
+                SQL_JOBS_UPDATE_COMPLETE_PRESERVE_RESULT,
                 (
                     JOB_STATUS_FAILED,
                     utcnow(),

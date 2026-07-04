@@ -17,6 +17,7 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
+from markdown_ingress.adapters.jobs.job_queue_sql import SQL_JOBS_SELECT_STATUS_TTL_FIELDS
 from markdown_ingress.adapters.jobs.sqlite_job_queue import check_external_owner_still_owns
 from markdown_ingress.api_server_env import _parse_iso_datetime_utc
 from markdown_ingress.api_server_external_owner_queue import (
@@ -116,10 +117,7 @@ def _queue_still_has_visible_jobs(queue) -> bool:
         return True
     try:
         with closing(connect()) as conn:
-            rows = conn.execute("""
-                SELECT status, completed_at, ttl_seconds, legacy_expires_at
-                FROM jobs
-                """).fetchall()
+            rows = conn.execute(SQL_JOBS_SELECT_STATUS_TTL_FIELDS).fetchall()
     except sqlite3.Error as exc:
         raise _TransientLegacyQueueReadError(str(exc)) from exc
     except (AttributeError, TypeError, KeyError) as exc:

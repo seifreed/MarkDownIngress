@@ -7,6 +7,10 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_SELECT_ACTIVE_COUNT,
+    SQL_JOBS_SELECT_BY_ID,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import JOB_STATUS_ACTIVE
 from markdown_ingress.adapters.jobs.sqlite_job_queue import JobRecord, PersistentJobQueue
 from markdown_ingress.api_server_job_queue_states import (
@@ -57,7 +61,7 @@ class _ExternalOwnerJobQueue:
         try:
             with closing(self._connect()) as conn:
                 row = conn.execute(
-                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN (?, ?)",
+                    SQL_JOBS_SELECT_ACTIVE_COUNT,
                     JOB_STATUS_ACTIVE,
                 ).fetchone()
         except sqlite3.Error as exc:
@@ -82,7 +86,7 @@ class _ExternalOwnerJobQueue:
     def get(self, job_id: str, *, cleanup_expired: bool = True) -> JobRecord | None:
         try:
             with closing(self._connect()) as conn:
-                row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+                row = conn.execute(SQL_JOBS_SELECT_BY_ID, (job_id,)).fetchone()
         except sqlite3.Error as exc:
             self._raise_backend_read_error(exc)
         if row is None:

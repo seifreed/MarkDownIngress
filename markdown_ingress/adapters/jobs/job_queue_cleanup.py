@@ -7,6 +7,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import LEGACY_UNKNOWN_TTL_SECONDS, utcnow
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_DELETE_BY_ID,
+    SQL_JOBS_DELETE_CORRUPT_LEGACY,
+    SQL_JOBS_DELETE_CORRUPT_TTL,
+    SQL_JOBS_DELETE_LEGACY_EXPIRED,
+    SQL_JOBS_DELETE_TTL_EXPIRED,
+    SQL_JOBS_SELECT_COMPLETED_WITHOUT_TTL,
+    SQL_JOBS_UPDATE_LEGACY_TTL_WITH_TTL,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_ACTIVE,
     JOB_STATUS_FINISHED,
@@ -18,57 +27,25 @@ class JobCleanupMixin:
 
     def _delete_ttl_expired_jobs(self, conn: Any, now_iso: str) -> None:
         conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN (?, ?)
-              AND ttl_seconds IS NOT NULL
-              AND (
-                  completed_at IS NULL
-                  OR julianday(completed_at) IS NULL
-                  OR julianday(?) > julianday(completed_at) + (ttl_seconds / 86400.0)
-              )
-            """,
+            SQL_JOBS_DELETE_TTL_EXPIRED,
             (*JOB_STATUS_ACTIVE, now_iso),
         )
 
     def _delete_corrupt_ttl_jobs(self, conn: Any) -> None:
         conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN (?, ?)
-              AND ttl_seconds IS NOT NULL
-              AND (
-                  typeof(ttl_seconds) != 'integer'
-                  OR ttl_seconds <= 0
-              )
-            """,
+            SQL_JOBS_DELETE_CORRUPT_TTL,
             (*JOB_STATUS_ACTIVE,),
         )
 
     def _delete_legacy_expired_jobs(self, conn: Any, now_iso: str) -> None:
         conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN (?, ?)
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NOT NULL
-              AND (
-                  julianday(legacy_expires_at) IS NULL
-                  OR julianday(?) > julianday(legacy_expires_at)
-              )
-            """,
+            SQL_JOBS_DELETE_LEGACY_EXPIRED,
             (*JOB_STATUS_ACTIVE, now_iso),
         )
 
     def _delete_corrupt_legacy_jobs(self, conn: Any) -> None:
         conn.execute(
-            """
-            DELETE FROM jobs
-            WHERE status NOT IN (?, ?)
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NULL
-              AND (completed_at IS NULL OR julianday(completed_at) IS NULL)
-            """,
+            SQL_JOBS_DELETE_CORRUPT_LEGACY,
             (*JOB_STATUS_ACTIVE,),
         )
 
@@ -76,14 +53,7 @@ class JobCleanupMixin:
         self: Any, conn: Any, now_dt: datetime
     ) -> tuple[list[tuple[int, str, str]], list[str]]:
         rows = conn.execute(
-            """
-            SELECT job_id, completed_at
-            FROM jobs
-            WHERE status IN (?, ?)
-              AND completed_at IS NOT NULL
-              AND ttl_seconds IS NULL
-              AND legacy_expires_at IS NULL
-            """,
+            SQL_JOBS_SELECT_COMPLETED_WITHOUT_TTL,
             JOB_STATUS_FINISHED,
         ).fetchall()
         updates: list[tuple[int, str, str]] = []
@@ -104,20 +74,9 @@ class JobCleanupMixin:
         self, conn: Any, updates: list[tuple[int, str, str]], expired_ids: list[str]
     ) -> None:
         if expired_ids:
-            conn.executemany(
-                "DELETE FROM jobs WHERE job_id = ?",
-                ((job_id,) for job_id in expired_ids),
-            )
+            conn.executemany(SQL_JOBS_DELETE_BY_ID, ((job_id,) for job_id in expired_ids))
         if updates:
-            conn.executemany(
-                """
-                UPDATE jobs
-                SET ttl_seconds = ?,
-                    legacy_expires_at = ?
-                WHERE job_id = ?
-                """,
-                updates,
-            )
+            conn.executemany(SQL_JOBS_UPDATE_LEGACY_TTL_WITH_TTL, updates)
 
     def cleanup_expired(self: Any) -> None:
         now_iso = utcnow()

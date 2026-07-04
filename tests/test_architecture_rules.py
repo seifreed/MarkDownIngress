@@ -246,3 +246,23 @@ def test_job_queue_state_constants_are_canonicalized() -> None:
     assert STATE_LEASE_LOST == QUEUE_STATE_LEASE_LOST
     assert STATE_EXTERNAL_OWNER == QUEUE_STATE_EXTERNAL_OWNER
     assert STATE_BACKEND_ERROR == QUEUE_STATE_BACKEND_ERROR
+
+
+def test_api_server_job_status_literals_are_canonicalized() -> None:
+    from typing import get_args
+
+    from markdown_ingress.api_server_response_models import JobStatus
+    from markdown_ingress.core.job_status import (
+        JOB_STATUS_COMPLETED,
+        JOB_STATUS_FAILED,
+        JOB_STATUS_QUEUED,
+        JOB_STATUS_RUNNING,
+    )
+
+    job_status_literals = set(get_args(JobStatus))
+    assert job_status_literals == {
+        JOB_STATUS_QUEUED,
+        JOB_STATUS_RUNNING,
+        JOB_STATUS_COMPLETED,
+        JOB_STATUS_FAILED,
+    }

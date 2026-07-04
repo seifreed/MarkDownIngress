@@ -40,6 +40,14 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
 from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_webhook_url as _validate_webhook_url,
 )
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_INSERT,
+    SQL_JOBS_SELECT_ACTIVE_COUNT,
+    SQL_JOBS_SELECT_BY_ID,
+    SQL_JOBS_UPDATE_LEGACY_TTL,
+    SQL_LEASE_SELECT_OWNER,
+    SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_ACTIVE,
     JOB_STATUS_QUEUED,
@@ -254,7 +262,7 @@ class PersistentJobQueue(
                             legacy_expires_at = None
                     updates.append((legacy_expires_at, row["job_id"]))
                 conn.executemany(
-                    "UPDATE jobs SET legacy_expires_at = ? WHERE job_id = ?",
+                    SQL_JOBS_UPDATE_LEGACY_TTL,
                     updates,
                 )
             conn.commit()
@@ -294,7 +302,7 @@ class PersistentJobQueue(
             with closing(self._connect()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 lease_row = conn.execute(
-                    "SELECT owner_id FROM queue_leases WHERE lease_name = ?",
+                    SQL_LEASE_SELECT_OWNER,
                     ("default",),
                 ).fetchone()
                 if lease_row is None or lease_row["owner_id"] != self.instance_id:
@@ -305,7 +313,7 @@ class PersistentJobQueue(
                         "or execute jobs"
                     )
                 row = conn.execute(
-                    "SELECT COUNT(*) AS count FROM jobs WHERE status IN (?, ?)",
+                    SQL_JOBS_SELECT_ACTIVE_COUNT,
                     JOB_STATUS_ACTIVE,
                 ).fetchone()
                 pending = int(row["count"]) if row else 0
@@ -313,10 +321,7 @@ class PersistentJobQueue(
                     conn.rollback()
                     raise RuntimeError("Job queue is full")
                 conn.execute(
-                    """
-                    INSERT INTO jobs (job_id, status, created_at, webhook_url, ttl_seconds)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
+                    SQL_JOBS_INSERT,
                     (
                         record.job_id,
                         record.status,
@@ -354,7 +359,7 @@ class PersistentJobQueue(
             self.cleanup_expired()
         with closing(self._connect()) as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS count FROM jobs WHERE status IN (?, ?)",
+                SQL_JOBS_SELECT_ACTIVE_COUNT,
                 JOB_STATUS_ACTIVE,
             ).fetchone()
         return int(row["count"]) if row else 0
@@ -397,7 +402,7 @@ class PersistentJobQueue(
         if cleanup_expired:
             self.cleanup_expired()
         with closing(self._connect()) as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            row = conn.execute(SQL_JOBS_SELECT_BY_ID, (job_id,)).fetchone()
         if row is None:
             return None
         return self._record_from_row(row)
@@ -420,7 +425,7 @@ def check_external_owner_still_owns(
         with closing(sqlite3.connect(db_uri, timeout=0.0, uri=True)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT owner_id, heartbeat_at FROM queue_leases WHERE lease_name = ?",
+                SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
                 ("default",),
             ).fetchone()
     except sqlite3.Error as exc:

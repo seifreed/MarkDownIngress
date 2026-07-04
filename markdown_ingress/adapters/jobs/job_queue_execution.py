@@ -19,6 +19,10 @@ from markdown_ingress.adapters.jobs.job_queue_models import (
     utcnow,
 )
 from markdown_ingress.adapters.jobs.job_queue_security import validate_positive_finite_float
+from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_JOBS_DELETE_BY_ID_AND_STATUS,
+    SQL_JOBS_UPDATE_FORCE_FAIL_WHILE_RUNNING,
+)
 from markdown_ingress.adapters.jobs.job_queue_states import (
     JOB_STATUS_COMPLETED,
     JOB_STATUS_FAILED,
@@ -88,9 +92,7 @@ class JobQueueExecutionMixin:
         try:
             with closing(self._connect()) as conn:
                 conn.execute(
-                    "UPDATE jobs "
-                    "SET status=?, error=?, "
-                    "completed_at=? WHERE job_id=? AND status=?",
+                    SQL_JOBS_UPDATE_FORCE_FAIL_WHILE_RUNNING,
                     (
                         JOB_STATUS_FAILED,
                         error,
@@ -112,11 +114,8 @@ class JobQueueExecutionMixin:
         """Remove a queued job that was persisted but never successfully accepted."""
         with closing(self._connect()) as conn:
             conn.execute(
-                "DELETE FROM jobs WHERE job_id = ? AND status = ?",
-                (
-                    job_id,
-                    JOB_STATUS_QUEUED,
-                ),
+                SQL_JOBS_DELETE_BY_ID_AND_STATUS,
+                (job_id, JOB_STATUS_QUEUED),
             )
             conn.commit()
 
