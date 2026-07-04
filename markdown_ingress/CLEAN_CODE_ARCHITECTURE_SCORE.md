@@ -1,7 +1,7 @@
 # Clean Code / Clean Architecture Score (2026-07-04)
 
 ## Resultado global
-**8.1 / 10**
+**8.3 / 10**
 
 ## Diagnóstico por dimensión (evidencia)
 
@@ -11,30 +11,33 @@
   - `mypy markdown_ingress` ✅
   - `bandit -r markdown_ingress` ✅
 
-- **Arquitectura por capas: 8.5/10**
+- **Arquitectura por capas: 8.6/10**
   - Estructura de carpetas limpia (`api_server`, `adapters`, `application`, `core`).
   - Se redujo acoplamiento de estados de cola API creando `api_server_job_queue_states.py`.
   - Se centralizaron estados de job en `core/job_status.py` y se eliminaron literales duplicados en API.
   - Algunas piezas de orquestación siguen concentradas en `api_server.py`.
 
-- **Clean Code local: 8.2/10**
+- **Clean Code local: 8.4/10**
   - Nombres y contratos consistentes; constantes centralizadas en módulos por dominio.
   - Persisten patrones SQL repetidos en `adapters/jobs`, aunque sin divergencias de estado.
 
-- **Prueba y seguridad: 7.5/10**
+- **Prueba y seguridad: 8.0/10**
   - Gates de calidad pasan.
   - `make test-fast` y pruebas de API pasan.
   - Cobertura no homogénea: módulos críticos bien cubiertos vs. otros con bajo ejercicio (no indicador de ruptura, sí de deuda).
 
 ## ¿Cumple clean code / clean architecture 10?
-**No.** Falta deuda residual en orquestación de `api_server.py` y consolidación de SQL de ciclo de vida de queue.
+**No.** Falta deuda residual en orquestación de `api_server.py` y separación de rutas/estado de queue runtime.
 
 ## Cambios recientes (avance)
 - `a651bd0`: Centraliza `api_server_job_queue_states`.
 - `aee6322`: Usa esas constantes en todos los helpers API de cola relevantes (`external_owner`, `backend_error`, `open`).
 - `3f87a74`: Extrae hooks de runtime de cola en `api_server_queue_runtime_hooks.py`.
-- `UNCOMMITTED`: Centraliza estados de job en `core/job_status.py`, reutilizados desde
+- `2b9bd7e`: Centraliza estados de job en `core/job_status.py`, reutilizados desde
   `adapters/jobs/job_queue_states.py` y `api_server_response_models.py`.
+- `2b9bd7e`: Centraliza contratos SQL de queue lifecycle y migración (`jobs`/`queue_leases`) en `job_queue_sql.py`.
+- `UNCOMMITTED`: Centraliza el SQL de transacción `BEGIN IMMEDIATE` y agrega prueba de contrato en
+  `tests/test_job_queue_sql_contracts.py` para evitar regresiones.
 
 ## Bloques para seguir hasta 10
 1. Reducir responsabilidades de `api_server.py` separando orquestación/estado de rutas.

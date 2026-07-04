@@ -12,6 +12,7 @@ from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import STOP_WORKER, utcnow
 from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_BEGIN_IMMEDIATE,
     SQL_JOBS_UPDATE_ORPHANED,
     SQL_LEASE_DELETE_BY_NAME_AND_OWNER,
     SQL_LEASE_INSERT,
@@ -101,7 +102,7 @@ class JobQueueLifecycleMixin:
         for attempt in range(self.lease_acquire_max_retries):
             try:
                 with closing(self._connect()) as conn:
-                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(SQL_BEGIN_IMMEDIATE)
                     row = conn.execute(
                         SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT,
                         ("default",),

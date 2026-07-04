@@ -41,6 +41,7 @@ from markdown_ingress.adapters.jobs.job_queue_security import (
     validate_webhook_url as _validate_webhook_url,
 )
 from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_BEGIN_IMMEDIATE,
     SQL_JOBS_ADD_LEGACY_EXPIRES_AT_COLUMN,
     SQL_JOBS_ADD_TTL_SECONDS_COLUMN,
     SQL_JOBS_INSERT,
@@ -219,7 +220,7 @@ class PersistentJobQueue(
 
     def _init_db(self) -> None:
         with closing(self._connect()) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(SQL_BEGIN_IMMEDIATE)
             conn.execute(SQL_JOBS_TABLE_SCHEMA)
             conn.execute(SQL_LEASE_TABLE_SCHEMA)
             job_columns = {
@@ -283,7 +284,7 @@ class PersistentJobQueue(
             self._assert_queue_usable(require_lease=True)
             self.cleanup_expired()
             with closing(self._connect()) as conn:
-                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(SQL_BEGIN_IMMEDIATE)
                 lease_row = conn.execute(
                     SQL_LEASE_SELECT_OWNER,
                     ("default",),

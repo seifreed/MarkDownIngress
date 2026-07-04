@@ -8,6 +8,7 @@ from typing import Any
 
 from markdown_ingress.adapters.jobs.job_queue_models import LEGACY_UNKNOWN_TTL_SECONDS, utcnow
 from markdown_ingress.adapters.jobs.job_queue_sql import (
+    SQL_BEGIN_IMMEDIATE,
     SQL_JOBS_DELETE_BY_ID,
     SQL_JOBS_DELETE_CORRUPT_LEGACY,
     SQL_JOBS_DELETE_CORRUPT_TTL,
@@ -82,7 +83,7 @@ class JobCleanupMixin:
         now_iso = utcnow()
         now_dt = datetime.now(UTC)
         with closing(self._connect()) as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(SQL_BEGIN_IMMEDIATE)
             self._delete_corrupt_ttl_jobs(conn)
             self._delete_ttl_expired_jobs(conn, now_iso)
             self._delete_legacy_expired_jobs(conn, now_iso)

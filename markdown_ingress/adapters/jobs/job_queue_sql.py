@@ -8,6 +8,8 @@ from typing import Final
 # Lease-table statements
 # ---------------------------------------------------------------------------
 
+SQL_BEGIN_IMMEDIATE: Final[str] = "BEGIN IMMEDIATE"
+
 SQL_LEASE_SELECT_OWNER: Final[str] = "SELECT owner_id FROM queue_leases WHERE lease_name = ?"
 SQL_LEASE_SELECT_OWNER_AND_HEARTBEAT: Final[str] = (
     "SELECT owner_id, heartbeat_at FROM queue_leases WHERE lease_name = ?"
