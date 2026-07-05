@@ -13,7 +13,7 @@ include = ["markdown_ingress*"]
 
 [project]
 name = "markdown-ingress"
-version = "1.0.0"
+version = "2.0.0"
 description = "Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
