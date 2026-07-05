@@ -144,3 +144,9 @@ python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual typing
+
+# Optional extra: the MCP server (mcp_server.py) depends on the untyped, optional
+# `mcp` package, which is not installed in the default dev/CI environment.
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true

@@ -54,9 +54,6 @@ def is_dependency_available(module_name: str) -> bool:
     )
 
 
-setattr(is_dependency_available, "cache_clear", _is_dependency_available_cached.cache_clear)
-
-
 def load_optional_module(
     module_name: str,
     *,

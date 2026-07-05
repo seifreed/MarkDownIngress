@@ -17,11 +17,16 @@ from __future__ import annotations
 
 from typing import Any
 
-_FastMCP: Any
+# Optional dependency: the MCP server only works when the `mcp` extra is installed.
+# Annotate as Any and assign in `else` so the None fallback type-checks whether or not
+# `mcp` is importable (see the mcp.* override in [tool.mypy]).
+_FastMCP: Any = None
 try:
-    from mcp.server.fastmcp import FastMCP as _FastMCP
+    from mcp.server.fastmcp import FastMCP
 except ModuleNotFoundError:  # pragma: no cover
-    _FastMCP = None
+    pass
+else:
+    _FastMCP = FastMCP
 
 
 def _missing_mcp_message() -> str:
