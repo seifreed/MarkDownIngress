@@ -19,7 +19,6 @@ from markdown_ingress.api_server_job_history import (
     prune_job_queue_history,
     remember_job_queue,
 )
-from markdown_ingress.api_server_job_queue_build import build_persistent_job_queue
 from markdown_ingress.api_server_job_queue_init import (
     close_previous_job_queue_for_init,
     fallback_queue_for_init_build_error,
@@ -90,8 +89,7 @@ def _build_job_queue() -> PersistentJobQueue:
         type[PersistentJobQueue],
         getattr(context, "PersistentJobQueue", PersistentJobQueue),
     )
-    return build_persistent_job_queue(
-        queue_class=queue_class,
+    return queue_class(
         db_path=context.JOB_DB_PATH,
         worker_count=context.JOB_WORKERS,
         ttl_seconds=context.JOB_TTL_SECONDS,
