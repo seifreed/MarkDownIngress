@@ -1,7 +1,7 @@
 # Clean Code / Clean Architecture Score (2026-07-04)
 
 ## Resultado global
-**8.3 / 10**
+**8.4 / 10**
 
 ## Diagnóstico por dimensión (evidencia)
 
@@ -14,6 +14,8 @@
 - **Arquitectura por capas: 8.6/10**
   - Estructura de carpetas limpia (`api_server`, `adapters`, `application`, `core`).
   - Se redujo acoplamiento de estados de cola API creando `api_server_job_queue_states.py`.
+  - Se externalizó la orquestación del rate limit (`api_server_rate_limit_runtime.py`), dejando
+    a `api_server.py` como punto de composición.
   - Se centralizaron estados de job en `core/job_status.py` y se eliminaron literales duplicados en API.
   - Algunas piezas de orquestación siguen concentradas en `api_server.py`.
 
@@ -38,6 +40,8 @@
 - `2b9bd7e`: Centraliza contratos SQL de queue lifecycle y migración (`jobs`/`queue_leases`) en `job_queue_sql.py`.
 - `7513357`: Centraliza el SQL de transacción `BEGIN IMMEDIATE` y agrega prueba de contrato en
   `tests/test_job_queue_sql_contracts.py` para evitar regresiones.
+- `fafde7c`: Extrae la coordinación de orquestación del rate limiter en runtime helper de servidor
+  (`api_server_rate_limit_runtime.py`) y mantiene compatibilidad de `api_server` para monkeypatches.
 
 ## Bloques para seguir hasta 10
 1. Reducir responsabilidades de `api_server.py` separando orquestación/estado de rutas.

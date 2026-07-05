@@ -51,12 +51,8 @@ from markdown_ingress.api_server_handlers import (
 )
 from markdown_ingress.api_server_legacy_routes import LegacyRouteHandlers, register_legacy_routes
 from markdown_ingress.api_server_queue import _find_job_record_in_queues
-from markdown_ingress.api_server_rate_limit import (
-    MemoryRateLimitPolicy,
-    MemoryRateLimitState,
-    RequestWindow,
-    check_memory_rate_limit,
-)
+from markdown_ingress.api_server_rate_limit import RequestWindow
+from markdown_ingress.api_server_rate_limit_runtime import _check_rate_limit_runtime
 from markdown_ingress.api_server_responses import (
     build_detailed_health_payload,
     build_health_payload,
@@ -112,20 +108,17 @@ def _check_rate_limit(client_id: str) -> tuple[bool, int]:
         return _check_rate_limit_redis(client_id)
 
     global _rate_limit_cleanup_counter
-    rate_limit_state = MemoryRateLimitState(
+    allowed, retry_after, _rate_limit_cleanup_counter = _check_rate_limit_runtime(
+        client_id=client_id,
         request_counts=_request_counts,
         lock=_rate_limit_lock,
         cleanup_counter=_rate_limit_cleanup_counter,
-    )
-    allowed, retry_after, _rate_limit_cleanup_counter = check_memory_rate_limit(
-        client_id,
-        rate_limit_state,
-        MemoryRateLimitPolicy(
-            cleanup_threshold=_RATE_LIMIT_CLEANUP_THRESHOLD,
-            max_clients=_RATE_LIMIT_MAX_CLIENTS,
-            rate_limit_requests=RATE_LIMIT_REQUESTS,
-            rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
-        ),
+        cleanup_threshold=_RATE_LIMIT_CLEANUP_THRESHOLD,
+        max_clients=_RATE_LIMIT_MAX_CLIENTS,
+        rate_limit_requests=RATE_LIMIT_REQUESTS,
+        rate_limit_window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+        backend=_RATE_LIMIT_BACKEND,
+        check_rate_limit_redis=_check_rate_limit_redis,
     )
     return allowed, retry_after
 
