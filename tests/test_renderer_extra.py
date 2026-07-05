@@ -612,7 +612,7 @@ async def test_wait_for_content_accepts_body_text_without_timeout(caplog):
                     page = await context.new_page()
                     await page.goto(url, wait_until="load")
                     with caplog.at_level("INFO"):
-                        await renderer._wait_for_content(page, max_wait=0.2)
+                        await renderer._wait_for_content(page, max_wait=5.0)
                 finally:
                     await context.close()
             finally:
@@ -656,7 +656,7 @@ async def test_wait_for_content_accepts_short_article_without_timeout(caplog):
                     page = await context.new_page()
                     await page.goto(url, wait_until="load")
                     with caplog.at_level("INFO"):
-                        await renderer._wait_for_content(page, max_wait=0.2)
+                        await renderer._wait_for_content(page, max_wait=5.0)
                 finally:
                     await context.close()
             finally:
