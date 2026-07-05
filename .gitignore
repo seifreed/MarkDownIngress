@@ -146,3 +146,9 @@ dmypy.json
 # Local MCP client config with machine-specific absolute paths
 # (copy .mcp.json.example -> .mcp.json and fill in your paths)
 .mcp.json
+
+# CodeGraph index (local code-intelligence cache)
+.codegraph/
+
+# vulture dead-code whitelist (local tool config)
+vulture_whitelist.py

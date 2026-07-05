@@ -89,3 +89,8 @@ playground/
 secrets.py
 secrets.json
 .secrets/
+
+# CodeGraph index and local tool config (never needed in the image)
+.codegraph/
+vulture_whitelist.py
+BUG_SUMMARY.md
