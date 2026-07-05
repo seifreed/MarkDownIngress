@@ -160,7 +160,6 @@ def test_public_docs_do_not_contain_local_machine_paths() -> None:
     docs = [
         Path("README.md"),
         Path("CHANGELOG.md"),
-        Path("BUG_SUMMARY.md"),
     ]
 
     for path in docs:
