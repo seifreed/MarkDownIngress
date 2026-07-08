@@ -20,7 +20,7 @@ jobs:
           - windows-11-arm     # Windows arm64
           - macos-15-intel     # macOS x64 (Intel)
           - macos-latest       # macOS arm64 (Apple Silicon)
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     
     steps:
     - name: Checkout code

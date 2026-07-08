@@ -405,7 +405,7 @@ markdown-ingress ingest https://example.com --json
 
 ## Requirements
 
-- Python 3.13 or 3.14
+- Python 3.12, 3.13, or 3.14
 - Core: `httpx`, `selectolax`, `readability-lxml`, `markdownify`, `tiktoken`
 - Optional: `playwright` (render), `nova-hunting` (security), `fastapi` (api)
 - See [pyproject.toml](pyproject.toml) for the complete dependency list

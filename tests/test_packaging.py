@@ -272,7 +272,7 @@ def test_dataset_workflows_do_not_use_ls_to_locate_latest_run() -> None:
         assert "ls -1dt" not in workflow
 
 
-def test_project_declares_only_python_313_and_314_support() -> None:
+def test_project_declares_python_312_through_314_support() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     publish_workflow = Path(".github/workflows/publish.yml").read_text(encoding="utf-8")
@@ -284,28 +284,29 @@ def test_project_declares_only_python_313_and_314_support() -> None:
     project = pyproject["project"]
     optional_dependencies = project["optional-dependencies"]
 
-    assert project["requires-python"] == ">=3.13,<3.15"
+    assert project["requires-python"] == ">=3.12,<3.15"
+    assert "Programming Language :: Python :: 3.12" in project["classifiers"]
     assert "Programming Language :: Python :: 3.13" in project["classifiers"]
     assert "Programming Language :: Python :: 3.14" in project["classifiers"]
     assert "Programming Language :: Python :: 3.11" not in project["classifiers"]
-    assert "Programming Language :: Python :: 3.12" not in project["classifiers"]
-    assert pyproject["tool"]["ruff"]["target-version"] == "py313"
-    assert pyproject["tool"]["black"]["target-version"] == ["py313", "py314"]
-    assert pyproject["tool"]["mypy"]["python_version"] == "3.13"
+    assert pyproject["tool"]["ruff"]["target-version"] == "py312"
+    assert pyproject["tool"]["black"]["target-version"] == ["py312", "py313", "py314"]
+    assert pyproject["tool"]["mypy"]["python_version"] == "3.12"
     for extra_name in ("dev", "all"):
         assert "ruff>=0.15.14" in optional_dependencies[extra_name]
         assert "black>=26.5.1" in optional_dependencies[extra_name]
         assert "mypy>=2.1.0" in optional_dependencies[extra_name]
-    assert 'python-version: ["3.13", "3.14"]' in ci_workflow
+    assert 'python-version: ["3.12", "3.13", "3.14"]' in ci_workflow
     assert "matrix.python-version == '3.13'" in ci_workflow
     assert "matrix.python-version == '3.11'" not in ci_workflow
-    assert "matrix.python-version == '3.12'" not in ci_workflow
+    # Docker image and publish/baseline/campaign defaults stay on 3.13 (the
+    # deployment runtime), independent of the library's 3.12 support floor.
     assert "python-version: '3.13'" in publish_workflow
     assert 'default: "3.13"' in baseline_workflow
     assert 'default: "3.13"' in campaign_workflow
     assert "python:3.13-slim" in dockerfile
     assert "python3.13/site-packages" in dockerfile
-    assert "Python 3.13 or 3.14" in readme
+    assert "Python 3.12, 3.13, or 3.14" in readme
 
 
 def test_github_workflows_use_node24_ready_action_majors() -> None:

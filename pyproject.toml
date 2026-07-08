@@ -128,7 +128,7 @@ exclude_lines = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 # vulture_whitelist.py is a vulture allowlist, not importable source: it lists
 # bare symbol names that are unresolved by design, so ruff's F821 is spurious.
 extend-exclude = ["vulture_whitelist.py"]
@@ -138,7 +138,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.black]
 line-length = 100
-target-version = ['py313', 'py314']
+target-version = ['py312', 'py313', 'py314']
 
 [tool.mypy]
 python_version = "3.12"
