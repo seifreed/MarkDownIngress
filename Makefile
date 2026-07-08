@@ -8,6 +8,12 @@ URL_CAMPAIGN_RESUME_DIR ?=
 
 .PHONY: test test-fast test-baseline test-campaign test-campaign-resume
 
+start:
+	docker compose up --build -d
+
+stop:
+	docker compose down
+
 test:
 	$(PYTEST) -q
 
