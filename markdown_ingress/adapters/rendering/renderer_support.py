@@ -325,6 +325,12 @@ async def execute_render_session(
             raise_for_render_status(response, url)
             if renderer.stealth and STEALTH_INJECT_AVAILABLE:
                 await inject_stealth_post_nav(page)
+            wait_for_navigation_settle = getattr(renderer, "_wait_for_navigation_settle", None)
+            if callable(wait_for_navigation_settle):
+                await wait_for_navigation_settle(
+                    page,
+                    timeout_ms=min(2500, max(500, timeout_ms // 4)),
+                )
             max_wait = min(8 if smart_wait else 6, max(2, timeout_ms // 1000))
             await renderer._wait_for_content(page, max_wait=max_wait)
             html = await renderer._extract_page_content(page)

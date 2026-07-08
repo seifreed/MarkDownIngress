@@ -115,6 +115,41 @@ async def navigate_page(page: Any, url: str, timeout_ms: int, *, wait_until: str
     return response
 
 
+async def wait_for_navigation_settle(
+    page: Any,
+    *,
+    timeout_ms: int | float = 2500,
+    stable_ms: int | float = 350,
+) -> None:
+    """Give JavaScript redirects a short window to finish before DOM extraction."""
+    deadline = time.monotonic() + max(0.0, float(timeout_ms)) / 1000.0
+    stable_for = max(0.0, float(stable_ms)) / 1000.0
+    last_url = getattr(page, "url", "")
+    stable_since = time.monotonic()
+
+    while time.monotonic() < deadline:
+        remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+        with suppress(PlaywrightTimeoutError, PlaywrightError):
+            await page.wait_for_load_state("domcontentloaded", timeout=min(250, remaining_ms))
+
+        current_url = getattr(page, "url", "")
+        if current_url != last_url:
+            last_url = current_url
+            stable_since = time.monotonic()
+            continue
+
+        ready_state = None
+        with suppress(PlaywrightError, RuntimeError):
+            ready_state = await page.evaluate("() => document.readyState")
+        if (
+            ready_state in {"interactive", "complete"}
+            and time.monotonic() - stable_since >= stable_for
+        ):
+            return
+
+        await asyncio.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+
+
 async def extract_page_content(page: Any) -> str:
     for attempt in range(3):
         try:

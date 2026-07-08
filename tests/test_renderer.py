@@ -33,6 +33,21 @@ def local_test_server():
                     """)
                 return
 
+            if self.path == "/js-redirect":
+                self._send_html("""
+                    <html><body>
+                    <a href="/rendered">fallback</a>
+                    <script>setTimeout(() => { window.location.href = "/rendered"; }, 50);</script>
+                    </body></html>
+                    """)
+                return
+
+            if self.path == "/rendered":
+                self._send_html(
+                    "<html><body><main><h1>Redirected</h1><p>done</p></main></body></html>"
+                )
+                return
+
             if self.path == "/delay":
                 time.sleep(3.0)
                 self._send_html("<html><body><p>slow</p></body></html>")
@@ -142,3 +157,13 @@ async def test_render_mode_javascript_execution(local_test_server):
     assert len(result.html) > 100
     assert result.status_code == 200
     assert "js-executed" in result.html
+
+
+@pytest.mark.asyncio
+async def test_render_mode_waits_for_javascript_redirect(local_test_server):
+    """Test that JavaScript redirects settle before content extraction."""
+    renderer = Renderer(timeout=10.0)
+    result = await renderer.render(f"{local_test_server}/js-redirect")
+
+    assert result.final_url.endswith("/rendered")
+    assert "Redirected" in result.html

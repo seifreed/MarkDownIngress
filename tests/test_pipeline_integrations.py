@@ -1525,6 +1525,80 @@ def test_auto_mode_validates_render_url_with_dns_check(monkeypatch):
     assert validation_calls == [("https://rebind.example/private", False, True)]
 
 
+def test_fast_mode_promotes_client_redirect_shell_to_render(monkeypatch):
+    monkeypatch.setattr(
+        "markdown_ingress.application.fetch_pipeline.validate_http_url_no_ssrf_with_dns_check",
+        lambda url, *, allow_local: url,
+    )
+    monkeypatch.setattr(
+        "markdown_ingress.application.fetch_pipeline.dns_pin_for_validated_http_url",
+        lambda _logical_url, _validated_url: None,
+    )
+
+    use_case = IngestUseCase(playwright_available=True)
+    calls = {"renderer": 0}
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><a href='/next'>Continue</a>"
+                "<script>window.location.href='/next'</script></body></html>",
+            )
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            calls["renderer"] += 1
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Rendered</h1><p>"
+                "The browser followed the client redirect.</p></article></body></html>",
+            )
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    doc = use_case.execute(
+        "https://unit.test/client-redirect",
+        IngestConfig(mode="fast", timeout=3.0, extract_metadata=False, extract_links=False),
+    )
+
+    assert calls["renderer"] == 1
+    assert doc.metadata["requested_mode"] == "fast"
+    assert doc.metadata["mode"] == "render"
+    assert doc.metadata["fast_mode_render_fallback"] is True
+    assert doc.metadata["fast_mode_render_fallback_reason"] == "client_redirect"
+    assert "# Rendered" in doc.markdown
+
+
+def test_fast_mode_keeps_regular_fast_document_without_render():
+    use_case = IngestUseCase(playwright_available=True)
+
+    class FakeFetcher:
+        def fetch_sync(self, url: str):
+            return _make_fetch_result(
+                url,
+                "<html><body><article><h1>Fast</h1>"
+                "<p>Plain server-rendered content.</p></article></body></html>",
+            )
+
+    class FakeRenderer:
+        def render_sync(self, url: str):
+            raise AssertionError("regular fast content should not launch Playwright")
+
+    use_case.fetcher_factory = lambda config: FakeFetcher()
+    use_case.renderer_factory = lambda config: FakeRenderer()
+
+    doc = use_case.execute(
+        "https://unit.test/plain",
+        IngestConfig(mode="fast", timeout=3.0, extract_metadata=False, extract_links=False),
+    )
+
+    assert doc.metadata["mode"] == "fast"
+    assert "fast_mode_render_fallback" not in doc.metadata
+    assert "# Fast" in doc.markdown
+
+
 def test_render_mode_degrades_to_fast_fetch_on_retryable_renderer_failure():
     use_case = IngestUseCase(playwright_available=True)
 
