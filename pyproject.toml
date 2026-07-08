@@ -16,7 +16,7 @@ name = "markdown-ingress"
 version = "2.0.0"
 description = "Deterministic, Injection-Resistant Web → Markdown Engine for LLM Pipelines"
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.12,<3.15"
 license = "MIT"
 authors = [
     {name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com"}
@@ -28,6 +28,7 @@ keywords = ["markdown", "web-scraping", "llm", "security", "injection-detection"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Text Processing :: Markup :: Markdown",
@@ -140,7 +141,7 @@ line-length = 100
 target-version = ['py313', 'py314']
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # gradual typing
