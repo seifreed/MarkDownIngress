@@ -10,6 +10,7 @@ from markdown_ingress.adapters.rendering.renderer_navigation import (
     extract_page_content,
     navigate_page,
     wait_for_content,
+    wait_for_navigation_settle,
 )
 from markdown_ingress.adapters.rendering.renderer_screenshots import (
     capture_screenshot,
@@ -344,6 +345,9 @@ class Renderer(SharedRendererMixin, IRenderer):
 
     async def _wait_for_content(self, page, max_wait: int = 30):
         await wait_for_content(page, max_wait=max_wait, selectors=self.CONTENT_SELECTORS)
+
+    async def _wait_for_navigation_settle(self, page, timeout_ms: int = 2500):
+        await wait_for_navigation_settle(page, timeout_ms=timeout_ms)
 
     async def _navigate_page(self, page, url: str, timeout_ms: int):
         return await navigate_page(page, url, timeout_ms, wait_until=self.wait_until)

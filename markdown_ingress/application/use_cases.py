@@ -32,6 +32,7 @@ from markdown_ingress.application.cache_resolution import (
 )
 from markdown_ingress.application.fetch_pipeline import (
     _AutoModeSelector,
+    _FastModeRenderFallbackSelector,
     _FetchPipeline,
 )
 from markdown_ingress.application.fetcher_manager import (
@@ -310,6 +311,16 @@ class IngestUseCase:
         run_mode = context.resolved_config.mode
         if run_mode == "auto":
             document = _AutoModeSelector(pipeline, self.playwright_available).execute(
+                url,
+                context.resolved_config,
+                context.matched_domain_policy,
+                budget,
+            )
+        elif run_mode == "fast":
+            document = _FastModeRenderFallbackSelector(
+                pipeline,
+                self.playwright_available,
+            ).execute(
                 url,
                 context.resolved_config,
                 context.matched_domain_policy,

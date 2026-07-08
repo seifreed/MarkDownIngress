@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from html import unescape
 from urllib.parse import urlsplit
 
 import httpx
@@ -76,6 +78,36 @@ _RENDER_FALLBACK_BLOCK_TOKENS = (
     "request url has an unsupported protocol",
     "unsupported content type",
 )
+_SCRIPT_BLOCK_RE = re.compile(r"(?is)<\s*(script|style|template|svg)\b[^>]*>.*?</\s*\1\s*>")
+_COMMENT_RE = re.compile(r"(?is)<!--.*?-->")
+_TAG_RE = re.compile(r"(?is)<[^>]+>")
+_SCRIPT_OPEN_RE = re.compile(r"(?is)<\s*script\b")
+_SCRIPT_CONTENT_RE = re.compile(r"(?is)<\s*script\b[^>]*>(.*?)</\s*script\s*>")
+_SCRIPT_SRC_OR_MODULE_RE = re.compile(
+    r"(?is)<\s*script\b[^>]*(?:\bsrc\s*=|\btype\s*=\s*['\"]module)"
+)
+_CLIENT_REDIRECT_RE = re.compile(
+    r"(?is)\b(?:window\.|document\.|top\.)?location(?:\.href)?\s*="
+    r"|\blocation\.(?:assign|replace)\s*\("
+    r"|\bwindow\.open\s*\("
+)
+_META_REFRESH_RE = re.compile(r"(?is)<\s*meta\b[^>]*http-equiv\s*=\s*['\"]?\s*refresh\b[^>]*>")
+_APP_MOUNT_RE = re.compile(
+    r"(?is)<\s*(?:div|main|section)\b[^>]*(?:id|class)\s*=\s*['\"][^'\"]*"
+    r"(?:app|root|__next|__nuxt|gatsby|svelte|vue)[^'\"]*['\"][^>]*>\s*</"
+)
+_JAVASCRIPT_REQUIRED_TOKENS = (
+    "enable javascript",
+    "requires javascript",
+    "javascript is required",
+    "please turn on javascript",
+    "please enable js",
+)
+_PLACEHOLDER_TOKENS = (
+    "loading",
+    "redirecting",
+    "please wait",
+)
 
 
 def _looks_like_non_html_resource(url: str) -> bool:
@@ -142,3 +174,49 @@ def _is_render_timeout_failure(exc: Exception) -> bool:
 def _should_reuse_fast_result_after_render_failure(exc: Exception) -> bool:
     """Allow auto mode to keep its already fetched fast document after render timeout."""
     return _should_attempt_fast_degraded_fallback(exc) or _is_render_timeout_failure(exc)
+
+
+def _visible_html_text(html: str) -> str:
+    """Return coarse visible text, excluding script/style/template payloads."""
+    without_blocks = _SCRIPT_BLOCK_RE.sub(" ", html)
+    without_comments = _COMMENT_RE.sub(" ", without_blocks)
+    text = _TAG_RE.sub(" ", without_comments)
+    return " ".join(unescape(text).split())
+
+
+def _fast_html_render_hint(html: str) -> str | None:
+    """Return why an HTTP fetch looks like it needs browser rendering, if it does."""
+    if not html or not html.strip():
+        return None
+
+    sample = html[:1_000_000]
+    lowered = sample.lower()
+    if _META_REFRESH_RE.search(sample):
+        return "meta_refresh"
+    if _CLIENT_REDIRECT_RE.search(sample):
+        return "client_redirect"
+    if any(token in lowered for token in _JAVASCRIPT_REQUIRED_TOKENS):
+        return "javascript_required"
+
+    visible_text = _visible_html_text(sample)
+    script_count = len(_SCRIPT_OPEN_RE.findall(sample))
+    if script_count <= 0:
+        return None
+    if not visible_text.strip():
+        return "javascript_shell"
+
+    script_text_size = sum(len(match.group(1)) for match in _SCRIPT_CONTENT_RE.finditer(sample))
+    has_bundle_script = bool(_SCRIPT_SRC_OR_MODULE_RE.search(sample))
+    has_app_mount = bool(_APP_MOUNT_RE.search(sample))
+    visible_size = len(visible_text)
+    lowered_visible = visible_text.lower()
+
+    if visible_size < 80 and has_app_mount and has_bundle_script:
+        return "javascript_shell"
+    if visible_size < 40 and script_count >= 2 and has_bundle_script:
+        return "javascript_shell"
+    if visible_size < 40 and script_text_size > visible_size * 20:
+        return "javascript_shell"
+    if visible_size < 60 and any(token in lowered_visible for token in _PLACEHOLDER_TOKENS):
+        return "javascript_placeholder"
+    return None

@@ -328,6 +328,16 @@ curl -X POST http://localhost:8000/api/v1/ingest \
   -d '{"url":"https://example.com","mode":"fast","strict":true}'
 ```
 
+### Docker
+
+```bash
+docker compose up --build -d
+```
+
+This builds the image and starts the API server on port `8000`. The
+`docker-compose.yml` also configures a health check, resource limits, and a
+persistent cache volume. To stop: `docker compose down`.
+
 ---
 
 ## Coding Agent Integration (MCP)

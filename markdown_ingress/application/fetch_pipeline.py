@@ -10,7 +10,11 @@ from typing import Any, cast
 
 from markdown_ingress.application.batch_state import CostBudget
 from markdown_ingress.application.fetch_auto_mode import _AutoModeSelector as _AutoModeSelector
+from markdown_ingress.application.fetch_auto_mode import (
+    _FastModeRenderFallbackSelector as _FastModeRenderFallbackSelector,
+)
 from markdown_ingress.application.heuristics import (
+    _fast_html_render_hint,
     _looks_like_non_html_resource,
     _should_attempt_fast_degraded_fallback,
 )
@@ -29,6 +33,8 @@ from markdown_ingress.core.metadata_keys import (
     DEGRADED_RENDER_FALLBACK,
     EFFECTIVE_MODE,
     RENDER_COST_BUDGET,
+    RENDER_HINT,
+    RENDER_HINT_REASON,
     SCREENSHOT_TEMP,
 )
 from markdown_ingress.core.policy import (
@@ -291,7 +297,15 @@ class _FetchPipeline:
         budget.consume(1, "fetch mode")
         fetcher = self._get_shared_fetcher(config)
         try:
-            return cast(FetchResult, timed_stage("fetch_fast", lambda: fetcher.fetch_sync(url)))
+            fetch_result = cast(
+                FetchResult,
+                timed_stage("fetch_fast", lambda: fetcher.fetch_sync(url)),
+            )
         except DomainCircuitOpenError:
             bump_ingest_stat("circuit_breaker_rejections")
             raise
+        render_hint = _fast_html_render_hint(fetch_result.html)
+        if render_hint is not None:
+            fetch_result.metadata[RENDER_HINT] = True
+            fetch_result.metadata[RENDER_HINT_REASON] = render_hint
+        return fetch_result
